@@ -1,0 +1,499 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams } from 'react-router-dom';
+import { useTheme } from '@mui/material/styles';
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Box,
+  Button,
+  LinearProgress,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import api from '../api/client';
+import {
+  defaultIsoWeekFieldValue,
+  defaultMonthFieldValue,
+  formatInterviewRangeCaption,
+  interviewBoundsFromIsoWeekField,
+  interviewBoundsFromMonthField,
+  type InterviewRangeMode,
+} from '../utils/interviewWindow';
+import {
+  computeOverviewScore,
+  DEFAULT_OVERVIEW_WEIGHTS,
+  mergeOverviewWeightsPartial,
+  OVERVIEW_WEIGHT_FIELD_META,
+  type OverviewScoreWeights,
+} from '../utils/overviewScore';
+
+type GroupMeOverview = {
+  group: {
+    _id: string;
+    overviewScoreWeights?: Partial<OverviewScoreWeights> | null;
+  };
+  role: 'creator' | 'member' | 'none';
+};
+
+const BID_STATUS_ORDER = [
+  'draft',
+  'applied',
+  'screening',
+  'interview',
+  'offer',
+  'rejected',
+  'withdrawn',
+  'accepted',
+] as const;
+
+type OverviewRow = {
+  user: { id: string; nickname: string; email: string };
+  linksCreated: number;
+  bidsCreatedInRange: number;
+  bidsTouchedInRange: number;
+  byStatus: Record<string, number>;
+  interviewsInRange: number;
+  interviewsPassed: number;
+  interviewsFailed: number;
+  interviewPassRate: number | null;
+  assessmentsInRange: number;
+  assessmentsPassed: number;
+  assessmentsFailed: number;
+  assessmentPassRate: number | null;
+};
+
+type ScoredRow = OverviewRow & { score: number };
+
+function pct(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return '—';
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+const PIE_COLORS = ['#5c6bc0', '#26a69a', '#ffb74d', '#ef5350', '#42a5f5', '#ab47bc', '#78909c', '#8d6e63'];
+
+export default function OverviewPage() {
+  const theme = useTheme();
+  const qc = useQueryClient();
+  const { groupId } = useParams();
+  const [rangeMode, setRangeMode] = useState<InterviewRangeMode>('week');
+  const [weekField, setWeekField] = useState(() => defaultIsoWeekFieldValue());
+  const [monthField, setMonthField] = useState(() => defaultMonthFieldValue());
+  const [ownerWeights, setOwnerWeights] = useState<OverviewScoreWeights>(DEFAULT_OVERVIEW_WEIGHTS);
+  const ownerSyncedForGroupRef = useRef<string | null>(null);
+  const lastSavedJson = useRef<string | null>(null);
+
+  const meQ = useQuery({
+    queryKey: ['group', groupId, 'me'],
+    enabled: !!groupId,
+    queryFn: async () => (await api.get(`/groups/${groupId}/me`)).data as GroupMeOverview,
+  });
+
+  const isOwner = meQ.data?.role === 'creator';
+
+  const patchWeights = useMutation({
+    mutationFn: async (w: OverviewScoreWeights) => {
+      await api.patch(`/groups/${groupId}/overview-score-weights`, w);
+    },
+    onSuccess: async (_, w) => {
+      lastSavedJson.current = JSON.stringify(w);
+      qc.setQueryData(['group', groupId, 'me'], (prev: unknown) => {
+        if (!prev || typeof prev !== 'object') return prev;
+        const o = prev as GroupMeOverview;
+        return {
+          ...o,
+          group: { ...o.group, overviewScoreWeights: w },
+        };
+      });
+    },
+  });
+
+  useEffect(() => {
+    ownerSyncedForGroupRef.current = null;
+    lastSavedJson.current = null;
+  }, [groupId]);
+
+  useEffect(() => {
+    if (!meQ.isSuccess || !isOwner || !groupId) return;
+    if (ownerSyncedForGroupRef.current === groupId) return;
+    const m = mergeOverviewWeightsPartial(meQ.data.group?.overviewScoreWeights);
+    setOwnerWeights(m);
+    lastSavedJson.current = JSON.stringify(m);
+    ownerSyncedForGroupRef.current = groupId;
+  }, [meQ.isSuccess, isOwner, groupId, meQ.data]);
+
+  const weights = useMemo(() => {
+    if (!meQ.isSuccess || !meQ.data) return DEFAULT_OVERVIEW_WEIGHTS;
+    if (!isOwner) return mergeOverviewWeightsPartial(meQ.data.group?.overviewScoreWeights);
+    return ownerWeights;
+  }, [meQ.isSuccess, meQ.data, isOwner, ownerWeights]);
+
+  useEffect(() => {
+    if (!groupId || !isOwner || ownerSyncedForGroupRef.current !== groupId) return;
+    const serialized = JSON.stringify(ownerWeights);
+    if (lastSavedJson.current === serialized) return;
+    const t = window.setTimeout(() => {
+      patchWeights.mutate(ownerWeights);
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [ownerWeights, groupId, isOwner, patchWeights]);
+
+  const bounds = useMemo(() => {
+    return rangeMode === 'week'
+      ? interviewBoundsFromIsoWeekField(weekField)
+      : interviewBoundsFromMonthField(monthField);
+  }, [rangeMode, weekField, monthField]);
+
+  const rangeKey = rangeMode === 'week' ? weekField : monthField;
+
+  const q = useQuery({
+    queryKey: ['overview-bids', groupId, rangeMode, rangeKey, bounds.from, bounds.to] as const,
+    enabled: !!groupId && meQ.isSuccess,
+    queryFn: async ({ queryKey }) => {
+      const [, gid, , , from, to] = queryKey;
+      const { data } = await api.get(`/groups/${gid}/overview/bids`, {
+        params: { from, to },
+      });
+      return data as { from: string; to: string; summary: OverviewRow[] };
+    },
+  });
+
+  const scored = useMemo((): ScoredRow[] => {
+    const rows = q.data?.summary ?? [];
+    return rows
+      .map((row) => ({
+        ...row,
+        score: computeOverviewScore(
+          {
+            linksCreated: row.linksCreated,
+            bidsCreatedInRange: row.bidsCreatedInRange,
+            bidsTouchedInRange: row.bidsTouchedInRange,
+            byStatus: row.byStatus,
+            interviewsInRange: row.interviewsInRange,
+            interviewsPassed: row.interviewsPassed,
+            interviewsFailed: row.interviewsFailed,
+            interviewPassRate: row.interviewPassRate,
+            assessmentsInRange: row.assessmentsInRange,
+            assessmentsPassed: row.assessmentsPassed,
+            assessmentsFailed: row.assessmentsFailed,
+            assessmentPassRate: row.assessmentPassRate,
+          },
+          weights
+        ),
+      }))
+      .sort((a, b) => b.score - a.score || (a.user.nickname || '').localeCompare(b.user.nickname || ''));
+  }, [q.data?.summary, weights]);
+
+  const scoreBarData = useMemo(
+    () => scored.map((r) => ({ name: r.user.nickname || '—', score: Math.round(r.score * 100) / 100 })),
+    [scored]
+  );
+
+  const interviewStackData = useMemo(
+    () =>
+      scored.map((r) => ({
+        name: r.user.nickname || '—',
+        passed: r.interviewsPassed,
+        failed: r.interviewsFailed,
+      })),
+    [scored]
+  );
+
+  const groupStatusPie = useMemo(() => {
+    const acc: Record<string, number> = {};
+    for (const row of q.data?.summary ?? []) {
+      for (const [k, v] of Object.entries(row.byStatus)) {
+        acc[k] = (acc[k] ?? 0) + v;
+      }
+    }
+    return Object.entries(acc)
+      .filter(([, v]) => v > 0)
+      .map(([name, value]) => ({ name, value }));
+  }, [q.data?.summary]);
+
+  const linksVsBidsData = useMemo(
+    () =>
+      scored.map((r) => ({
+        name: r.user.nickname || '—',
+        links: r.linksCreated,
+        newBids: r.bidsCreatedInRange,
+      })),
+    [scored]
+  );
+
+  if (!groupId) return null;
+
+  const primary = theme.palette.primary.main;
+  const secondary = theme.palette.secondary.main;
+
+  return (
+    <Stack spacing={2}>
+      <Typography variant="h5">Group bid overview</Typography>
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
+        <ToggleButtonGroup
+          value={rangeMode}
+          exclusive
+          size="small"
+          onChange={(_, v: InterviewRangeMode | null) => {
+            if (v) setRangeMode(v);
+          }}
+          aria-label="Week or month range"
+        >
+          <ToggleButton value="week">Week</ToggleButton>
+          <ToggleButton value="month">Month</ToggleButton>
+        </ToggleButtonGroup>
+        {rangeMode === 'week' ? (
+          <TextField
+            type="week"
+            size="small"
+            value={weekField}
+            onChange={(e) => setWeekField(e.target.value)}
+            inputProps={{ 'aria-label': 'Calendar week' }}
+            sx={{
+              maxWidth: 160,
+              '& .MuiInputBase-input': { py: 0.5, fontSize: '0.8125rem' },
+            }}
+          />
+        ) : (
+          <TextField
+            type="month"
+            size="small"
+            value={monthField}
+            onChange={(e) => setMonthField(e.target.value)}
+            inputProps={{ 'aria-label': 'Calendar month' }}
+            sx={{
+              maxWidth: 148,
+              '& .MuiInputBase-input': { py: 0.5, fontSize: '0.8125rem' },
+            }}
+          />
+        )}
+        <Typography variant="caption" color="text.secondary">
+          {formatInterviewRangeCaption(rangeMode, weekField, monthField)} · table ranked by weighted score; weights below
+        </Typography>
+      </Stack>
+
+      <Typography color="text.secondary" variant="body2">
+        <strong>Links</strong> = group job links you created in this window. <strong>New bids</strong> = bid rows created
+        in the window. <strong>Touched</strong> and status columns = bid rows with any update in the window (current
+        status). <strong>Interviews</strong> (IV columns) exclude type <strong>ASSESSMENT</strong>; assessments are
+        counted separately with lower default score weights. Use score weights (below the
+        table) to match how your group values volume vs outcomes.
+      </Typography>
+
+      {(meQ.isLoading || q.isLoading) && <LinearProgress />}
+
+      <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
+        <Table size="small" stickyHeader>
+          <TableHead>
+            <TableRow>
+              <TableCell>Member</TableCell>
+              <TableCell align="right">Score</TableCell>
+              <TableCell align="right">Links</TableCell>
+              <TableCell align="right">New bids</TableCell>
+              <TableCell align="right">Touched</TableCell>
+              {BID_STATUS_ORDER.map((s) => (
+                <TableCell key={s} align="right">
+                  {s}
+                </TableCell>
+              ))}
+              <TableCell align="right">IV total</TableCell>
+              <TableCell align="right">IV pass</TableCell>
+              <TableCell align="right">IV fail</TableCell>
+              <TableCell align="right">IV pass %</TableCell>
+              <TableCell align="right">Asmt total</TableCell>
+              <TableCell align="right">Asmt pass</TableCell>
+              <TableCell align="right">Asmt fail</TableCell>
+              <TableCell align="right">Asmt pass %</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {scored.map((row) => (
+              <TableRow key={row.user.id} hover>
+                <TableCell>{row.user.nickname}</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>
+                  {Math.round(row.score * 100) / 100}
+                </TableCell>
+                <TableCell align="right">{row.linksCreated}</TableCell>
+                <TableCell align="right">{row.bidsCreatedInRange}</TableCell>
+                <TableCell align="right">{row.bidsTouchedInRange}</TableCell>
+                {BID_STATUS_ORDER.map((s) => (
+                  <TableCell key={s} align="right">
+                    {row.byStatus[s] ?? 0}
+                  </TableCell>
+                ))}
+                <TableCell align="right">{row.interviewsInRange}</TableCell>
+                <TableCell align="right">{row.interviewsPassed}</TableCell>
+                <TableCell align="right">{row.interviewsFailed}</TableCell>
+                <TableCell align="right">{pct(row.interviewPassRate)}</TableCell>
+                <TableCell align="right">{row.assessmentsInRange}</TableCell>
+                <TableCell align="right">{row.assessmentsPassed}</TableCell>
+                <TableCell align="right">{row.assessmentsFailed}</TableCell>
+                <TableCell align="right">{pct(row.assessmentPassRate)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      <Accordion defaultExpanded={false} variant="outlined">
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography fontWeight={600}>Score weights</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+            Linear score = Σ (weight × metric).
+            {isOwner ? ' Saved for this group (all members see the same ranking).' : ' Only the group owner can edit these.'}
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Stack spacing={2}>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' },
+                gap: 1.5,
+              }}
+            >
+              {OVERVIEW_WEIGHT_FIELD_META.map(({ key, label }) => (
+                <TextField
+                  key={key}
+                  size="small"
+                  type="number"
+                  label={label}
+                  value={weights[key]}
+                  disabled={!isOwner}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    setOwnerWeights((w) => ({ ...w, [key]: Number.isFinite(n) ? n : 0 }));
+                  }}
+                  inputProps={{ step: 0.5 }}
+                />
+              ))}
+            </Box>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!isOwner}
+              onClick={() => setOwnerWeights({ ...DEFAULT_OVERVIEW_WEIGHTS })}
+              sx={{ alignSelf: 'flex-start' }}
+            >
+              Reset defaults
+            </Button>
+          </Stack>
+        </AccordionDetails>
+      </Accordion>
+
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2}>
+        <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Weighted score by member
+          </Typography>
+          <Box sx={{ width: '100%', height: 280 }}>
+            <ResponsiveContainer>
+              <BarChart data={scoreBarData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-28} textAnchor="end" height={60} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <RechartsTooltip />
+                <Bar dataKey="score" name="Score" fill={primary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Box>
+        </Paper>
+        <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Group bid statuses (sum in period)
+          </Typography>
+          <Box sx={{ width: '100%', height: 280 }}>
+            {groupStatusPie.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+                No bid status data for this window.
+              </Typography>
+            ) : (
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={groupStatusPie}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={88}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {groupStatusPie.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </Box>
+        </Paper>
+      </Stack>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle2" gutterBottom>
+          Links vs new bids (by member)
+        </Typography>
+        <Box sx={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <BarChart data={linksVsBidsData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-28} textAnchor="end" height={60} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Legend />
+              <RechartsTooltip />
+              <Bar dataKey="links" name="Links" fill={primary} />
+              <Bar dataKey="newBids" name="New bids" fill={secondary} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Box>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle2" gutterBottom>
+          Interview pass vs fail (by member)
+        </Typography>
+        <Box sx={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer>
+            <BarChart data={interviewStackData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-28} textAnchor="end" height={60} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Legend />
+              <RechartsTooltip />
+              <Bar dataKey="passed" name="Passed" stackId="iv" fill="#26a69a" />
+              <Bar dataKey="failed" name="Failed" stackId="iv" fill="#ef5350" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Box>
+      </Paper>
+    </Stack>
+  );
+}
