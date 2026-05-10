@@ -1,7 +1,9 @@
 import axios, { isAxiosError } from 'axios';
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: `${API_URL}/api`,
   /** Bid board / stats can be slow; avoid hanging forever on stalled connections. */
   timeout: Number(import.meta.env.VITE_API_TIMEOUT_MS) || 90_000,
 });
