@@ -8,13 +8,15 @@ function readToken(): string {
 
 let socket: Socket | null = null;
 
+const SOCKET_URL = import.meta.env.VITE_API_URL || '';
+
 /**
  * Single Socket.IO connection for the app (presence, bid-board hints, etc.).
  * Uses aggressive reconnection and refreshes JWT from localStorage before each reconnect attempt.
  */
 export function getAppSocket(): Socket {
   if (!socket) {
-    socket = io({
+    socket = io(SOCKET_URL, {
       path: '/socket.io',
       auth: { token: readToken() },
       transports: ['websocket', 'polling'],

@@ -48,20 +48,10 @@ function isHttpCorsOriginAllowed(origin) {
   if (!origin) return true;
   if (CLIENT_ORIGINS.includes(origin)) return true;
   if (CORS_EXTRA_ORIGINS.includes(origin)) return true;
-  if (origin === 'http://127.0.0.1:8765' || origin === 'http://localhost:8765') return true;
-  if (origin.startsWith('chrome-extension://')) {
-    const extId = process.env.BID_ASSISTANT_EXTENSION_ID;
-    if (!extId || origin === `chrome-extension://${extId}`) return true;
-  }
   return false;
 }
 
-const socketCorsOrigins = [
-  ...CLIENT_ORIGINS,
-  ...CORS_EXTRA_ORIGINS,
-  'http://127.0.0.1:8765',
-  'http://localhost:8765',
-];
+const socketCorsOrigins = [...CLIENT_ORIGINS, ...CORS_EXTRA_ORIGINS];
 
 const io = new Server(httpServer, {
   cors: {
