@@ -149,6 +149,29 @@ export default function BidPanelPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
   });
 
+  const carryoverCountQ = useQuery({
+    queryKey: ['bid-board', groupId, 'carryover-count'] as const,
+    enabled: !!groupId,
+    queryFn: async () => {
+      const { data } = await api.get<{ count: number }>(
+        `/groups/${groupId}/links/carryover-count`
+      );
+      return data;
+    },
+  });
+
+  const carryOverYesterday = useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<{ carriedOver: number }>(
+        `/groups/${groupId}/links/carryover`
+      );
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bid-board', groupId] });
+    },
+  });
+
   const patchBid = useMutation({
     mutationFn: async (payload: { bidId: string; body: Record<string, unknown> }) => {
       const { from, to } = localDayIsoRange(selectedDay);
@@ -272,6 +295,31 @@ export default function BidPanelPage() {
             </span>
           </Tooltip>
         )}
+        {biddingEnabled && (carryoverCountQ.data?.count ?? 0) > 0 && (
+          <Tooltip title="Move yesterday's links you didn't apply to onto today's board (other members are unaffected).">
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={carryOverYesterday.isPending}
+                onClick={() => {
+                  const n = carryoverCountQ.data?.count ?? 0;
+                  if (n === 0) return;
+                  if (
+                    !window.confirm(
+                      `Carry over ${n} unfinished link${n === 1 ? '' : 's'} from yesterday onto today's board?`
+                    )
+                  ) {
+                    return;
+                  }
+                  carryOverYesterday.mutate();
+                }}
+              >
+                Carry over yesterday ({carryoverCountQ.data?.count ?? 0})
+              </Button>
+            </span>
+          </Tooltip>
+        )}
         <TextField
           type="date"
           size="small"
@@ -344,6 +392,15 @@ export default function BidPanelPage() {
           typeof (refreshJunkLinks.error.response.data as { error?: unknown }).error === 'string'
             ? (refreshJunkLinks.error.response.data as { error: string }).error
             : 'Could not refresh junk links.'}
+        </Alert>
+      )}
+      {carryOverYesterday.isError && (
+        <Alert severity="error">
+          {isAxiosError(carryOverYesterday.error) &&
+          carryOverYesterday.error.response?.data &&
+          typeof (carryOverYesterday.error.response.data as { error?: unknown }).error === 'string'
+            ? (carryOverYesterday.error.response.data as { error: string }).error
+            : 'Could not carry over yesterday’s links.'}
         </Alert>
       )}
       <Paper variant="outlined" sx={{ overflow: 'hidden' }}>

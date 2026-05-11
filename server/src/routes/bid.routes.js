@@ -363,6 +363,102 @@ r.post('/groups/:groupId/links/refresh-junk', param('groupId').isMongoId(), asyn
   return res.json({ removed: result.removed, linkIds: result.linkIds });
 });
 
+function utcYesterdayBounds(now = new Date()) {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  const start = new Date(Date.UTC(y, m, d - 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
+  return { start, end };
+}
+
+/** Returns how many of yesterday's (UTC) non-useless group links this user has no bid on yet. */
+r.get(
+  '/groups/:groupId/links/carryover-count',
+  param('groupId').isMongoId(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+    const { start, end } = utcYesterdayBounds();
+    const links = await GroupLink.find({
+      groupId: req.params.groupId,
+      createdAt: { $gte: start, $lt: end },
+      markedUselessAt: null,
+    })
+      .select('_id')
+      .lean();
+    if (links.length === 0) return res.json({ count: 0 });
+    const linkIds = links.map((l) => l._id);
+    const myBids = await UserBid.find({
+      groupId: req.params.groupId,
+      userId: req.user.id,
+      groupLinkId: { $in: linkIds },
+    })
+      .select('groupLinkId')
+      .lean();
+    const bidSet = new Set(myBids.map((b) => String(b.groupLinkId)));
+    const count = linkIds.filter((id) => !bidSet.has(String(id))).length;
+    return res.json({ count });
+  }
+);
+
+/**
+ * Carry yesterday's empty links onto today's board for this user. Creates a draft UserBid per link
+ * the user has no bid on (skipping links marked useless). The fresh bid's updatedAt anchors the link
+ * to today via the bid-board's "bid touched this day" rule — link.createdAt is untouched, so other
+ * members' views of yesterday are unaffected.
+ */
+r.post(
+  '/groups/:groupId/links/carryover',
+  param('groupId').isMongoId(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+    const { start, end } = utcYesterdayBounds();
+    const links = await GroupLink.find({
+      groupId: req.params.groupId,
+      createdAt: { $gte: start, $lt: end },
+      markedUselessAt: null,
+    })
+      .select('_id')
+      .lean();
+    if (links.length === 0) return res.json({ carriedOver: 0, linkIds: [] });
+    const linkIds = links.map((l) => l._id);
+    const myBids = await UserBid.find({
+      groupId: req.params.groupId,
+      userId: req.user.id,
+      groupLinkId: { $in: linkIds },
+    })
+      .select('groupLinkId')
+      .lean();
+    const bidSet = new Set(myBids.map((b) => String(b.groupLinkId)));
+    const toCarry = linkIds.filter((id) => !bidSet.has(String(id)));
+    if (toCarry.length === 0) return res.json({ carriedOver: 0, linkIds: [] });
+    const createdIds = [];
+    for (const linkId of toCarry) {
+      try {
+        const bid = await UserBid.create({
+          groupId: req.params.groupId,
+          userId: req.user.id,
+          groupLinkId: linkId,
+          status: 'draft',
+          lastModifiedBy: req.user.id,
+          audit: [{ userId: req.user.id, action: 'carryover' }],
+        });
+        createdIds.push(bid._id);
+      } catch (e) {
+        if (e?.code !== 11000) throw e;
+      }
+    }
+    if (createdIds.length > 0) emitBidBoardInvalidate(req.params.groupId);
+    return res.json({ carriedOver: createdIds.length, linkIds: createdIds });
+  }
+);
+
 /** Update your bid columns (Resume ID, company, role, etc.). */
 r.patch(
   '/groups/:groupId/bids/:bidId',
