@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Box,
+  Chip,
   FormControlLabel,
   LinearProgress,
   Paper,
@@ -215,6 +216,7 @@ export default function BidPanelPage() {
   const rows = q.data?.rows ?? [];
   const eligibleJunkCount = rows.filter((r) => r.link.markedUselessAt && r.link.junkPurgeEligible)
     .length;
+  const appliedCount = rows.filter((r) => r.myBid?.status === 'applied').length;
 
   async function commitFastFeed(linkId: string, existingBidId: string | null) {
     if (!biddingEnabled || !groupId) return;
@@ -336,6 +338,19 @@ export default function BidPanelPage() {
           <Typography variant="caption" color="text.secondary">
             {q.data.total}
           </Typography>
+        )}
+        {q.data != null && (
+          <Tooltip
+            title={`${appliedCount} bid${appliedCount === 1 ? '' : 's'} with status "applied" on ${selectedDay}`}
+          >
+            <Chip
+              size="small"
+              color={appliedCount > 0 ? 'success' : 'default'}
+              variant={appliedCount > 0 ? 'filled' : 'outlined'}
+              label={`${appliedCount} applied`}
+              sx={{ height: 22, '& .MuiChip-label': { px: 0.85, fontSize: '0.7rem' } }}
+            />
+          </Tooltip>
         )}
         {!biddingEnabled && (
           <FormControlLabel

@@ -28,9 +28,13 @@ function parseSort(sortParam) {
   const [field, dirRaw] = String(sortParam || 'linkCreatedAt:desc').split(':');
   const fieldOk = allowed.has(field) ? field : 'linkCreatedAt';
   const dir = dirRaw === 'asc' ? 1 : -1;
+  /**
+   * Link-column sort groups by emptiness first: asc puts empty bids (no resume/company/role) on top,
+   * desc on the bottom. Secondary `createdAt: -1` keeps newest within each group.
+   */
   const sortMap = {
-    linkCreatedAt: { createdAt: dir },
-    url: { url: dir },
+    linkCreatedAt: { _emptyRank: -dir, createdAt: -1 },
+    url: { _emptyRank: -dir, url: dir },
     resumeId: { 'bid.resumeId': dir },
     company: { 'bid.company': dir },
     role: { 'bid.role': dir },
@@ -241,6 +245,43 @@ export async function buildBidBoardPage({
               },
             },
           },
+        },
+        /**
+         * 1 when this user's bid is missing or has no resume/company/role; 0 otherwise.
+         * Powers the Link-column sort (empty rows to top/bottom by direction).
+         */
+        _emptyRank: {
+          $cond: [
+            {
+              $or: [
+                { $eq: [{ $ifNull: ['$bid', null] }, null] },
+                {
+                  $and: [
+                    {
+                      $eq: [
+                        { $strLenCP: { $trim: { input: { $ifNull: ['$bid.resumeId', ''] } } } },
+                        0,
+                      ],
+                    },
+                    {
+                      $eq: [
+                        { $strLenCP: { $trim: { input: { $ifNull: ['$bid.company', ''] } } } },
+                        0,
+                      ],
+                    },
+                    {
+                      $eq: [
+                        { $strLenCP: { $trim: { input: { $ifNull: ['$bid.role', ''] } } } },
+                        0,
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            1,
+            0,
+          ],
         },
       },
     },

@@ -157,6 +157,11 @@ export type BoardRow = {
 type MutPatchBid = (payload: { bidId: string; body: Record<string, unknown> }) => void;
 type MutDeleteBid = (bidId: string) => void;
 
+/** Visible URL with the scheme stripped — full URL still drives href and tooltip. */
+function displayUrl(url: string) {
+  return url.replace(/^https?:\/\//i, '');
+}
+
 function mergedJdText(row: BoardRow, b: BoardRow['myBid']) {
   if (!b) return (row.link.sharedJobDescription || '').trim();
   const own = (b.jobDescription || '').trim();
@@ -572,7 +577,7 @@ export function BidBoardVirtualBody({
                         textDecoration: 'underline',
                       }}
                   >
-                    {row.link.url}
+                    {displayUrl(row.link.url)}
                   </Typography>
                   </Tooltip>
                   <Box sx={{ flexShrink: 0, maxWidth: 120, minWidth: 0 }}>
@@ -750,7 +755,7 @@ export function BidBoardVirtualBody({
                       textDecoration: 'underline',
                     }}
                   >
-                    {row.link.url}
+                    {displayUrl(row.link.url)}
                   </Typography>
                 </Tooltip>
                 <Stack
