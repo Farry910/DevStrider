@@ -6,9 +6,15 @@ import {
   Autocomplete,
   Box,
   Button,
+  Chip,
   LinearProgress,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Typography,
 } from '@mui/material';
@@ -41,6 +47,39 @@ type GroupMe = {
 };
 
 type MemberUser = { _id: string; nickname: string; email: string };
+
+type StorageCollection = { name: string; bytes: number; count: number };
+type StorageResponse = {
+  collections: StorageCollection[];
+  totalBytes: number;
+  totalCount: number;
+};
+
+type PruneCounts = {
+  userbids: number;
+  interviews: number;
+  bidassistantactivities: number;
+  grouplinks: number;
+};
+type PruneDryRun = {
+  dryRun: true;
+  cutoff: string;
+  olderThanDays: number;
+  wouldDelete: PruneCounts;
+};
+type PruneResult = {
+  dryRun: false;
+  cutoff: string;
+  olderThanDays: number;
+  deleted: PruneCounts;
+};
+
+function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export default function GroupSettingsPage() {
   const { user } = useAuth();
@@ -150,6 +189,41 @@ export default function GroupSettingsPage() {
       qc.invalidateQueries({ queryKey: ['groups'] });
       qc.removeQueries({ queryKey: ['group', groupId] });
       nav('/', { replace: true });
+    },
+  });
+
+  const storageQ = useQuery({
+    queryKey: ['group', groupId, 'storage'] as const,
+    enabled: !!groupId && meQ.data?.role === 'creator',
+    queryFn: async () => (await api.get(`/groups/${groupId}/storage`)).data as StorageResponse,
+  });
+
+  const [pruneDays, setPruneDays] = useState(60);
+  const [pruneDry, setPruneDry] = useState<PruneDryRun | null>(null);
+
+  const previewPruneMut = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post(`/groups/${groupId}/prune`, {
+          olderThanDays: pruneDays,
+          dryRun: true,
+        })
+      ).data as PruneDryRun,
+    onSuccess: (data) => setPruneDry(data),
+  });
+
+  const runPruneMut = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post(`/groups/${groupId}/prune`, {
+          olderThanDays: pruneDays,
+          dryRun: false,
+        })
+      ).data as PruneResult,
+    onSuccess: () => {
+      setPruneDry(null);
+      qc.invalidateQueries({ queryKey: ['group', groupId, 'storage'] });
+      qc.invalidateQueries({ queryKey: ['bid-board', groupId] });
     },
   });
 
@@ -336,6 +410,180 @@ export default function GroupSettingsPage() {
           <Alert severity="error" sx={{ mt: 2 }}>
             {(assisterMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ??
               'Could not update assister.'}
+          </Alert>
+        )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="subtitle1">Storage</Typography>
+          <Button
+            size="small"
+            variant="text"
+            disabled={storageQ.isFetching}
+            onClick={() => storageQ.refetch()}
+          >
+            {storageQ.isFetching ? 'Loading…' : 'Refresh'}
+          </Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          BSON document size per collection for this group. Indexes are not included.
+        </Typography>
+        {storageQ.isError && (
+          <Alert severity="error" sx={{ mb: 1 }}>
+            Could not load storage stats.
+          </Alert>
+        )}
+        {storageQ.data && (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Collection</TableCell>
+                <TableCell align="right">Rows</TableCell>
+                <TableCell align="right">Size</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {storageQ.data.collections.map((c) => (
+                <TableRow key={c.name}>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>
+                    {c.name}
+                  </TableCell>
+                  <TableCell align="right">{c.count.toLocaleString()}</TableCell>
+                  <TableCell align="right">{fmtBytes(c.bytes)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow sx={{ '& td': { fontWeight: 600 } }}>
+                <TableCell>Total</TableCell>
+                <TableCell align="right">{storageQ.data.totalCount.toLocaleString()}</TableCell>
+                <TableCell align="right">{fmtBytes(storageQ.data.totalBytes)}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        )}
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" gutterBottom>
+          Prune old data
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Permanently delete data older than the cutoff. Use Preview first to see what would be
+          removed. Pruning removes <code>UserBid</code>s (by first creation date),{' '}
+          <code>Interview</code>s, Bid Assistant activity logs, and any orphaned shared links that
+          end up with no remaining bids. This cannot be undone.
+        </Typography>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <TextField
+            label="Older than (days)"
+            type="number"
+            size="small"
+            value={pruneDays}
+            onChange={(e) => {
+              setPruneDays(Number(e.target.value));
+              setPruneDry(null);
+            }}
+            inputProps={{ min: 7, max: 3650 }}
+            sx={{ width: 160 }}
+          />
+          {[30, 60, 90, 180].map((d) => (
+            <Chip
+              key={d}
+              size="small"
+              label={`${d}d`}
+              variant={pruneDays === d ? 'filled' : 'outlined'}
+              color={pruneDays === d ? 'primary' : 'default'}
+              onClick={() => {
+                setPruneDays(d);
+                setPruneDry(null);
+              }}
+            />
+          ))}
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={
+              previewPruneMut.isPending || runPruneMut.isPending || pruneDays < 7 || pruneDays > 3650
+            }
+            onClick={() => previewPruneMut.mutate()}
+          >
+            {previewPruneMut.isPending ? 'Counting…' : 'Preview'}
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={!pruneDry || runPruneMut.isPending}
+            onClick={() => {
+              const w = pruneDry?.wouldDelete;
+              const total = w
+                ? w.userbids + w.interviews + w.bidassistantactivities + w.grouplinks
+                : 0;
+              if (total === 0) return;
+              if (
+                !window.confirm(
+                  `Permanently delete ${total} document(s) older than ${pruneDays} days from "${meQ.data.group.name}"? This cannot be undone.`
+                )
+              ) {
+                return;
+              }
+              runPruneMut.mutate();
+            }}
+          >
+            {runPruneMut.isPending ? 'Pruning…' : 'Prune now'}
+          </Button>
+        </Stack>
+        {pruneDry && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2" component="div" gutterBottom>
+              Would delete documents created before{' '}
+              <strong>{new Date(pruneDry.cutoff).toLocaleString()}</strong>:
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip size="small" label={`${pruneDry.wouldDelete.userbids} userbids`} />
+              <Chip size="small" label={`${pruneDry.wouldDelete.interviews} interviews`} />
+              <Chip
+                size="small"
+                label={`${pruneDry.wouldDelete.bidassistantactivities} activity logs`}
+              />
+              <Chip
+                size="small"
+                label={`${pruneDry.wouldDelete.grouplinks} orphaned links`}
+              />
+            </Stack>
+          </Alert>
+        )}
+        {runPruneMut.data && (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            <Typography variant="body2" component="div" gutterBottom>
+              Deleted documents created before{' '}
+              <strong>{new Date(runPruneMut.data.cutoff).toLocaleString()}</strong>:
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip size="small" color="success" label={`${runPruneMut.data.deleted.userbids} userbids`} />
+              <Chip
+                size="small"
+                color="success"
+                label={`${runPruneMut.data.deleted.interviews} interviews`}
+              />
+              <Chip
+                size="small"
+                color="success"
+                label={`${runPruneMut.data.deleted.bidassistantactivities} activity logs`}
+              />
+              <Chip
+                size="small"
+                color="success"
+                label={`${runPruneMut.data.deleted.grouplinks} orphaned links`}
+              />
+            </Stack>
+          </Alert>
+        )}
+        {(previewPruneMut.isError || runPruneMut.isError) && (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {(previewPruneMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+              (runPruneMut.error as { response?: { data?: { error?: string } } })?.response?.data?.error ??
+              'Prune failed.'}
           </Alert>
         )}
       </Paper>

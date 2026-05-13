@@ -372,7 +372,17 @@ function utcYesterdayBounds(now = new Date()) {
   return { start, end };
 }
 
-/** Returns how many of yesterday's (UTC) non-useless group links this user has no bid on yet. */
+/**
+ * A user's bid counts as "empty" for carry-over purposes when there's no bid at all OR there is a bid
+ * with no resumeId / company / role (the auto-created draft from POST /links is exactly this shape).
+ */
+function isEmptyBidShape(b) {
+  if (!b) return true;
+  const empty = (s) => !norm(s);
+  return empty(b.resumeId) && empty(b.company) && empty(b.role);
+}
+
+/** Yesterday's (UTC) non-useless group links the user has no filled bid on (no bid or empty draft). */
 r.get(
   '/groups/:groupId/links/carryover-count',
   param('groupId').isMongoId(),
@@ -396,19 +406,20 @@ r.get(
       userId: req.user.id,
       groupLinkId: { $in: linkIds },
     })
-      .select('groupLinkId')
+      .select('groupLinkId resumeId company role')
       .lean();
-    const bidSet = new Set(myBids.map((b) => String(b.groupLinkId)));
-    const count = linkIds.filter((id) => !bidSet.has(String(id))).length;
+    const bidByLink = new Map(myBids.map((b) => [String(b.groupLinkId), b]));
+    const count = linkIds.filter((id) => isEmptyBidShape(bidByLink.get(String(id)))).length;
     return res.json({ count });
   }
 );
 
 /**
- * Carry yesterday's empty links onto today's board for this user. Creates a draft UserBid per link
- * the user has no bid on (skipping links marked useless). The fresh bid's updatedAt anchors the link
- * to today via the bid-board's "bid touched this day" rule — link.createdAt is untouched, so other
- * members' views of yesterday are unaffected.
+ * Carry yesterday's empty links onto today's board for this user. For links with no bid, creates a
+ * draft UserBid; for links with an existing empty draft (auto-created when the user added the link),
+ * touches updatedAt so it anchors to today. The bid-board's "bid touched this day" rule then makes
+ * the link appear on today's board for this user only — link.createdAt is untouched, so other members'
+ * yesterday view is unaffected.
  */
 r.post(
   '/groups/:groupId/links/carryover',
@@ -432,30 +443,36 @@ r.post(
       groupId: req.params.groupId,
       userId: req.user.id,
       groupLinkId: { $in: linkIds },
-    })
-      .select('groupLinkId')
-      .lean();
-    const bidSet = new Set(myBids.map((b) => String(b.groupLinkId)));
-    const toCarry = linkIds.filter((id) => !bidSet.has(String(id)));
-    if (toCarry.length === 0) return res.json({ carriedOver: 0, linkIds: [] });
-    const createdIds = [];
-    for (const linkId of toCarry) {
-      try {
-        const bid = await UserBid.create({
-          groupId: req.params.groupId,
-          userId: req.user.id,
-          groupLinkId: linkId,
-          status: 'draft',
-          lastModifiedBy: req.user.id,
-          audit: [{ userId: req.user.id, action: 'carryover' }],
-        });
-        createdIds.push(bid._id);
-      } catch (e) {
-        if (e?.code !== 11000) throw e;
+    });
+    const bidByLink = new Map(myBids.map((b) => [String(b.groupLinkId), b]));
+
+    const carriedIds = [];
+    for (const linkId of linkIds) {
+      const existing = bidByLink.get(String(linkId));
+      if (existing && !isEmptyBidShape(existing)) continue;
+      if (existing) {
+        existing.lastModifiedBy = req.user.id;
+        existing.audit.push({ userId: req.user.id, action: 'carryover' });
+        await existing.save();
+        carriedIds.push(existing._id);
+      } else {
+        try {
+          const bid = await UserBid.create({
+            groupId: req.params.groupId,
+            userId: req.user.id,
+            groupLinkId: linkId,
+            status: 'draft',
+            lastModifiedBy: req.user.id,
+            audit: [{ userId: req.user.id, action: 'carryover' }],
+          });
+          carriedIds.push(bid._id);
+        } catch (e) {
+          if (e?.code !== 11000) throw e;
+        }
       }
     }
-    if (createdIds.length > 0) emitBidBoardInvalidate(req.params.groupId);
-    return res.json({ carriedOver: createdIds.length, linkIds: createdIds });
+    if (carriedIds.length > 0) emitBidBoardInvalidate(req.params.groupId);
+    return res.json({ carriedOver: carriedIds.length, linkIds: carriedIds });
   }
 );
 

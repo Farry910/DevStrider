@@ -382,6 +382,143 @@ r.patch(
 );
 
 /**
+ * Per-collection bytes/count for this group's data. Restricted to the group creator.
+ * Uses $bsonSize over $$ROOT — accurate but scans documents, so don't poll this on a hot path.
+ */
+r.get('/:groupId/storage', param('groupId').isMongoId(), async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+  if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+  const gid = new mongoose.Types.ObjectId(req.params.groupId);
+
+  async function sizeOf(Model) {
+    const out = await Model.aggregate([
+      { $match: { groupId: gid } },
+      { $group: { _id: null, bytes: { $sum: { $bsonSize: '$$ROOT' } }, count: { $sum: 1 } } },
+    ]);
+    return { bytes: out[0]?.bytes ?? 0, count: out[0]?.count ?? 0 };
+  }
+
+  const [bids, links, interviews, activity, joinReqs, badgeReqs, fb] = await Promise.all([
+    sizeOf(UserBid),
+    sizeOf(GroupLink),
+    sizeOf(Interview),
+    sizeOf(BidAssistantActivity),
+    sizeOf(JoinRequest),
+    sizeOf(ProfileBadgeRequest),
+    sizeOf(Feedback),
+  ]);
+
+  const collections = [
+    { name: 'userbids', ...bids },
+    { name: 'grouplinks', ...links },
+    { name: 'interviews', ...interviews },
+    { name: 'bidassistantactivities', ...activity },
+    { name: 'joinrequests', ...joinReqs },
+    { name: 'profilebadgerequests', ...badgeReqs },
+    { name: 'feedbacks', ...fb },
+  ];
+  const totalBytes = collections.reduce((s, c) => s + c.bytes, 0);
+  const totalCount = collections.reduce((s, c) => s + c.count, 0);
+  return res.json({ collections, totalBytes, totalCount });
+});
+
+/**
+ * Prune old per-group data. Restricted to the group creator.
+ * - olderThanDays (7-3650): cutoff = now - olderThanDays
+ * - dryRun (default false): return counts only
+ * Deletes:
+ *   - UserBid (firstCreatedAt < cutoff)
+ *   - Interview (createdAt < cutoff)
+ *   - BidAssistantActivity (createdAt < cutoff)
+ *   - GroupLink only if old AND has no remaining UserBids
+ */
+r.post(
+  '/:groupId/prune',
+  param('groupId').isMongoId(),
+  body('olderThanDays').isInt({ min: 7, max: 3650 }),
+  body('dryRun').optional().isBoolean(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const gid = new mongoose.Types.ObjectId(req.params.groupId);
+    const olderThanDays = Number(req.body.olderThanDays);
+    const dryRun = req.body.dryRun === true;
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000);
+
+    if (dryRun) {
+      const [bidCount, ivCount, actCount, bidLinkAgg, oldLinks] = await Promise.all([
+        UserBid.countDocuments({ groupId: gid, firstCreatedAt: { $lt: cutoff } }),
+        Interview.countDocuments({ groupId: gid, createdAt: { $lt: cutoff } }),
+        BidAssistantActivity.countDocuments({ groupId: gid, createdAt: { $lt: cutoff } }),
+        UserBid.aggregate([
+          { $match: { groupId: gid } },
+          {
+            $group: {
+              _id: '$groupLinkId',
+              kept: { $sum: { $cond: [{ $gte: ['$firstCreatedAt', cutoff] }, 1, 0] } },
+            },
+          },
+        ]),
+        GroupLink.find({ groupId: gid, createdAt: { $lt: cutoff } }).select('_id').lean(),
+      ]);
+      const keptByLink = new Map(bidLinkAgg.map((r) => [String(r._id), r.kept]));
+      const linkCount = oldLinks.filter((l) => (keptByLink.get(String(l._id)) ?? 0) === 0).length;
+      return res.json({
+        dryRun: true,
+        cutoff: cutoff.toISOString(),
+        olderThanDays,
+        wouldDelete: {
+          userbids: bidCount,
+          interviews: ivCount,
+          bidassistantactivities: actCount,
+          grouplinks: linkCount,
+        },
+      });
+    }
+
+    const [bidDel, ivDel, actDel] = await Promise.all([
+      UserBid.deleteMany({ groupId: gid, firstCreatedAt: { $lt: cutoff } }),
+      Interview.deleteMany({ groupId: gid, createdAt: { $lt: cutoff } }),
+      BidAssistantActivity.deleteMany({ groupId: gid, createdAt: { $lt: cutoff } }),
+    ]);
+
+    let linkDelCount = 0;
+    const oldLinks = await GroupLink.find({ groupId: gid, createdAt: { $lt: cutoff } })
+      .select('_id')
+      .lean();
+    const oldLinkIds = oldLinks.map((l) => l._id);
+    if (oldLinkIds.length > 0) {
+      const remaining = await UserBid.aggregate([
+        { $match: { groupId: gid, groupLinkId: { $in: oldLinkIds } } },
+        { $group: { _id: '$groupLinkId' } },
+      ]);
+      const aliveIds = new Set(remaining.map((r) => String(r._id)));
+      const toDelete = oldLinkIds.filter((id) => !aliveIds.has(String(id)));
+      if (toDelete.length > 0) {
+        const out = await GroupLink.deleteMany({ _id: { $in: toDelete } });
+        linkDelCount = out.deletedCount ?? 0;
+      }
+    }
+
+    return res.json({
+      dryRun: false,
+      cutoff: cutoff.toISOString(),
+      olderThanDays,
+      deleted: {
+        userbids: bidDel.deletedCount ?? 0,
+        interviews: ivDel.deletedCount ?? 0,
+        bidassistantactivities: actDel.deletedCount ?? 0,
+        grouplinks: linkDelCount,
+      },
+    });
+  }
+);
+
+/**
  * Two-party removal when `removalAssisterId` is set: owner and assister must each call this.
  * With no assister, only the owner may call; deletion completes immediately.
  */
