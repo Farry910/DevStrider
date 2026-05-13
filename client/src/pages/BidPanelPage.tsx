@@ -23,6 +23,7 @@ import { localDayIsoRange, todayLocalYmd } from '../utils/dayBounds';
 import { BidBoardStickyHeader } from '../components/bid/BidBoardStickyHeader';
 import { BidBoardVirtualBody, type BoardRow } from '../components/bid/BidBoardVirtualBody';
 import { bidBoardRowGridSx, type BidSortField } from '../components/bid/bidBoardGrid';
+import { BatchAddDialog } from '../components/bid/BatchAddDialog';
 import { useBidBoardSocketInvalidation } from '../hooks/useBidBoardSocket';
 
 export default function BidPanelPage() {
@@ -57,6 +58,8 @@ export default function BidPanelPage() {
 
   /** Past days: when on, include link-only / empty bid rows (same data members see on today). */
   const [showPastLinkOnlyRows, setShowPastLinkOnlyRows] = useState(false);
+
+  const [batchOpen, setBatchOpen] = useState(false);
 
   const sortParam = `${sortField}:${sortDir}`;
   const biddingEnabled = selectedDay === todayLocalYmd();
@@ -438,24 +441,44 @@ export default function BidPanelPage() {
                 bgcolor: 'action.hover',
               }}
             >
-              <TextField
-                sx={{ gridColumn: '1 / -1' }}
-                value={composerUrl}
-                onChange={(e) => setComposerUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    submitComposerLink();
-                  }
+              <Box
+                sx={{
+                  gridColumn: '1 / -1',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  minWidth: 0,
                 }}
-                placeholder="Add job URL — row appears in the list below"
-                disabled={addLink.isPending}
-                fullWidth
-                variant="outlined"
-                size="small"
-                inputProps={{ 'aria-label': 'New job URL' }}
-                inputRef={composerUrlInputRef}
-              />
+              >
+                <TextField
+                  sx={{ flex: 1, minWidth: 0 }}
+                  value={composerUrl}
+                  onChange={(e) => setComposerUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      submitComposerLink();
+                    }
+                  }}
+                  placeholder="Add job URL — row appears in the list below"
+                  disabled={addLink.isPending}
+                  fullWidth
+                  variant="outlined"
+                  size="small"
+                  inputProps={{ 'aria-label': 'New job URL' }}
+                  inputRef={composerUrlInputRef}
+                />
+                <Tooltip title="Paste a list of links (with optional fast feed) — preview parsed rows before adding.">
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setBatchOpen(true)}
+                    sx={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                  >
+                    Batch add
+                  </Button>
+                </Tooltip>
+              </Box>
             </Box>
           )}
           <BidBoardVirtualBody
@@ -478,6 +501,7 @@ export default function BidPanelPage() {
           />
         </Box>
       </Paper>
+      <BatchAddDialog open={batchOpen} onClose={() => setBatchOpen(false)} />
     </Stack>
   );
 }
