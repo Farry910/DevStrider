@@ -25,6 +25,8 @@ import { BidBoardVirtualBody, type BoardRow } from '../components/bid/BidBoardVi
 import { bidBoardRowGridSx, type BidSortField } from '../components/bid/bidBoardGrid';
 import { BatchAddDialog } from '../components/bid/BatchAddDialog';
 import { useBidBoardSocketInvalidation } from '../hooks/useBidBoardSocket';
+import { getMyProfile } from '../api/profile';
+import { ProgressWidget } from '../components/ProgressWidget';
 
 export default function BidPanelPage() {
   const { user } = useAuth();
@@ -137,6 +139,12 @@ export default function BidPanelPage() {
     queryFn: async () => (await api.get(`/groups/${groupId}/me`)).data as { role: string },
   });
   const isGroupOwner = groupMeQ.data?.role === 'creator';
+
+  const profileQ = useQuery({
+    queryKey: ['profile', 'me'] as const,
+    queryFn: getMyProfile,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const patchLinkUseless = useMutation({
     mutationFn: async (vars: { linkId: string; useless: boolean }) => {
@@ -269,6 +277,7 @@ export default function BidPanelPage() {
 
   return (
     <Stack spacing={2}>
+      <ProgressWidget groupId={groupId} />
       <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h5">Bid board</Typography>
         {isGroupOwner && (
@@ -498,6 +507,7 @@ export default function BidPanelPage() {
             currentUserId={user?.id}
             allowNewInputFlow={biddingEnabled}
             patchLinkUseless={patchLinkUseless}
+            myProfile={profileQ.data ?? null}
           />
         </Box>
       </Paper>

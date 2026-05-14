@@ -15,6 +15,10 @@ function bidBoardRoom(groupId) {
   return `bidboard:${groupId}`;
 }
 
+function userRoom(userId) {
+  return `user:${userId}`;
+}
+
 /** @type {import('socket.io').Server | null} */
 let ioInstance = null;
 
@@ -23,6 +27,12 @@ export function emitBidBoardInvalidate(groupId) {
   if (!ioInstance || !groupId) return;
   const g = String(groupId);
   ioInstance.to(bidBoardRoom(g)).emit('bidboard:invalidate', { groupId: g, t: Date.now() });
+}
+
+/** Push a notification to a specific user's private socket room (all of their open tabs). */
+export function emitNotificationToUser(userId, notification) {
+  if (!ioInstance || !userId || !notification) return;
+  ioInstance.to(userRoom(String(userId))).emit('notification:new', notification);
 }
 
 /** @type {Map<string, Map<string, number>>} groupId -> userId -> refCount */
@@ -95,6 +105,9 @@ export function registerHexGameSocket(io) {
 
   io.on('connection', (socket) => {
     const userId = socket.userId;
+    if (userId) {
+      void socket.join(userRoom(String(userId)));
+    }
 
     socket.on('presence:join', async (groupId, cb) => {
       try {

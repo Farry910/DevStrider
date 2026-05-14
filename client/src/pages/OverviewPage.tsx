@@ -52,6 +52,7 @@ import {
   OVERVIEW_WEIGHT_FIELD_META,
   type OverviewScoreWeights,
 } from '../utils/overviewScore';
+import { LeaderboardWidget } from '../components/LeaderboardWidget';
 
 type GroupMeOverview = {
   group: {
@@ -254,6 +255,8 @@ export default function OverviewPage() {
   return (
     <Stack spacing={2}>
       <Typography variant="h5">Group bid overview</Typography>
+
+      {groupId && <LeaderboardWidget groupId={groupId} />}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
         <ToggleButtonGroup

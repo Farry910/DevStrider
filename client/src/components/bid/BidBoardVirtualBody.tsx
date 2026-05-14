@@ -84,6 +84,8 @@ function bidderAvatarSx(
 import { FormatStatusBadge } from '../FormatStatusBadge';
 import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { presetAvatarSrc } from '../../avatarPresets';
+import { composeResume } from '../../utils/composeResume';
+import type { Profile } from '../../api/profile';
 
 const BID_STATUSES = [
   'draft',
@@ -217,6 +219,8 @@ type Props = {
     mutate: (vars: { linkId: string; useless: boolean }) => void;
     isPending: boolean;
   };
+  /** Caller's profile — used to compose the owner-only resume hover with header + body. */
+  myProfile?: Profile | null;
 };
 
 function EarlierBidTooltipBody({
@@ -462,6 +466,7 @@ export function BidBoardVirtualBody({
   currentUserId,
   allowNewInputFlow,
   patchLinkUseless,
+  myProfile,
 }: Props) {
   const [editingBidId, setEditingBidId] = useState<string | null>(null);
   const [bidActionsMenu, setBidActionsMenu] = useState<{
@@ -1057,8 +1062,17 @@ export function BidBoardVirtualBody({
                     <Tooltip {...BID_BOARD_TOOLTIP_COMMON}
                       describeChild
                       title={
-                        <Box sx={{ maxWidth: '100%', whiteSpace: 'pre-wrap', typography: 'caption' }}>
-                          {(b.gptResumeContent || '').trim() ? b.gptResumeContent : '—'}
+                        <Box
+                          sx={{
+                            maxWidth: 520,
+                            maxHeight: 480,
+                            overflow: 'auto',
+                            whiteSpace: 'pre-wrap',
+                            typography: 'caption',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {composeResume(myProfile, b.gptResumeContent ?? '') ?? '—'}
                         </Box>
                       }
                     >
@@ -1078,7 +1092,7 @@ export function BidBoardVirtualBody({
                     </Tooltip>
                     <CellCopyButton
                       label="GPT resume"
-                      getText={() => b.gptResumeContent}
+                      getText={() => composeResume(myProfile, b.gptResumeContent ?? '') ?? b.gptResumeContent}
                     />
                   </>
                 )}

@@ -34,11 +34,13 @@ import FeedbackOutlinedIcon from '@mui/icons-material/FeedbackOutlined';
 import WorkspacePremiumOutlinedIcon from '@mui/icons-material/WorkspacePremiumOutlined';
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
+import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
 import { useAuth } from '../auth/AuthContext';
 import { useGroupPresence } from '../hooks/useGroupPresence';
 import api from '../api/client';
 import { presetAvatarSrc } from '../avatarPresets';
 import { ProfileAvatarDialog } from '../components/ProfileAvatarDialog';
+import { NotificationBell } from '../components/NotificationBell';
 
 const DRAWER_WIDTH_EXPANDED = 268;
 const DRAWER_WIDTH_COLLAPSED = 72;
@@ -193,6 +195,25 @@ export default function DashboardLayout() {
               </ListItemIcon>
               {!collapsed && (
                 <ListItemText primary="My groups" primaryTypographyProps={{ variant: 'body2' }} />
+              )}
+            </ListItemButton>
+          </Tooltip>
+          <Tooltip title="Profile & goals" placement="right" disableHoverListener={!collapsed}>
+            <ListItemButton
+              component={NavLink}
+              to="/profile"
+              onClick={() => setMobileOpen(false)}
+              sx={{
+                ...itemSx(pathname === '/profile'),
+                justifyContent: collapsed ? 'center' : undefined,
+                px: collapsed ? 1 : undefined,
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
+                <PersonOutlineIcon fontSize="small" />
+              </ListItemIcon>
+              {!collapsed && (
+                <ListItemText primary="Profile & goals" primaryTypographyProps={{ variant: 'body2' }} />
               )}
             </ListItemButton>
           </Tooltip>
@@ -598,6 +619,7 @@ export default function DashboardLayout() {
               </Box>
             </Tooltip>
           )}
+          {user && <NotificationBell />}
           {user && (
             <>
               <IconButton

@@ -8,6 +8,7 @@ import { assertGroupMember } from '../services/membership.js';
 import { normalizeGroupUrl, normalizeGroupUrlBase } from '../utils/urlNorm.js';
 import { parseFastFeedLine, splitTrailingFastFeed } from '../utils/parseFastFeed.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
+import { awardAchievementsAsync } from '../services/achievementService.js';
 import { norm } from '../services/text.js';
 import { persistBidAssistantActivity } from '../services/bidAssistantActivityLog.js';
 
@@ -224,6 +225,7 @@ r.post(
         ...fastFeedSpread(parsedFf),
       });
       emitBidBoardInvalidate(groupId);
+      awardAchievementsAsync({ userId, groupId, kinds: ['daily_bids'] });
       await persistBidAssistantActivity({
         groupId,
         userId,
@@ -271,6 +273,7 @@ r.post(
       });
       await bid.save();
       emitBidBoardInvalidate(groupId);
+      awardAchievementsAsync({ userId, groupId, kinds: ['daily_bids'] });
       await persistBidAssistantActivity({
         groupId,
         userId,

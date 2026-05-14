@@ -10,6 +10,7 @@ import { escapeRegex } from '../utils/regex.js';
 import { norm } from '../services/text.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
 import { purgeEligibleJunkLinks } from '../services/junkLinkPurge.js';
+import { awardAchievementsAsync } from '../services/achievementService.js';
 
 const r = Router();
 r.use(requireAuth);
@@ -559,6 +560,11 @@ r.patch(
     }
 
     emitBidBoardInvalidate(req.params.groupId);
+    awardAchievementsAsync({
+      userId: req.user.id,
+      groupId: req.params.groupId,
+      kinds: ['daily_bids', 'monthly_offers'],
+    });
     return res.json({ bid });
   }
 );

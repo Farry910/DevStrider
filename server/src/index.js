@@ -17,6 +17,9 @@ import interviewRoutes from './routes/interview.routes.js';
 import statsRoutes from './routes/stats.routes.js';
 import badgeRoutes from './routes/badge.routes.js';
 import integrationBidAssistantRoutes from './routes/integrationBidAssistant.routes.js';
+import profileRoutes from './routes/profile.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
+import achievementRoutes from './routes/achievement.routes.js';
 import { registerHexGameSocket } from './socket/hexGameSocket.js';
 import { purgeEligibleJunkLinksUsingGroupTimers } from './services/junkLinkPurge.js';
 
@@ -86,6 +89,9 @@ app.use('/api', bidRoutes);
 app.use('/api', interviewRoutes);
 app.use('/api', statsRoutes);
 app.use('/api/integrations/bid-assistant', integrationBidAssistantRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api', achievementRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Not found' });

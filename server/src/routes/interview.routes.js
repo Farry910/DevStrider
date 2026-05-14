@@ -4,6 +4,7 @@ import { Interview, INTERVIEW_TYPES, INTERVIEW_ORIGINS } from '../models/Intervi
 import { UserBid } from '../models/UserBid.js';
 import { requireAuth } from '../middleware/auth.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
+import { awardAchievementsAsync } from '../services/achievementService.js';
 import { assertGroupMember } from '../services/membership.js';
 import { norm } from '../services/text.js';
 import { canFollow, allowedNextTypes } from '../services/interviewRules.js';
@@ -220,6 +221,11 @@ r.post(
     if (origin === 'bid') {
       emitBidBoardInvalidate(req.params.groupId);
     }
+    awardAchievementsAsync({
+      userId: req.user.id,
+      groupId: req.params.groupId,
+      kinds: ['weekly_interviews'],
+    });
 
     return res.status(201).json({ interview: doc });
   }
