@@ -1,8 +1,8 @@
 {
   "name": "devstrider",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "DevStrider — group workspace for bids, interviews, stats, and collaboration (v1.0)",
+  "description": "DevStrider — group workspace for bids, interviews, stats, and collaboration",
   "workspaces": [
     "client",
     "server"
