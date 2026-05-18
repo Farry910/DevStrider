@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { GroupMembersPanel } from '../components/GroupMembersPanel';
 
 type GroupTimers = {
   junkRemovalGraceMinutes: number;
@@ -413,6 +414,8 @@ export default function GroupSettingsPage() {
           </Alert>
         )}
       </Paper>
+
+      <GroupMembersPanel groupId={groupId} isAdmin={meQ.data.role === 'creator'} />
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>

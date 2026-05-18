@@ -27,6 +27,8 @@ import { BatchAddDialog } from '../components/bid/BatchAddDialog';
 import { useBidBoardSocketInvalidation } from '../hooks/useBidBoardSocket';
 import { getMyProfile } from '../api/profile';
 import { ProgressWidget } from '../components/ProgressWidget';
+import { useGroupPermissions } from '../hooks/useGroupPermissions';
+import { DownloadCsvButton } from '../components/DownloadCsvButton';
 import {
   isOptimisticId,
   makeOptimisticLinkRow,
@@ -188,6 +190,8 @@ export default function BidPanelPage() {
     queryFn: getMyProfile,
     staleTime: 5 * 60 * 1000,
   });
+
+  const perms = useGroupPermissions(groupId);
 
   const patchLinkUseless = useMutation({
     mutationFn: async (vars: { linkId: string; useless: boolean }) => {
@@ -462,7 +466,10 @@ export default function BidPanelPage() {
             </span>
           </Tooltip>
         )}
-        {biddingEnabled && (carryoverCountQ.data?.count ?? 0) > 0 && (
+        {perms.canExport && groupId && (
+          <DownloadCsvButton groupId={groupId} kind="bids" />
+        )}
+        {biddingEnabled && perms.canBid && (carryoverCountQ.data?.count ?? 0) > 0 && (
           <Tooltip title="Move yesterday's links you didn't apply to onto today's board (other members are unaffected).">
             <span>
               <Button
@@ -594,7 +601,7 @@ export default function BidPanelPage() {
           }}
         >
           <BidBoardStickyHeader sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-          {biddingEnabled && (
+          {biddingEnabled && perms.canBid && (
             <Box
               sx={{
                 ...bidBoardRowGridSx,
@@ -652,15 +659,15 @@ export default function BidPanelPage() {
             setFastFeed={setFastFeed}
             commitFastFeed={commitFastFeed}
             patchBid={patchBid}
-            readOnly={false}
             deleteBid={deleteBid}
             ivDraft={ivDraft}
             setIvDraft={setIvDraft}
             createInterview={createInterview}
             currentUserId={user?.id}
-            allowNewInputFlow={biddingEnabled}
+            allowNewInputFlow={biddingEnabled && perms.canBid}
             patchLinkUseless={patchLinkUseless}
             myProfile={profileQ.data ?? null}
+            readOnly={!perms.canBid}
           />
         </Box>
       </Paper>

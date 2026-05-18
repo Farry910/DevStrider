@@ -13,7 +13,13 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { AVATAR_PRESET_IDS, presetAvatarSrc, type AvatarId } from '../avatarPresets';
 
-type SessionUser = { id: string; email: string; nickname: string; avatarId: string };
+type SessionUser = {
+  id: string;
+  email: string;
+  nickname: string;
+  avatarId: string;
+  platformRole: 'user' | 'admin';
+};
 
 function initialLetter(nickname: string) {
   const t = nickname.trim();

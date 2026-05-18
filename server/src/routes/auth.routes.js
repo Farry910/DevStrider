@@ -14,6 +14,7 @@ function publicUser(u) {
     email: u.email,
     nickname: u.nickname,
     avatarId: u.avatarId && isAllowedAvatarId(u.avatarId) ? u.avatarId : 'initial',
+    platformRole: u.platformRole === 'admin' ? 'admin' : 'user',
   };
 }
 

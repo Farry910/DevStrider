@@ -52,10 +52,17 @@ r.get('/', async (req, res) => {
 });
 
 r.get('/all', async (_req, res) => {
-  const groups = await Group.find({}).sort({ name: 1 }).lean();
+  /** Discovery view: hide pending-approval groups so users can't join them yet. */
+  const groups = await Group.find({ status: { $ne: 'pending' } })
+    .sort({ name: 1 })
+    .lean();
   return res.json({ groups });
 });
 
+/**
+ * Create a group. New groups start `status: 'pending'` and are invisible in normal listings until
+ * a platform admin approves them. The creator is auto-added as the only member (admin via creatorId).
+ */
 r.post(
   '/',
   body('name').trim().isLength({ min: 1, max: 120 }),
@@ -64,12 +71,15 @@ r.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, locationKey } = req.body;
-    const g = await Group.create({
+    const g = new Group({
       name,
       locationKey: String(locationKey).toLowerCase(),
       creatorId: req.user.id,
       memberIds: [req.user.id],
+      members: [{ userId: req.user.id, roles: ['ops'], watches: [], joinedAt: new Date() }],
+      status: 'pending',
     });
+    await g.save();
     return res.status(201).json({ group: g });
   }
 );
@@ -126,9 +136,15 @@ r.post(
     if (!jr) return res.status(404).json({ error: 'Request not found' });
     jr.status = 'approved';
     await jr.save();
-    await Group.findByIdAndUpdate(req.params.groupId, {
-      $addToSet: { memberIds: jr.userId },
-    });
+    /** Add joiner with default role ['ops'] and empty watches; admin can grant more later. */
+    const g = await Group.findById(req.params.groupId);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    const uid = jr.userId;
+    const alreadyMember = (g.members || []).some((m) => String(m.userId) === String(uid));
+    if (!alreadyMember) {
+      g.members.push({ userId: uid, roles: ['ops'], watches: [], joinedAt: new Date() });
+      await g.save();
+    }
     return res.json({ ok: true });
   }
 );
@@ -207,14 +223,26 @@ r.get('/:groupId/me', param('groupId').isMongoId(), async (req, res) => {
   const g = await Group.findById(req.params.groupId).lean();
   if (!g) return res.status(404).json({ error: 'Group not found' });
   const uid = String(req.user.id);
-  const isMember = g.memberIds.some((id) => String(id) === uid);
+  const isMember = (g.memberIds || []).some((id) => String(id) === uid);
   const isCreator = String(g.creatorId) === uid;
+  const memberRecord = (g.members || []).find((m) => String(m.userId) === uid) || null;
+  const memberRoles = memberRecord ? memberRecord.roles : [];
+  const watches = memberRecord ? (memberRecord.watches || []).map(String) : [];
+  /** Effective roles include 'admin' for the creator; explicit member roles otherwise. */
+  const effectiveRoles = isCreator
+    ? ['admin', 'bidder', 'caller', 'ops']
+    : memberRoles;
   const assisterId = g.removalAssisterId ? String(g.removalAssisterId) : null;
   const timers = mergeGroupTimers(g.timers, {});
   return res.json({
     group: { ...g, timers },
     role: isCreator ? 'creator' : isMember ? 'member' : 'none',
     isMember,
+    /** New role surface for UI gating. */
+    effectiveRoles,
+    memberRoles,
+    watches,
+    status: g.status || 'approved',
     removal: {
       assisterUserId: assisterId,
       ownerConfirmedAt: g.removalOwnerConfirmedAt,
@@ -378,6 +406,89 @@ r.patch(
     g.removalAssisterConfirmedAt = null;
     await g.save();
     return res.json({ group: g.toObject() });
+  }
+);
+
+/**
+ * Group members + their roles + watches. Visible to any member (so callers/ops know who's who).
+ * Admins use this list to manage role grants.
+ */
+r.get('/:groupId/members-detailed', param('groupId').isMongoId(), async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  const m = await assertGroupMember(req.user.id, req.params.groupId);
+  if (!m.ok) return res.status(m.status).json({ error: m.error });
+  const g = m.group;
+  const userIds = (g.members || []).map((mm) => mm.userId);
+  const users = await User.find({ _id: { $in: userIds } })
+    .select('nickname email avatarId')
+    .lean();
+  const userById = new Map(users.map((u) => [String(u._id), u]));
+  const members = (g.members || []).map((mm) => {
+    const u = userById.get(String(mm.userId));
+    return {
+      userId: String(mm.userId),
+      nickname: u?.nickname || '',
+      email: u?.email || '',
+      avatarId: u?.avatarId || 'initial',
+      roles: mm.roles || [],
+      watches: (mm.watches || []).map(String),
+      joinedAt: mm.joinedAt,
+      isCreator: String(g.creatorId) === String(mm.userId),
+    };
+  });
+  return res.json({ members });
+});
+
+/** Admin: replace a member's roles. Sends 400 if the target is the creator (admin is implicit). */
+r.patch(
+  '/:groupId/members/:userId/roles',
+  param('groupId').isMongoId(),
+  param('userId').isMongoId(),
+  body('roles').isArray({ min: 0, max: 3 }),
+  body('roles.*').isIn(['bidder', 'caller', 'ops']),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const g = await Group.findById(req.params.groupId);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    if (String(g.creatorId) === String(req.params.userId)) {
+      return res.status(400).json({ error: 'Group owner roles are managed by ownership transfer' });
+    }
+    const target = g.members.find((m) => String(m.userId) === String(req.params.userId));
+    if (!target) return res.status(404).json({ error: 'Member not found' });
+    /** Dedup + ensure default ['ops'] if empty so the user always has at least watch capability. */
+    const next = [...new Set(req.body.roles)];
+    target.roles = next.length === 0 ? ['ops'] : next;
+    await g.save();
+    return res.json({ ok: true, roles: target.roles });
+  }
+);
+
+/** Admin: replace a member's watches (the set of bidder userIds they can see). */
+r.patch(
+  '/:groupId/members/:userId/watches',
+  param('groupId').isMongoId(),
+  param('userId').isMongoId(),
+  body('watches').isArray({ min: 0, max: 500 }),
+  body('watches.*').isMongoId(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const g = await Group.findById(req.params.groupId);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    const target = g.members.find((m) => String(m.userId) === String(req.params.userId));
+    if (!target) return res.status(404).json({ error: 'Member not found' });
+    /** Only allow watching actual group members. */
+    const memberSet = new Set(g.members.map((m) => String(m.userId)));
+    const watches = [...new Set(req.body.watches.map(String))].filter((id) => memberSet.has(id));
+    target.watches = watches;
+    await g.save();
+    return res.json({ ok: true, watches: target.watches });
   }
 );
 

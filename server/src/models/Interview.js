@@ -33,6 +33,15 @@ const interviewSchema = new mongoose.Schema(
     },
     userComment: { type: String, default: '' },
     parentInterviewId: { type: mongoose.Schema.Types.ObjectId, ref: 'Interview', default: null },
+
+    /**
+     * Snapshot of the source bid's JD + resume content at the moment the interview was scheduled.
+     * Stays stable for CALLERs even if the underlying bid is later edited or deleted; copied once
+     * at create time, never re-fetched.
+     */
+    attachedJobDescription: { type: String, default: '' },
+    attachedResumeContent: { type: String, default: '' },
+    attachedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

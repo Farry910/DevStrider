@@ -3,7 +3,7 @@ import { body, param, query, validationResult } from 'express-validator';
 import { GroupLink } from '../models/GroupLink.js';
 import { UserBid, BID_STATUSES } from '../models/UserBid.js';
 import { requireAuth } from '../middleware/auth.js';
-import { assertGroupCreator, assertGroupMember } from '../services/membership.js';
+import { assertGroupCreator, assertGroupMember, assertGroupRole } from '../services/membership.js';
 import { buildBidBoardPage } from '../services/bidBoard.js';
 import { normalizeGroupUrl } from '../utils/urlNorm.js';
 import { escapeRegex } from '../utils/regex.js';
@@ -165,7 +165,7 @@ r.post(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const url = req.body.url.trim();
     const urlNorm = normalizeGroupUrl(url);
@@ -260,7 +260,7 @@ r.post(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const w = parseBiddingWindow(req.query.from, req.query.to);
     if (!w.ok) return res.status(w.status).json({ error: w.error });
@@ -302,7 +302,7 @@ r.patch(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const link = await GroupLink.findOne({
       _id: req.params.linkId,
@@ -327,7 +327,7 @@ r.patch(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const link = await GroupLink.findOne({
       _id: req.params.linkId,
@@ -428,7 +428,7 @@ r.post(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const { start, end } = utcYesterdayBounds();
     const links = await GroupLink.find({
@@ -497,7 +497,7 @@ r.patch(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const bid = await UserBid.findOne({
       _id: req.params.bidId,
@@ -579,7 +579,7 @@ r.delete(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const bid = await UserBid.findOne({
       _id: req.params.bidId,

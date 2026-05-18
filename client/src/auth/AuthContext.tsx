@@ -2,19 +2,28 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import api, { loadStoredToken, setAuthToken } from '../api/client';
 import { disconnectAppSocket, syncAppSocketAuth } from '../socket/appSocket';
 
-type User = { id: string; email: string; nickname: string; avatarId: string };
+type User = {
+  id: string;
+  email: string;
+  nickname: string;
+  avatarId: string;
+  /** 'admin' = seeded platform admin (approves groups, transfers ownership). */
+  platformRole: 'user' | 'admin';
+};
 
 function normalizeUser(u: {
   id: string;
   email: string;
   nickname: string;
   avatarId?: string;
+  platformRole?: string;
 }): User {
   return {
     id: u.id,
     email: u.email,
     nickname: u.nickname,
     avatarId: u.avatarId ?? 'initial',
+    platformRole: u.platformRole === 'admin' ? 'admin' : 'user',
   };
 }
 

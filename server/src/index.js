@@ -20,8 +20,11 @@ import integrationBidAssistantRoutes from './routes/integrationBidAssistant.rout
 import profileRoutes from './routes/profile.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import achievementRoutes from './routes/achievement.routes.js';
+import platformAdminRoutes from './routes/platformAdmin.routes.js';
+import exportRoutes from './routes/export.routes.js';
 import { registerHexGameSocket } from './socket/hexGameSocket.js';
 import { purgeEligibleJunkLinksUsingGroupTimers } from './services/junkLinkPurge.js';
+import { ensurePlatformAdmin } from './services/platformAdminSeed.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,6 +95,8 @@ app.use('/api/integrations/bid-assistant', integrationBidAssistantRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api', achievementRoutes);
+app.use('/api/admin', platformAdminRoutes);
+app.use('/api', exportRoutes);
 
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -151,7 +156,10 @@ process.on('uncaughtException', (err) => {
 });
 
 connectDb(uri)
-  .then(() => {
+  .then(async () => {
+    await ensurePlatformAdmin().catch((e) => {
+      console.error('[platformAdminSeed] failed', e);
+    });
     httpServer.listen(PORT, HOST, () => {
       if (HOST === '0.0.0.0' || HOST === '::') {
         console.log(

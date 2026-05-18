@@ -5,7 +5,13 @@ import { UserBid } from '../models/UserBid.js';
 import { requireAuth } from '../middleware/auth.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
 import { awardAchievementsAsync } from '../services/achievementService.js';
-import { assertGroupMember } from '../services/membership.js';
+import {
+  assertGroupMember,
+  assertGroupRole,
+  getEffectiveRoles,
+  watchedUserIdsFor,
+} from '../services/membership.js';
+import { GroupLink } from '../models/GroupLink.js';
 import { norm } from '../services/text.js';
 import { canFollow, allowedNextTypes } from '../services/interviewRules.js';
 import {
@@ -18,6 +24,35 @@ const r = Router();
 r.use(requireAuth);
 
 const MAX_INTERVIEW_LIST = 2000;
+
+/**
+ * Filter value for `userId` on Interview queries, based on caller's roles in this group.
+ * - ADMIN: undefined (no userId filter — sees all).
+ * - CALLER/OPS: `{ $in: watches }` or null when watches is empty (deny everything).
+ * - BIDDER (no caller/ops): own userId only.
+ */
+function userScopeFor(group, userId) {
+  const roles = getEffectiveRoles(group, userId);
+  if (roles.includes('admin')) return { kind: 'all' };
+  if (roles.includes('caller') || roles.includes('ops')) {
+    const watches = watchedUserIdsFor(group, userId);
+    if (watches.length === 0) return { kind: 'none' };
+    return { kind: 'in', ids: watches };
+  }
+  return { kind: 'self' };
+}
+
+function applyUserScopeToMatch(match, scope, callerUserId) {
+  if (scope.kind === 'all') {
+    /** ADMIN: drop the userId restriction entirely. */
+    const { userId, ...rest } = match;
+    void userId;
+    return rest;
+  }
+  if (scope.kind === 'none') return { ...match, userId: { $in: [] } };
+  if (scope.kind === 'in') return { ...match, userId: { $in: scope.ids } };
+  return { ...match, userId: callerUserId };
+}
 
 /** Depth-first delete so child interviews are removed before parents. */
 async function deleteInterviewAndDescendants(interviewId, groupId, userId) {
@@ -53,6 +88,7 @@ r.get(
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const m = await assertGroupMember(req.user.id, req.params.groupId);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
+    const scope = userScopeFor(m.group, req.user.id);
     const t0 = new Date(req.query.from);
     const t1 = new Date(req.query.to);
     const filters = {
@@ -66,7 +102,8 @@ r.get(
       userComment: req.query.f_userComment,
     };
     const baseMatch = buildInterviewMatch(req.params.groupId, req.user.id, filters);
-    const match = mergeInterviewMatchWithWindow(baseMatch, t0, t1);
+    const scopedMatch = applyUserScopeToMatch(baseMatch, scope, req.user.id);
+    const match = mergeInterviewMatchWithWindow(scopedMatch, t0, t1);
     const sortObj = parseInterviewSort(req.query.sort);
     const [total, items] = await Promise.all([
       Interview.countDocuments(match),
@@ -125,7 +162,7 @@ r.post(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['bidder', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
 
     const {
@@ -188,6 +225,32 @@ r.post(
       bidDocForInterview = bid;
     }
 
+    /**
+     * Snapshot JD + resume for CALLER reference. Prefer bid.jobDescription; fall back to the
+     * shared JD on the link. For follow-up interviews (parentInterviewId), inherit from the parent
+     * so callers see the same context across the chain.
+     */
+    let attachedJobDescription = '';
+    let attachedResumeContent = '';
+    if (bidDocForInterview) {
+      attachedJobDescription = (bidDocForInterview.jobDescription || '').trim();
+      if (!attachedJobDescription && bidDocForInterview.groupLinkId) {
+        const lk = await GroupLink.findById(bidDocForInterview.groupLinkId)
+          .select('sharedJobDescription')
+          .lean();
+        attachedJobDescription = (lk?.sharedJobDescription || '').trim();
+      }
+      attachedResumeContent = (bidDocForInterview.gptResumeContent || '').trim();
+    } else if (parentInterviewId) {
+      const parentFull = await Interview.findById(parentInterviewId)
+        .select('attachedJobDescription attachedResumeContent')
+        .lean();
+      if (parentFull) {
+        attachedJobDescription = parentFull.attachedJobDescription || '';
+        attachedResumeContent = parentFull.attachedResumeContent || '';
+      }
+    }
+
     const doc = await Interview.create({
       userId: req.user.id,
       groupId: req.params.groupId,
@@ -205,6 +268,10 @@ r.post(
       status: status || 'scheduled',
       userComment: userComment || '',
       parentInterviewId: parentInterviewId || null,
+      attachedJobDescription,
+      attachedResumeContent,
+      attachedAt:
+        attachedJobDescription || attachedResumeContent ? new Date() : null,
     });
 
     if (origin === 'bid' && bidDocForInterview && !parentInterviewId) {
@@ -251,14 +318,21 @@ r.patch(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['caller', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const iv = await Interview.findOne({
       _id: req.params.interviewId,
       groupId: req.params.groupId,
-      userId: req.user.id,
     });
     if (!iv) return res.status(404).json({ error: 'Interview not found' });
+    /** CALLER must have the interview's owner in their watches; ADMIN bypasses. */
+    const roles = m.roles || [];
+    if (!roles.includes('admin')) {
+      const watches = watchedUserIdsFor(m.group, req.user.id);
+      if (!watches.includes(String(iv.userId))) {
+        return res.status(403).json({ error: 'Interview owner not in your watches' });
+      }
+    }
 
     const keys = [
       'meetingLink',
@@ -311,15 +385,25 @@ r.delete(
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    const m = await assertGroupRole(req.user.id, req.params.groupId, ['caller', 'admin']);
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const iv = await Interview.findOne({
       _id: req.params.interviewId,
       groupId: req.params.groupId,
-      userId: req.user.id,
     });
     if (!iv) return res.status(404).json({ error: 'Interview not found' });
-    await deleteInterviewAndDescendants(req.params.interviewId, req.params.groupId, req.user.id);
+    const roles = m.roles || [];
+    if (!roles.includes('admin')) {
+      const watches = watchedUserIdsFor(m.group, req.user.id);
+      if (!watches.includes(String(iv.userId))) {
+        return res.status(403).json({ error: 'Interview owner not in your watches' });
+      }
+    }
+    await deleteInterviewAndDescendants(
+      req.params.interviewId,
+      req.params.groupId,
+      iv.userId
+    );
     return res.status(204).send();
   }
 );

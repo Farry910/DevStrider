@@ -35,6 +35,7 @@ import WorkspacePremiumOutlinedIcon from '@mui/icons-material/WorkspacePremiumOu
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
+import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import { useAuth } from '../auth/AuthContext';
 import { useGroupPresence } from '../hooks/useGroupPresence';
 import api from '../api/client';
@@ -217,6 +218,27 @@ export default function DashboardLayout() {
               )}
             </ListItemButton>
           </Tooltip>
+          {user?.platformRole === 'admin' && (
+            <Tooltip title="Platform admin" placement="right" disableHoverListener={!collapsed}>
+              <ListItemButton
+                component={NavLink}
+                to="/admin"
+                onClick={() => setMobileOpen(false)}
+                sx={{
+                  ...itemSx(pathname === '/admin'),
+                  justifyContent: collapsed ? 'center' : undefined,
+                  px: collapsed ? 1 : undefined,
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
+                  <AdminPanelSettingsOutlinedIcon fontSize="small" />
+                </ListItemIcon>
+                {!collapsed && (
+                  <ListItemText primary="Platform admin" primaryTypographyProps={{ variant: 'body2' }} />
+                )}
+              </ListItemButton>
+            </Tooltip>
+          )}
         </List>
 
         <Divider sx={{ my: collapsed ? 1 : 1.5, mx: collapsed ? 0.75 : 1 }} />

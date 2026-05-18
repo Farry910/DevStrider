@@ -15,6 +15,7 @@ import ProfileBadgesPage from './pages/ProfileBadgesPage';
 import GroupProfileBadgeRequestsPage from './pages/GroupProfileBadgeRequestsPage';
 import GroupFeedbackPage from './pages/GroupFeedbackPage';
 import ProfileSettingsPage from './pages/ProfileSettingsPage';
+const PlatformAdminPage = lazy(() => import('./pages/PlatformAdminPage'));
 const InterviewPanelPage = lazy(() => import('./pages/InterviewPanelPage'));
 const StatsPage = lazy(() => import('./pages/StatsPage'));
 const OverviewPage = lazy(() => import('./pages/OverviewPage'));
@@ -49,6 +50,14 @@ export default function App() {
         <Route path="/" element={<DashboardLayout />}>
           <Route index element={<MyGroupsPage />} />
           <Route path="profile" element={<ProfileSettingsPage />} />
+          <Route
+            path="admin"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <PlatformAdminPage />
+              </Suspense>
+            }
+          />
           <Route path="g/:groupId" element={<GroupLandingPage />} />
           <Route path="g/:groupId/bids" element={<BidPanelPage />} />
           <Route

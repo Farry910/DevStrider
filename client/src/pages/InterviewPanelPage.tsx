@@ -27,10 +27,13 @@ import {
   interviewBoundsFromMonthField,
   type InterviewRangeMode,
 } from '../utils/interviewWindow';
+import { useGroupPermissions } from '../hooks/useGroupPermissions';
+import { DownloadCsvButton } from '../components/DownloadCsvButton';
 
 export default function InterviewPanelPage() {
   const { groupId } = useParams();
   const qc = useQueryClient();
+  const perms = useGroupPermissions(groupId);
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const setScrollRoot = useCallback((node: HTMLDivElement | null) => {
     setScrollEl(node);
@@ -172,7 +175,19 @@ export default function InterviewPanelPage() {
           {formatInterviewRangeCaption(rangeMode, weekField, monthField)} · scheduled or completed in range ·{' '}
           {q.data?.total ?? '—'} shown
         </Typography>
+        {perms.canExport && groupId && (
+          <DownloadCsvButton groupId={groupId} kind="interviews" />
+        )}
       </Stack>
+      {!perms.canEditInterview && !perms.isOpsOnly && (
+        <Alert severity="info">
+          You can view interviews here but only CALLERs and the group admin can edit them. Use the
+          bid board to schedule new interviews from your bids.
+        </Alert>
+      )}
+      {perms.isOpsOnly && (
+        <Alert severity="info">View-only mode — your role is OPS.</Alert>
+      )}
 
       {q.isLoading && <LinearProgress />}
       {q.isError && <Alert severity="error">Could not load interviews.</Alert>}

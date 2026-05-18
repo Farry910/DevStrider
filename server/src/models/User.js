@@ -64,6 +64,12 @@ const userSchema = new mongoose.Schema(
     goals: { type: goalsSchema, default: () => ({}) },
     /** When false, the user is rendered as anonymous on the group leaderboard. Always sees their own row. */
     showOnLeaderboard: { type: Boolean, default: true },
+
+    /**
+     * Cross-group platform role. 'admin' = seeded platform admin who approves group creation,
+     * transfers ownership, and views total storage. Everyone else is 'user'.
+     */
+    platformRole: { type: String, enum: ['user', 'admin'], default: 'user' },
   },
   { timestamps: true }
 );
