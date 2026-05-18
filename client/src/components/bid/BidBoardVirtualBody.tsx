@@ -86,6 +86,7 @@ import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { presetAvatarSrc } from '../../avatarPresets';
 import { composeResume } from '../../utils/composeResume';
 import type { Profile } from '../../api/profile';
+import { isOptimisticId } from '../../utils/optimisticBidBoard';
 
 const BID_STATUSES = [
   'draft',
@@ -524,13 +525,16 @@ export function BidBoardVirtualBody({
         const showFastFeed =
           allowNewInputFlow && !readOnly && (!b || rowEditing || isUnfilledBid);
 
-        const rowBg = row.companyInterviewWarning
-          ? 'rgba(244,67,54,0.12)'
-          : row.link.markedUselessAt
-            ? 'rgba(97,97,97,0.12)'
-            : row.duplicateCompanyRole || row.duplicateEarlierUrlBid
-              ? 'rgba(255,193,7,0.08)'
-              : 'transparent';
+        const isOptRow = isOptimisticId(row.link.id);
+        const rowBg = isOptRow
+          ? 'rgba(33,150,243,0.10)'
+          : row.companyInterviewWarning
+            ? 'rgba(244,67,54,0.12)'
+            : row.link.markedUselessAt
+              ? 'rgba(97,97,97,0.12)'
+              : row.duplicateCompanyRole || row.duplicateEarlierUrlBid
+                ? 'rgba(255,193,7,0.08)'
+                : 'transparent';
 
         if (bidReadyCompactLayout) {
           const existingBidIdForFeed = b?.id ?? null;
@@ -601,7 +605,8 @@ export function BidBoardVirtualBody({
                   {currentUserId &&
                     row.link.createdByUserId === currentUserId &&
                     !readOnly &&
-                    !row.link.markedUselessAt && (
+                    !row.link.markedUselessAt &&
+                    !isOptRow && (
                     <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="Mark posting as useless (everyone will see the Useless tag). Owner or auto-remove ≥10 min if allowed.">
                       <span>
                         <IconButton
@@ -706,13 +711,15 @@ export function BidBoardVirtualBody({
 
         const stacks = (b.primaryStacks || []).join(', ');
         const rk = (suffix: string) => `${b.id}-${suffix}-${b.updatedAt}`;
-        const fullRowBg = row.companyInterviewWarning
-          ? 'rgba(244,67,54,0.12)'
-          : row.link.markedUselessAt
-            ? 'rgba(97,97,97,0.12)'
-            : row.duplicateCompanyRole || row.duplicateEarlierUrlBid
-              ? 'rgba(255,193,7,0.08)'
-              : 'transparent';
+        const fullRowBg = isOptRow
+          ? 'rgba(33,150,243,0.10)'
+          : row.companyInterviewWarning
+            ? 'rgba(244,67,54,0.12)'
+            : row.link.markedUselessAt
+              ? 'rgba(97,97,97,0.12)'
+              : row.duplicateCompanyRole || row.duplicateEarlierUrlBid
+                ? 'rgba(255,193,7,0.08)'
+                : 'transparent';
 
         return (
           <Box
@@ -1202,12 +1209,13 @@ export function BidBoardVirtualBody({
                   width: '100%',
                 }}
               >
-                <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="Row actions">
+                <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title={isOptRow ? 'Saving…' : 'Row actions'}>
                   <IconButton
                     size="small"
                     aria-label="Open row actions"
                     aria-haspopup="true"
                     aria-expanded={bidActionsMenu?.bidId === b.id ? 'true' : undefined}
+                    disabled={isOptRow}
                     onClick={(e) =>
                       setBidActionsMenu(
                         bidActionsMenu?.bidId === b.id ? null : { bidId: b.id, anchor: e.currentTarget }

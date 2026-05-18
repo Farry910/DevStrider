@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -27,6 +27,13 @@ import { BatchAddDialog } from '../components/bid/BatchAddDialog';
 import { useBidBoardSocketInvalidation } from '../hooks/useBidBoardSocket';
 import { getMyProfile } from '../api/profile';
 import { ProgressWidget } from '../components/ProgressWidget';
+import {
+  isOptimisticId,
+  makeOptimisticLinkRow,
+  patchAllBoardQueries,
+  rollbackBoardQueries,
+  type BidBoardData,
+} from '../utils/optimisticBidBoard';
 
 export default function BidPanelPage() {
   const { user } = useAuth();
@@ -99,6 +106,17 @@ export default function BidPanelPage() {
   const q = useQuery({
     queryKey: ['bid-board', groupId, selectedDay, sortParam, showPastLinkOnlyRows] as const,
     enabled: !!groupId,
+    /**
+     * Cross-region Mongo + heavy aggregation makes this ~1s on free tier. Cache for 30s so
+     * re-clicking the same day or coming back to the tab is instant; socket invalidation still
+     * forces refetch when teammates change something.
+     */
+    staleTime: 30_000,
+    /**
+     * When switching days, keep the previous day's rows visible while the new request is in
+     * flight. The user sees an instant "filter" feel instead of an empty page for ~1s.
+     */
+    placeholderData: keepPreviousData,
     queryFn: async ({ queryKey }) => {
       const [, gid, day, sort, showEmptyPast] = queryKey;
       const { from, to } = localDayIsoRange(day);
@@ -121,15 +139,40 @@ export default function BidPanelPage() {
   });
 
   const addLink = useMutation({
+    /**
+     * Optimistic add: clear input, insert a placeholder row immediately. Server may still take
+     * ~1s on free Render → free Atlas (cross-region). Reconcile via invalidate on settle.
+     */
     mutationFn: async (url: string) => {
       const { from, to } = localDayIsoRange(todayLocalYmd());
       const { data } = await api.post(`/groups/${groupId}/links`, { url, from, to });
       return { data, url };
     },
-    onSuccess: () => {
+    onMutate: async (url: string) => {
+      if (!groupId || !user) return { snapshots: [] };
+      await qc.cancelQueries({ queryKey: ['bid-board', groupId] });
+      const optimisticRow = makeOptimisticLinkRow({
+        url,
+        userId: user.id,
+        nickname: user.nickname || '',
+        avatarId: user.avatarId || 'initial',
+      });
+      const snapshots = patchAllBoardQueries(qc, groupId, (prev: BidBoardData) => ({
+        ...prev,
+        rows: [optimisticRow, ...prev.rows],
+        total: prev.total + 1,
+      }));
       setComposerUrl('');
-      void qc.invalidateQueries({ queryKey: ['bid-board', groupId] });
       setComposerFocusTick((t) => t + 1);
+      return { snapshots };
+    },
+    onError: (_err, _url, ctx) => {
+      if (ctx?.snapshots) rollbackBoardQueries(qc, ctx.snapshots);
+    },
+    onSettled: () => {
+      if (groupId) {
+        void qc.invalidateQueries({ queryKey: ['bid-board', groupId] });
+      }
     },
   });
 
@@ -148,9 +191,27 @@ export default function BidPanelPage() {
 
   const patchLinkUseless = useMutation({
     mutationFn: async (vars: { linkId: string; useless: boolean }) => {
+      if (isOptimisticId(vars.linkId)) return;
       await api.patch(`/groups/${groupId}/links/${vars.linkId}/useless`, { useless: vars.useless });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
+    onMutate: async (vars) => {
+      if (!groupId || isOptimisticId(vars.linkId)) return { snapshots: [] };
+      await qc.cancelQueries({ queryKey: ['bid-board', groupId] });
+      const stamp = vars.useless ? new Date().toISOString() : null;
+      const snapshots = patchAllBoardQueries(qc, groupId, (prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) =>
+          r.link.id === vars.linkId
+            ? { ...r, link: { ...r.link, markedUselessAt: stamp } }
+            : r
+        ),
+      }));
+      return { snapshots };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.snapshots) rollbackBoardQueries(qc, ctx.snapshots);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
   });
 
   const refreshJunkLinks = useMutation({
@@ -186,22 +247,74 @@ export default function BidPanelPage() {
 
   const patchBid = useMutation({
     mutationFn: async (payload: { bidId: string; body: Record<string, unknown> }) => {
+      if (isOptimisticId(payload.bidId)) return;
       const { from, to } = localDayIsoRange(selectedDay);
       return api.patch(`/groups/${groupId}/bids/${payload.bidId}`, payload.body, {
         params: { from, to },
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
+    onMutate: async (payload) => {
+      if (!groupId || isOptimisticId(payload.bidId)) return { snapshots: [] };
+      await qc.cancelQueries({ queryKey: ['bid-board', groupId] });
+      const body = payload.body;
+      const snapshots = patchAllBoardQueries(qc, groupId, (prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) => {
+          if (!r.myBid || r.myBid.id !== payload.bidId) return r;
+          return {
+            ...r,
+            myBid: {
+              ...r.myBid,
+              ...('resumeId' in body ? { resumeId: String(body.resumeId ?? '') } : {}),
+              ...('company' in body ? { company: String(body.company ?? '') } : {}),
+              ...('role' in body ? { role: String(body.role ?? '') } : {}),
+              ...('primaryStacks' in body
+                ? { primaryStacks: Array.isArray(body.primaryStacks) ? (body.primaryStacks as string[]) : [] }
+                : {}),
+              ...('status' in body ? { status: String(body.status ?? r.myBid.status) } : {}),
+              ...('origin' in body ? { origin: String(body.origin ?? '') } : {}),
+              ...('jobDescription' in body
+                ? { jobDescription: String(body.jobDescription ?? '') }
+                : {}),
+              ...('gptResumeContent' in body
+                ? { gptResumeContent: String(body.gptResumeContent ?? '') }
+                : {}),
+              ...('comment' in body ? { comment: String(body.comment ?? '') } : {}),
+              updatedAt: new Date().toISOString(),
+            },
+          };
+        }),
+      }));
+      return { snapshots };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.snapshots) rollbackBoardQueries(qc, ctx.snapshots);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
   });
 
   const deleteBid = useMutation({
     mutationFn: async (bidId: string) => {
+      if (isOptimisticId(bidId)) return;
       const { from, to } = localDayIsoRange(selectedDay);
       return api.delete(`/groups/${groupId}/bids/${bidId}`, {
         params: { from, to },
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
+    onMutate: async (bidId) => {
+      if (!groupId || isOptimisticId(bidId)) return { snapshots: [] };
+      await qc.cancelQueries({ queryKey: ['bid-board', groupId] });
+      const snapshots = patchAllBoardQueries(qc, groupId, (prev) => ({
+        ...prev,
+        rows: prev.rows.filter((r) => r.myBid?.id !== bidId),
+        total: Math.max(0, prev.total - 1),
+      }));
+      return { snapshots };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.snapshots) rollbackBoardQueries(qc, ctx.snapshots);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['bid-board', groupId] }),
   });
 
   const createInterview = useMutation({
@@ -231,10 +344,53 @@ export default function BidPanelPage() {
 
   async function commitFastFeed(linkId: string, existingBidId: string | null) {
     if (!biddingEnabled || !groupId) return;
+    if (isOptimisticId(linkId)) return; // parent link not yet saved server-side
     const { from, to } = localDayIsoRange(todayLocalYmd());
     const raw = fastFeed[linkId] ?? '';
     const parsed = parseFastFeedLine(raw);
     if (!parsed) return;
+
+    /** Optimistic: clear the fast-feed input and mark the row applied immediately. */
+    setFastFeed((prev) => {
+      const next = { ...prev };
+      delete next[linkId];
+      return next;
+    });
+    await qc.cancelQueries({ queryKey: ['bid-board', groupId] });
+    const snapshots = patchAllBoardQueries(qc, groupId, (prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) => {
+        if (r.link.id !== linkId) return r;
+        const base = r.myBid ?? {
+          id: `optimistic-${linkId}-bid`,
+          resumeId: '',
+          company: '',
+          role: '',
+          primaryStacks: [],
+          status: 'draft',
+          origin: 'LinkedIn',
+          jobDescription: '',
+          gptResumeContent: '',
+          comment: '',
+          firstCreatedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastModifiedBy: null,
+        };
+        return {
+          ...r,
+          myBid: {
+            ...base,
+            resumeId: parsed.resumeId,
+            company: parsed.company,
+            role: parsed.role,
+            primaryStacks: parsed.primaryStacks,
+            status: 'applied',
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      }),
+    }));
+
     try {
       let bidId = existingBidId;
       if (!bidId) {
@@ -256,14 +412,11 @@ export default function BidPanelPage() {
         },
         { params: { from, to } }
       );
-      setFastFeed((prev) => {
-        const next = { ...prev };
-        delete next[linkId];
-        return next;
-      });
       await qc.invalidateQueries({ queryKey: ['bid-board', groupId] });
     } catch (e) {
       console.error(e);
+      rollbackBoardQueries(qc, snapshots);
+      setFastFeed((prev) => ({ ...prev, [linkId]: raw }));
     }
   }
 
@@ -383,7 +536,7 @@ export default function BidPanelPage() {
           />
         )}
       </Stack>
-      {q.isLoading && <LinearProgress />}
+      {(q.isLoading || (q.isPlaceholderData && q.isFetching)) && <LinearProgress />}
       {q.isError && <Alert severity="error">Could not load bid board.</Alert>}
       {q.data?.capped && (
         <Alert severity="warning">This day has over 5000 rows; only the first 5000 are shown.</Alert>
