@@ -25,6 +25,7 @@ import exportRoutes from './routes/export.routes.js';
 import { registerHexGameSocket } from './socket/hexGameSocket.js';
 import { purgeEligibleJunkLinksUsingGroupTimers } from './services/junkLinkPurge.js';
 import { ensurePlatformAdmin } from './services/platformAdminSeed.js';
+import { migrateLegacyGroups } from './services/legacyGroupMigration.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -159,6 +160,9 @@ connectDb(uri)
   .then(async () => {
     await ensurePlatformAdmin().catch((e) => {
       console.error('[platformAdminSeed] failed', e);
+    });
+    await migrateLegacyGroups().catch((e) => {
+      console.error('[legacyGroupMigration] failed', e);
     });
     httpServer.listen(PORT, HOST, () => {
       if (HOST === '0.0.0.0' || HOST === '::') {
