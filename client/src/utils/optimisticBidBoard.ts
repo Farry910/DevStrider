@@ -7,14 +7,27 @@ export type BidBoardData = {
   capped?: boolean;
 };
 
-/** All `['bid-board', groupId, ...]` query entries currently in the cache. */
+/**
+ * Bid-board page queries only — NOT the carryover-count query which also lives under the
+ * `['bid-board', groupId, ...]` prefix. The page key is `['bid-board', groupId, day, sort, flag]`;
+ * the count key is `['bid-board', groupId, 'carryover-count']`. We filter on key[2] to keep them
+ * apart, otherwise the optimistic transform tries to patch `{ count }` shape and throws.
+ */
 function boardQueryKeys(qc: QueryClient, groupId: string) {
   return qc
     .getQueriesData<BidBoardData>({ queryKey: ['bid-board', groupId] })
-    .map(([key]) => key);
+    .map(([key]) => key)
+    .filter((key) => {
+      const third = key[2];
+      return typeof third === 'string' && third !== 'carryover-count';
+    });
 }
 
-/** Read-modify-write every cached bid-board query for this group. Returns previous snapshots for rollback. */
+/**
+ * Read-modify-write every cached bid-board page query for this group. Returns previous snapshots
+ * for rollback. Skips any cache entry that doesn't look like bid-board data (defence-in-depth so
+ * a future key collision can't take down all mutations).
+ */
 export function patchAllBoardQueries(
   qc: QueryClient,
   groupId: string,
@@ -24,7 +37,7 @@ export function patchAllBoardQueries(
   for (const key of boardQueryKeys(qc, groupId)) {
     const prev = qc.getQueryData<BidBoardData>(key);
     snapshots.push([key, prev]);
-    if (prev) {
+    if (prev && Array.isArray(prev.rows) && typeof prev.total === 'number') {
       qc.setQueryData<BidBoardData>(key, transform(prev));
     }
   }
