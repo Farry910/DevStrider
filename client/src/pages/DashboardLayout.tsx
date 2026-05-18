@@ -179,45 +179,49 @@ export default function DashboardLayout() {
               Individual
             </ListSubheader>
           )}
-          <Tooltip title="My groups" placement="right" disableHoverListener={!collapsed}>
-            <ListItemButton
-              component={NavLink}
-              to="/"
-              end
-              onClick={() => setMobileOpen(false)}
-              sx={{
-                ...itemSx(pathname === '/' || pathname === ''),
-                justifyContent: collapsed ? 'center' : undefined,
-                px: collapsed ? 1 : undefined,
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
-                <GroupOutlinedIcon fontSize="small" />
-              </ListItemIcon>
-              {!collapsed && (
-                <ListItemText primary="My groups" primaryTypographyProps={{ variant: 'body2' }} />
-              )}
-            </ListItemButton>
-          </Tooltip>
-          <Tooltip title="Profile & goals" placement="right" disableHoverListener={!collapsed}>
-            <ListItemButton
-              component={NavLink}
-              to="/profile"
-              onClick={() => setMobileOpen(false)}
-              sx={{
-                ...itemSx(pathname === '/profile'),
-                justifyContent: collapsed ? 'center' : undefined,
-                px: collapsed ? 1 : undefined,
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
-                <PersonOutlineIcon fontSize="small" />
-              </ListItemIcon>
-              {!collapsed && (
-                <ListItemText primary="Profile & goals" primaryTypographyProps={{ variant: 'body2' }} />
-              )}
-            </ListItemButton>
-          </Tooltip>
+          {user?.platformRole !== 'admin' && (
+            <Tooltip title="My groups" placement="right" disableHoverListener={!collapsed}>
+              <ListItemButton
+                component={NavLink}
+                to="/"
+                end
+                onClick={() => setMobileOpen(false)}
+                sx={{
+                  ...itemSx(pathname === '/' || pathname === ''),
+                  justifyContent: collapsed ? 'center' : undefined,
+                  px: collapsed ? 1 : undefined,
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
+                  <GroupOutlinedIcon fontSize="small" />
+                </ListItemIcon>
+                {!collapsed && (
+                  <ListItemText primary="My groups" primaryTypographyProps={{ variant: 'body2' }} />
+                )}
+              </ListItemButton>
+            </Tooltip>
+          )}
+          {user?.platformRole !== 'admin' && (
+            <Tooltip title="Profile & goals" placement="right" disableHoverListener={!collapsed}>
+              <ListItemButton
+                component={NavLink}
+                to="/profile"
+                onClick={() => setMobileOpen(false)}
+                sx={{
+                  ...itemSx(pathname === '/profile'),
+                  justifyContent: collapsed ? 'center' : undefined,
+                  px: collapsed ? 1 : undefined,
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
+                  <PersonOutlineIcon fontSize="small" />
+                </ListItemIcon>
+                {!collapsed && (
+                  <ListItemText primary="Profile & goals" primaryTypographyProps={{ variant: 'body2' }} />
+                )}
+              </ListItemButton>
+            </Tooltip>
+          )}
           {user?.platformRole === 'admin' && (
             <Tooltip title="Platform admin" placement="right" disableHoverListener={!collapsed}>
               <ListItemButton

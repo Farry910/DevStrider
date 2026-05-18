@@ -41,6 +41,13 @@ function PrivateRoute() {
   return <Outlet />;
 }
 
+/** Platform admins land on the admin console; regular users see their groups. */
+function HomeIndex() {
+  const { user } = useAuth();
+  if (user?.platformRole === 'admin') return <Navigate to="/admin" replace />;
+  return <MyGroupsPage />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -48,7 +55,7 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route element={<PrivateRoute />}>
         <Route path="/" element={<DashboardLayout />}>
-          <Route index element={<MyGroupsPage />} />
+          <Route index element={<HomeIndex />} />
           <Route path="profile" element={<ProfileSettingsPage />} />
           <Route
             path="admin"
