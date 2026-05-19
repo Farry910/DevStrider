@@ -31,7 +31,6 @@ import { bidBoardRowGridSx, type BidSortField } from '../components/bid/bidBoard
 import { BatchAddDialog } from '../components/bid/BatchAddDialog';
 import { useBidBoardSocketInvalidation } from '../hooks/useBidBoardSocket';
 import { getMyProfile } from '../api/profile';
-import { ProgressWidget } from '../components/ProgressWidget';
 import { useGroupPermissions } from '../hooks/useGroupPermissions';
 import { DownloadCsvButton } from '../components/DownloadCsvButton';
 import {
@@ -458,7 +457,6 @@ export default function BidPanelPage() {
 
   return (
     <Stack spacing={2}>
-      <ProgressWidget groupId={groupId} />
       <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h5">Bid board</Typography>
         {isGroupOwner && (
@@ -567,66 +565,6 @@ export default function BidPanelPage() {
           />
         )}
       </Stack>
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        spacing={1}
-        alignItems={{ sm: 'center' }}
-        useFlexGap
-        flexWrap="wrap"
-      >
-        <Autocomplete
-          multiple
-          size="small"
-          options={filterMembersQ.data?.members ?? []}
-          getOptionLabel={(o) => o.nickname || o.email}
-          isOptionEqualToValue={(a, b) => a.userId === b.userId}
-          value={(filterMembersQ.data?.members ?? []).filter((m) =>
-            filterUserIds.includes(m.userId)
-          )}
-          onChange={(_, v) => setFilterUserIds(v.map((x) => x.userId))}
-          renderOption={(props, option, { selected }) => (
-            <li {...props} key={option.userId}>
-              <Checkbox size="small" checked={selected} sx={{ p: 0.5, mr: 0.5 }} />
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2">{option.nickname || option.email}</Typography>
-              </Box>
-            </li>
-          )}
-          renderInput={(params) => (
-            <TextField {...params} label="Filter: links by user" placeholder="All users" />
-          )}
-          sx={{ flex: 1, minWidth: 240, maxWidth: 480 }}
-        />
-        <TextField
-          size="small"
-          label="Filter: role"
-          placeholder="Substring match"
-          value={filterRole}
-          onChange={(e) => setFilterRole(e.target.value)}
-          InputProps={{
-            endAdornment: filterRole ? (
-              <InputAdornment position="end">
-                <IconButton size="small" aria-label="Clear role filter" onClick={() => setFilterRole('')}>
-                  <ClearIcon fontSize="small" />
-                </IconButton>
-              </InputAdornment>
-            ) : null,
-          }}
-          sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}
-        />
-        {(filterUserIds.length > 0 || filterRole.trim()) && (
-          <Button
-            size="small"
-            variant="text"
-            onClick={() => {
-              setFilterUserIds([]);
-              setFilterRole('');
-            }}
-          >
-            Clear filters
-          </Button>
-        )}
-      </Stack>
       {(q.isLoading || (q.isPlaceholderData && q.isFetching)) && <LinearProgress />}
       {q.isError && <Alert severity="error">Could not load bid board.</Alert>}
       {q.data?.capped && (
@@ -684,7 +622,85 @@ export default function BidPanelPage() {
             overflow: 'auto',
           }}
         >
-          <BidBoardStickyHeader sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+          <BidBoardStickyHeader
+            sortField={sortField}
+            sortDir={sortDir}
+            onSort={handleSort}
+            filterByColumn={{
+              link: (
+                <Autocomplete
+                  multiple
+                  size="small"
+                  options={filterMembersQ.data?.members ?? []}
+                  getOptionLabel={(o) => o.nickname || o.email}
+                  isOptionEqualToValue={(a, b) => a.userId === b.userId}
+                  value={(filterMembersQ.data?.members ?? []).filter((m) =>
+                    filterUserIds.includes(m.userId)
+                  )}
+                  onChange={(_, v) => setFilterUserIds(v.map((x) => x.userId))}
+                  disableCloseOnSelect
+                  limitTags={1}
+                  renderOption={(props, option, { selected }) => (
+                    <li {...props} key={option.userId}>
+                      <Checkbox size="small" checked={selected} sx={{ p: 0.5, mr: 0.5 }} />
+                      <Typography variant="body2" noWrap>
+                        {option.nickname || option.email}
+                      </Typography>
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      placeholder={filterUserIds.length === 0 ? 'All users' : ''}
+                      inputProps={{
+                        ...params.inputProps,
+                        'aria-label': 'Filter links by user',
+                      }}
+                      sx={{
+                        '& .MuiInputBase-root': {
+                          fontSize: '0.75rem',
+                          minHeight: 28,
+                          py: '2px',
+                        },
+                      }}
+                    />
+                  )}
+                  sx={{ width: '100%', minWidth: 0 }}
+                />
+              ),
+              role: (
+                <TextField
+                  size="small"
+                  value={filterRole}
+                  onChange={(e) => setFilterRole(e.target.value)}
+                  placeholder="Filter…"
+                  inputProps={{ 'aria-label': 'Filter role substring' }}
+                  InputProps={{
+                    endAdornment: filterRole ? (
+                      <InputAdornment position="end">
+                        <IconButton
+                          size="small"
+                          aria-label="Clear role filter"
+                          onClick={() => setFilterRole('')}
+                          sx={{ p: 0.25 }}
+                        >
+                          <ClearIcon sx={{ fontSize: 14 }} />
+                        </IconButton>
+                      </InputAdornment>
+                    ) : null,
+                  }}
+                  sx={{
+                    width: '100%',
+                    '& .MuiInputBase-root': {
+                      fontSize: '0.75rem',
+                      minHeight: 28,
+                      py: '2px',
+                    },
+                  }}
+                />
+              ),
+            }}
+          />
           {biddingEnabled && perms.canBid && (
             <Box
               sx={{

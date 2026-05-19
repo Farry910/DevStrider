@@ -1,18 +1,23 @@
+import type { ReactNode } from 'react';
 import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import { bidBoardRowGridSx, bidBoardStickyActionsSx, type BidSortField } from './bidBoardGrid';
 
+/** Stable IDs for column-scoped filters; less brittle than relying on label strings. */
+type FilterId = 'link' | 'role';
+
 type Col = {
   label: string;
   sort?: BidSortField;
+  filterId?: FilterId;
 };
 
 const COLS: Col[] = [
-  { label: 'Link', sort: 'linkCreatedAt' },
+  { label: 'Link', sort: 'linkCreatedAt', filterId: 'link' },
   { label: 'Resume ID', sort: 'resumeId' },
   { label: 'Company', sort: 'company' },
-  { label: 'Role', sort: 'role' },
+  { label: 'Role', sort: 'role', filterId: 'role' },
   { label: 'Stacks' },
   { label: 'Status', sort: 'status' },
   { label: 'Origin', sort: 'origin' },
@@ -28,6 +33,8 @@ type Props = {
   sortField: BidSortField;
   sortDir: 'asc' | 'desc';
   onSort: (field: BidSortField) => void;
+  /** Optional inline filter inputs to render under specific column headers. */
+  filterByColumn?: Partial<Record<FilterId, ReactNode>>;
 };
 
 function SortBtn({
@@ -58,7 +65,7 @@ function SortBtn({
   );
 }
 
-export function BidBoardStickyHeader({ sortField, sortDir, onSort }: Props) {
+export function BidBoardStickyHeader({ sortField, sortDir, onSort, filterByColumn }: Props) {
   return (
     <Box
       sx={{
@@ -71,39 +78,54 @@ export function BidBoardStickyHeader({ sortField, sortDir, onSort }: Props) {
       }}
     >
       <Box sx={bidBoardRowGridSx}>
-        {COLS.map((c, colIdx) => (
-          <Stack
-            key={`${c.label}-${colIdx}`}
-            direction="row"
-            spacing={0.25}
-            alignItems="center"
-            justifyContent="center"
-            useFlexGap
-            sx={{
-              width: '100%',
-              minWidth: 0,
-              ...(colIdx === COLS.length - 1 ? bidBoardStickyActionsSx : {}),
-            }}
-          >
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              fontWeight={600}
-              noWrap
-              sx={{ maxWidth: c.sort ? 'calc(100% - 28px)' : '100%' }}
+        {COLS.map((c, colIdx) => {
+          const filterNode = c.filterId ? filterByColumn?.[c.filterId] : undefined;
+          return (
+            <Box
+              key={`${c.label}-${colIdx}`}
+              sx={{
+                width: '100%',
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'stretch',
+                gap: 0.25,
+                ...(colIdx === COLS.length - 1 ? bidBoardStickyActionsSx : {}),
+              }}
             >
-              {c.label}
-            </Typography>
-            {c.sort && (
-              <SortBtn
-                active={sortField === c.sort}
-                dir={sortDir}
-                onClick={() => onSort(c.sort!)}
-                title={`Sort by ${c.label}`}
-              />
-            )}
-          </Stack>
-        ))}
+              <Stack
+                direction="row"
+                spacing={0.25}
+                alignItems="center"
+                justifyContent="center"
+                useFlexGap
+                sx={{ width: '100%', minWidth: 0 }}
+              >
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  fontWeight={600}
+                  noWrap
+                  sx={{ maxWidth: c.sort ? 'calc(100% - 28px)' : '100%' }}
+                >
+                  {c.label}
+                </Typography>
+                {c.sort && (
+                  <SortBtn
+                    active={sortField === c.sort}
+                    dir={sortDir}
+                    onClick={() => onSort(c.sort!)}
+                    title={`Sort by ${c.label}`}
+                  />
+                )}
+              </Stack>
+              {filterNode && (
+                /** Filter cell sized to its column; horizontal scroll on overflow keeps the grid aligned. */
+                <Box sx={{ width: '100%', minWidth: 0, px: 0.25, pb: 0.5 }}>{filterNode}</Box>
+              )}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
