@@ -514,8 +514,8 @@ r.get(
 
 /**
  * Per-user time-series for the overview chart. Returns one series per relevant user (one line per
- * user on the rendered chart). Counts bucket per UTC day (7 days); rates per 7-day rolling week
- * (8 buckets).
+ * user on the rendered chart). All metrics bucket per UTC day, 7 days total. Rate metrics show
+ * each day's rate (0 when there's no decided activity that day).
  *
  * "User" dimension by metric:
  *   - applied                  → per bidder (UserBid.userId)
@@ -542,7 +542,6 @@ r.get(
     const groupId = new mongoose.Types.ObjectId(req.params.groupId);
     const metric = String(req.query.metric);
 
-    const isRate = metric.startsWith('pass_rate_') || metric.startsWith('catch_rate_');
     const now = new Date();
     const endOfTodayUtc = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)
@@ -566,9 +565,9 @@ r.get(
 
     const toOid = (id) => new mongoose.Types.ObjectId(id);
 
-    /** Pre-build bucket keys + window bounds. */
-    const bucketCount = isRate ? 8 : 7;
-    const bucketSizeMs = isRate ? 7 * 86400000 : 86400000;
+    /** All metrics now bucket per UTC day, 7 days total (matches "applied bids" style). */
+    const bucketCount = 7;
+    const bucketSizeMs = 86400000;
     const windowStart = new Date(endOfTodayUtc.getTime() - bucketCount * bucketSizeMs);
     const bucketKeys = [];
     for (let i = 0; i < bucketCount; i++) {
@@ -652,7 +651,7 @@ r.get(
       }
       return res.json({
         metric,
-        bucket: isRate ? 'week' : 'day',
+        bucket: 'day',
         from: windowStart,
         to: endOfTodayUtc,
         buckets: bucketKeys,
@@ -719,7 +718,7 @@ r.get(
       }
       return res.json({
         metric,
-        bucket: 'week',
+        bucket: 'day',
         from: windowStart,
         to: endOfTodayUtc,
         buckets: bucketKeys,
@@ -776,7 +775,7 @@ r.get(
       }
       return res.json({
         metric,
-        bucket: 'week',
+        bucket: 'day',
         from: windowStart,
         to: endOfTodayUtc,
         buckets: bucketKeys,

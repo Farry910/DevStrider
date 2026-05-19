@@ -135,6 +135,28 @@ export default function ProfileSettingsPage() {
               size="small"
             />
           </Stack>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+            <TextField
+              label="Timezone (IANA, e.g. America/Mexico_City)"
+              value={form.timezone}
+              onChange={(e) => update('timezone', e.target.value)}
+              fullWidth
+              size="small"
+              helperText="Used to display times in your local zone. Storage stays UTC."
+            />
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                /** Best-effort browser detection: Intl.DateTimeFormat resolves to the OS zone. */
+                const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                if (detected) update('timezone', detected);
+              }}
+              sx={{ flexShrink: 0, alignSelf: { xs: 'flex-start', sm: 'auto' } }}
+            >
+              Detect
+            </Button>
+          </Stack>
           <FormControlLabel
             control={
               <Switch
@@ -312,6 +334,7 @@ export default function ProfileSettingsPage() {
               phone: form.phone,
               personalEmail: form.personalEmail,
               linkedinUrl: form.linkedinUrl,
+              timezone: form.timezone,
               education: form.education,
               certifications: form.certifications,
               showOnLeaderboard: form.showOnLeaderboard,

@@ -19,6 +19,7 @@ function publicProfile(u) {
     phone: u.phone || '',
     personalEmail: u.personalEmail || '',
     linkedinUrl: u.linkedinUrl || '',
+    timezone: u.timezone || 'UTC',
     education: Array.isArray(u.education) ? u.education : [],
     certifications: Array.isArray(u.certifications) ? u.certifications : [],
     goals: {
@@ -36,6 +37,17 @@ r.get('/me', async (req, res) => {
   return res.json({ profile: publicProfile(u) });
 });
 
+/** Best-effort IANA timezone check. Tries to construct a DateTimeFormat with the given zone. */
+function isValidIanaTimezone(tz) {
+  if (typeof tz !== 'string' || tz.length === 0 || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 r.patch(
   '/me',
   body('displayName').optional().isString().isLength({ max: 200 }),
@@ -44,6 +56,7 @@ r.patch(
   body('phone').optional().isString().isLength({ max: 60 }),
   body('personalEmail').optional().isString().isLength({ max: 200 }),
   body('linkedinUrl').optional().isString().isLength({ max: 500 }),
+  body('timezone').optional().isString().isLength({ max: 64 }),
   body('education').optional().isArray({ max: 20 }),
   body('certifications').optional().isArray({ max: 20 }),
   body('showOnLeaderboard').optional().isBoolean(),
@@ -62,6 +75,13 @@ r.patch(
       'linkedinUrl',
     ]) {
       if (patch[k] !== undefined) u[k] = String(patch[k]).trim();
+    }
+    if (patch.timezone !== undefined) {
+      const tz = String(patch.timezone).trim();
+      if (tz && !isValidIanaTimezone(tz)) {
+        return res.status(400).json({ error: 'Invalid IANA timezone' });
+      }
+      u.timezone = tz || 'UTC';
     }
     if (Array.isArray(patch.education)) {
       u.education = patch.education.map((e) => ({

@@ -31,6 +31,8 @@ export type Profile = {
   phone: string;
   personalEmail: string;
   linkedinUrl: string;
+  /** IANA timezone identifier; defaults to 'UTC' until the user sets it. */
+  timezone: string;
   education: Education[];
   certifications: Certification[];
   goals: Goals;

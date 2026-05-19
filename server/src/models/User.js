@@ -58,6 +58,11 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, default: '', trim: true },
     personalEmail: { type: String, default: '', trim: true, lowercase: true },
     linkedinUrl: { type: String, default: '', trim: true },
+    /**
+     * IANA timezone identifier (e.g. "America/Mexico_City"). Used by the client to display dates
+     * in the user's local zone; existing UTC storage on the server is unchanged.
+     */
+    timezone: { type: String, default: 'UTC', trim: true },
     education: { type: [educationSchema], default: [] },
     certifications: { type: [certificationSchema], default: [] },
 

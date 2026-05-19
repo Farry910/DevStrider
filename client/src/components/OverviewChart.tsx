@@ -30,11 +30,11 @@ type Metric =
   | 'catch_rate_from_bidders';
 
 const METRICS: Array<{ key: Metric; label: string; isRate?: boolean }> = [
-  { key: 'applied', label: 'Applied bids (daily)' },
-  { key: 'interviews_from_bidders', label: 'Interviews from bidders (daily)' },
-  { key: 'interviews_from_callers', label: 'Interviews from callers (daily)' },
-  { key: 'pass_rate_from_callers', label: 'Pass rate from callers (weekly)', isRate: true },
-  { key: 'catch_rate_from_bidders', label: 'Catch rate from bidders (weekly)', isRate: true },
+  { key: 'applied', label: 'Applied bids' },
+  { key: 'interviews_from_bidders', label: 'Interviews from bidders' },
+  { key: 'interviews_from_callers', label: 'Interviews from callers' },
+  { key: 'pass_rate_from_callers', label: 'Pass rate from callers', isRate: true },
+  { key: 'catch_rate_from_bidders', label: 'Catch rate from bidders', isRate: true },
 ];
 
 type UserSeries = {
@@ -134,9 +134,8 @@ export function OverviewChart({ groupId }: Props) {
         </TextField>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {metricMeta.isRate
-          ? 'Last 8 ISO weeks; one line per user, value shown as %.'
-          : 'Last 7 UTC days; one line per user.'}
+        Last 7 UTC days; one line per user.
+        {metricMeta.isRate ? ' Values shown as % for that day.' : ''}
       </Typography>
       {q.isLoading && <LinearProgress sx={{ mb: 1 }} />}
       {q.isError && (
