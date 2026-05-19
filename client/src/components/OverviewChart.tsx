@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Box,
@@ -9,6 +9,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import { getMyProfile } from '../api/profile';
 import {
   CartesianGrid,
   Legend,
@@ -52,6 +53,33 @@ type ChartResponse = {
   series: UserSeries[];
 };
 
+/** Compact selector range: UTC-12 through UTC+14 in 1-hour steps, with a special UTC entry. */
+const OFFSET_HOUR_OPTIONS = (() => {
+  const out: Array<{ value: number; label: string }> = [];
+  for (let h = -12; h <= 14; h += 1) {
+    if (h === 0) {
+      out.push({ value: 0, label: 'UTC' });
+    } else {
+      const sign = h > 0 ? '+' : '-';
+      out.push({ value: h, label: `UTC${sign}${Math.abs(h)}` });
+    }
+  }
+  return out;
+})();
+
+/** Resolve an IANA timezone to its current UTC offset (minutes). DST-aware via Intl. */
+function ianaToOffsetMinutes(tz: string | undefined | null): number {
+  if (!tz) return 0;
+  try {
+    const now = new Date();
+    const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+    const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
+    return Math.round((local.getTime() - utc.getTime()) / 60000);
+  } catch {
+    return 0;
+  }
+}
+
 /** Stable color palette for lines. Cycles if there are more users than colors. */
 const SERIES_COLORS = [
   '#1976d2',
@@ -73,14 +101,31 @@ type Props = { groupId: string };
 export function OverviewChart({ groupId }: Props) {
   const theme = useTheme();
   const [metric, setMetric] = useState<Metric>('applied');
+  const [tzOffsetHours, setTzOffsetHours] = useState<number>(0);
+
+  /** Default the offset from the user's profile timezone the first time their profile loads. */
+  const profileQ = useQuery({
+    queryKey: ['profile', 'me'] as const,
+    queryFn: getMyProfile,
+    staleTime: 5 * 60 * 1000,
+  });
+  const profileTz = profileQ.data?.timezone;
+  useEffect(() => {
+    if (!profileTz) return;
+    const minutes = ianaToOffsetMinutes(profileTz);
+    /** Hour-granularity selector; snap minutes-aware zones (India +5:30) to nearest hour. */
+    setTzOffsetHours(Math.round(minutes / 60));
+    /** Only seed once, on profile load. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileTz]);
 
   const q = useQuery({
-    queryKey: ['overview-chart', groupId, metric] as const,
+    queryKey: ['overview-chart', groupId, metric, tzOffsetHours] as const,
     enabled: !!groupId,
     queryFn: async () =>
       (
         await api.get(`/groups/${groupId}/overview/chart`, {
-          params: { metric },
+          params: { metric, tzOffsetMinutes: tzOffsetHours * 60 },
         })
       ).data as ChartResponse,
     refetchOnWindowFocus: true,
@@ -119,22 +164,42 @@ export function OverviewChart({ groupId }: Props) {
         sx={{ mb: 1 }}
       >
         <Typography variant="subtitle1">Weekly trend</Typography>
-        <TextField
-          select
-          size="small"
-          value={metric}
-          onChange={(e) => setMetric(e.target.value as Metric)}
-          sx={{ minWidth: 260 }}
-        >
-          {METRICS.map((m) => (
-            <MenuItem key={m.key} value={m.key}>
-              {m.label}
-            </MenuItem>
-          ))}
-        </TextField>
+        <Stack direction="row" spacing={1}>
+          <TextField
+            select
+            size="small"
+            value={metric}
+            onChange={(e) => setMetric(e.target.value as Metric)}
+            sx={{ minWidth: 260 }}
+          >
+            {METRICS.map((m) => (
+              <MenuItem key={m.key} value={m.key}>
+                {m.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Day boundary"
+            value={tzOffsetHours}
+            onChange={(e) => setTzOffsetHours(Number(e.target.value))}
+            sx={{ minWidth: 120 }}
+          >
+            {OFFSET_HOUR_OPTIONS.map((o) => (
+              <MenuItem key={o.value} value={o.value}>
+                {o.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        </Stack>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Last 7 UTC days; one line per user.
+        Last 7 days bucketed by{' '}
+        {tzOffsetHours === 0
+          ? 'UTC midnight'
+          : `UTC${tzOffsetHours > 0 ? '+' : '-'}${Math.abs(tzOffsetHours)} midnight`}
+        ; one line per user.
         {metricMeta.isRate ? ' Values shown as % for that day.' : ''}
       </Typography>
       {q.isLoading && <LinearProgress sx={{ mb: 1 }} />}

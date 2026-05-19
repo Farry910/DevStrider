@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { body, param, validationResult } from 'express-validator';
+import bcrypt from 'bcryptjs';
+import { body, param, query, validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import { Group } from '../models/Group.js';
 import { User } from '../models/User.js';
@@ -168,5 +169,58 @@ r.get('/storage', async (_req, res) => {
   const groupCount = await Group.countDocuments({});
   return res.json({ collections, totalBytes, totalCount, groupCount });
 });
+
+/**
+ * List users for the admin password-reset UI. Supports a simple `search` substring against email
+ * and nickname. Capped at 200 results to keep payloads small; admin can refine via search.
+ */
+r.get(
+  '/users',
+  query('search').optional().isString().isLength({ max: 200 }),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const s = String(req.query.search || '').trim();
+    const filter = {};
+    if (s) {
+      const re = new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [{ email: re }, { nickname: re }];
+    }
+    const users = await User.find(filter)
+      .select('email nickname platformRole createdAt')
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+    return res.json({
+      users: users.map((u) => ({
+        id: String(u._id),
+        email: u.email,
+        nickname: u.nickname,
+        platformRole: u.platformRole === 'admin' ? 'admin' : 'user',
+        createdAt: u.createdAt,
+      })),
+    });
+  }
+);
+
+/**
+ * Reset any user's password. Replaces the bcrypt hash with one for the new plaintext. The platform
+ * admin can reset their own password too (e.g. after the seeded default is rotated). 8-128 char
+ * range matches the registration validator.
+ */
+r.post(
+  '/users/:userId/reset-password',
+  param('userId').isMongoId(),
+  body('newPassword').isString().isLength({ min: 8, max: 128 }),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const u = await User.findById(req.params.userId);
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    u.passwordHash = await bcrypt.hash(req.body.newPassword, 12);
+    await u.save();
+    return res.json({ ok: true });
+  }
+);
 
 export default r;

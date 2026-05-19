@@ -534,6 +534,12 @@ r.get(
     'pass_rate_from_callers',
     'catch_rate_from_bidders',
   ]),
+  /**
+   * Optional viewer-side timezone offset in minutes (signed). E.g. -360 for UTC-6 (Mexico City),
+   * +330 for UTC+5:30 (India), 0 for UTC (default). Used to align day buckets to the viewer's
+   * calendar day rather than UTC midnight.
+   */
+  query('tzOffsetMinutes').optional().isInt({ min: -720, max: 840 }),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -541,11 +547,29 @@ r.get(
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const groupId = new mongoose.Types.ObjectId(req.params.groupId);
     const metric = String(req.query.metric);
+    const tzOffsetMinutes = Number.isFinite(Number(req.query.tzOffsetMinutes))
+      ? Number(req.query.tzOffsetMinutes)
+      : 0;
+    const tzOffsetMs = tzOffsetMinutes * 60 * 1000;
 
     const now = new Date();
-    const endOfTodayUtc = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)
+    /**
+     * Compute "end of today" in the viewer's local frame, then translate back to UTC for DB
+     * queries. The window is [endOfTodayUtc - 7days, endOfTodayUtc) but anchored on the viewer's
+     * midnight, not UTC midnight.
+     */
+    const localNow = new Date(now.getTime() + tzOffsetMs);
+    const endOfTodayLocal = new Date(
+      Date.UTC(
+        localNow.getUTCFullYear(),
+        localNow.getUTCMonth(),
+        localNow.getUTCDate() + 1,
+        0,
+        0,
+        0
+      )
     );
+    const endOfTodayUtc = new Date(endOfTodayLocal.getTime() - tzOffsetMs);
 
     /** Resolve bidder set + per-caller watch lists from the group's members[]. */
     const g = await Group.findById(req.params.groupId).select('members creatorId').lean();
@@ -565,15 +589,16 @@ r.get(
 
     const toOid = (id) => new mongoose.Types.ObjectId(id);
 
-    /** All metrics now bucket per UTC day, 7 days total (matches "applied bids" style). */
+    /** All metrics bucket per viewer-local day, 7 days total. */
     const bucketCount = 7;
     const bucketSizeMs = 86400000;
     const windowStart = new Date(endOfTodayUtc.getTime() - bucketCount * bucketSizeMs);
     const bucketKeys = [];
     for (let i = 0; i < bucketCount; i++) {
-      const d = new Date(windowStart.getTime() + i * bucketSizeMs);
+      /** Each key labels the local day this bucket starts in (so it survives DST/offset gaps). */
+      const dLocal = new Date(windowStart.getTime() + tzOffsetMs + i * bucketSizeMs);
       bucketKeys.push(
-        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+        `${dLocal.getUTCFullYear()}-${String(dLocal.getUTCMonth() + 1).padStart(2, '0')}-${String(dLocal.getUTCDate()).padStart(2, '0')}`
       );
     }
     function bucketIndexFor(date) {
