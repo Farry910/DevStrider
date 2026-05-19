@@ -27,10 +27,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
@@ -96,8 +93,6 @@ type OverviewRow = {
 };
 
 type ScoredRow = OverviewRow & { score: number };
-
-const PIE_COLORS = ['#5c6bc0', '#26a69a', '#ffb74d', '#ef5350', '#42a5f5', '#ab47bc', '#78909c', '#8d6e63'];
 
 export default function OverviewPage() {
   const theme = useTheme();
@@ -211,11 +206,6 @@ export default function OverviewPage() {
       .sort((a, b) => b.score - a.score || (a.user.nickname || '').localeCompare(b.user.nickname || ''));
   }, [q.data?.summary, weights]);
 
-  const scoreBarData = useMemo(
-    () => scored.map((r) => ({ name: r.user.nickname || '—', score: Math.round(r.score * 100) / 100 })),
-    [scored]
-  );
-
   const interviewStackData = useMemo(
     () =>
       scored.map((r) => ({
@@ -226,32 +216,7 @@ export default function OverviewPage() {
     [scored]
   );
 
-  const groupStatusPie = useMemo(() => {
-    const acc: Record<string, number> = {};
-    for (const row of q.data?.summary ?? []) {
-      for (const [k, v] of Object.entries(row.byStatus)) {
-        acc[k] = (acc[k] ?? 0) + v;
-      }
-    }
-    return Object.entries(acc)
-      .filter(([, v]) => v > 0)
-      .map(([name, value]) => ({ name, value }));
-  }, [q.data?.summary]);
-
-  const linksVsBidsData = useMemo(
-    () =>
-      scored.map((r) => ({
-        name: r.user.nickname || '—',
-        links: r.linksCreated,
-        newBids: r.bidsCreatedInRange,
-      })),
-    [scored]
-  );
-
   if (!groupId) return null;
-
-  const primary = theme.palette.primary.main;
-  const secondary = theme.palette.secondary.main;
 
   return (
     <Stack spacing={2}>
@@ -311,6 +276,14 @@ export default function OverviewPage() {
 
       {(meQ.isLoading || q.isLoading) && <LinearProgress />}
 
+      <Accordion defaultExpanded={false} variant="outlined">
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography fontWeight={600}>Score table</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+            Per-member counts + interview outcomes for the selected window.
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails sx={{ p: 0 }}>
       <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
         <Table size="small" stickyHeader>
           <TableHead>
@@ -388,6 +361,8 @@ export default function OverviewPage() {
           </TableBody>
         </Table>
       </TableContainer>
+        </AccordionDetails>
+      </Accordion>
 
       <Accordion defaultExpanded={false} variant="outlined">
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -434,75 +409,6 @@ export default function OverviewPage() {
           </Stack>
         </AccordionDetails>
       </Accordion>
-
-      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2}>
-        <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Weighted score by member
-          </Typography>
-          <Box sx={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <BarChart data={scoreBarData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-28} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <RechartsTooltip />
-                <Bar dataKey="score" name="Score" fill={primary} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-        </Paper>
-        <Paper variant="outlined" sx={{ p: 2, flex: 1, minWidth: 0 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Group bid statuses (sum in period)
-          </Typography>
-          <Box sx={{ width: '100%', height: 280 }}>
-            {groupStatusPie.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                No bid status data for this window.
-              </Typography>
-            ) : (
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie
-                    data={groupStatusPie}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={88}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {groupStatusPie.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </Box>
-        </Paper>
-      </Stack>
-
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>
-          Links vs new bids (by member)
-        </Typography>
-        <Box sx={{ width: '100%', height: 280 }}>
-          <ResponsiveContainer>
-            <BarChart data={linksVsBidsData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-28} textAnchor="end" height={60} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Legend />
-              <RechartsTooltip />
-              <Bar dataKey="links" name="Links" fill={primary} />
-              <Bar dataKey="newBids" name="New bids" fill={secondary} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Box>
-      </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Typography variant="subtitle2" gutterBottom>

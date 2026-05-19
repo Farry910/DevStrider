@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Box,
@@ -11,6 +11,7 @@ import {
 } from '@mui/material';
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -36,13 +37,36 @@ const METRICS: Array<{ key: Metric; label: string; isRate?: boolean }> = [
   { key: 'catch_rate_from_bidders', label: 'Catch rate from bidders (weekly)', isRate: true },
 ];
 
+type UserSeries = {
+  userId: string;
+  nickname: string;
+  points: Array<{ day: string; value: number }>;
+};
+
 type ChartResponse = {
   metric: Metric;
   bucket: 'day' | 'week';
   from: string;
   to: string;
-  points: Array<{ day: string; value: number }>;
+  buckets: string[];
+  series: UserSeries[];
 };
+
+/** Stable color palette for lines. Cycles if there are more users than colors. */
+const SERIES_COLORS = [
+  '#1976d2',
+  '#26a69a',
+  '#ef5350',
+  '#ab47bc',
+  '#ffa726',
+  '#42a5f5',
+  '#66bb6a',
+  '#ec407a',
+  '#8d6e63',
+  '#78909c',
+  '#5c6bc0',
+  '#d4e157',
+];
 
 type Props = { groupId: string };
 
@@ -64,11 +88,26 @@ export function OverviewChart({ groupId }: Props) {
   });
 
   const metricMeta = METRICS.find((m) => m.key === metric)!;
-  const data =
-    q.data?.points.map((p) => ({
-      day: p.day.slice(5), // 'MM-DD'
-      value: metricMeta.isRate ? Math.round(p.value * 1000) / 10 : p.value, // percent or raw
-    })) ?? [];
+
+  /**
+   * Pivot per-user series into recharts' row-per-bucket shape:
+   * [{ day: '05-13', [userId1]: v, [userId2]: v, ... }, ...]
+   * Values are converted to % for rate metrics so axes look right.
+   */
+  const { data, series } = useMemo(() => {
+    const buckets = q.data?.buckets ?? [];
+    const allSeries = q.data?.series ?? [];
+    const rows = buckets.map((day) => {
+      const row: Record<string, string | number> = { day: day.slice(5) };
+      for (const s of allSeries) {
+        const point = s.points.find((p) => p.day === day);
+        const raw = point?.value ?? 0;
+        row[s.userId] = metricMeta.isRate ? Math.round(raw * 1000) / 10 : raw;
+      }
+      return row;
+    });
+    return { data: rows, series: allSeries };
+  }, [q.data, metricMeta.isRate]);
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
@@ -85,7 +124,7 @@ export function OverviewChart({ groupId }: Props) {
           size="small"
           value={metric}
           onChange={(e) => setMetric(e.target.value as Metric)}
-          sx={{ minWidth: 240 }}
+          sx={{ minWidth: 260 }}
         >
           {METRICS.map((m) => (
             <MenuItem key={m.key} value={m.key}>
@@ -96,8 +135,8 @@ export function OverviewChart({ groupId }: Props) {
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {metricMeta.isRate
-          ? 'Last 8 ISO weeks; each point is that week\'s rate (%).'
-          : 'Last 7 UTC days; each point is that day\'s count.'}
+          ? 'Last 8 ISO weeks; one line per user, value shown as %.'
+          : 'Last 7 UTC days; one line per user.'}
       </Typography>
       {q.isLoading && <LinearProgress sx={{ mb: 1 }} />}
       {q.isError && (
@@ -105,7 +144,12 @@ export function OverviewChart({ groupId }: Props) {
           Could not load chart data.
         </Typography>
       )}
-      <Box sx={{ width: '100%', height: 240 }}>
+      {!q.isLoading && series.length === 0 && q.data && (
+        <Typography variant="caption" color="text.secondary">
+          No data for the selected metric in this window.
+        </Typography>
+      )}
+      <Box sx={{ width: '100%', height: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={theme.palette.divider} />
@@ -125,15 +169,20 @@ export function OverviewChart({ groupId }: Props) {
                 borderRadius: 4,
               }}
             />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke={theme.palette.primary.main}
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 5 }}
-              isAnimationActive={false}
-            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {series.map((s, i) => (
+              <Line
+                key={s.userId}
+                type="monotone"
+                dataKey={s.userId}
+                name={s.nickname || s.userId.slice(-6)}
+                stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                activeDot={{ r: 5 }}
+                isAnimationActive={false}
+              />
+            ))}
           </LineChart>
         </ResponsiveContainer>
       </Box>

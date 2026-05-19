@@ -513,14 +513,16 @@ r.get(
 );
 
 /**
- * Time-series for the overview chart. Counts bucket per UTC day; rates bucket per ISO week (last 8).
+ * Per-user time-series for the overview chart. Returns one series per relevant user (one line per
+ * user on the rendered chart). Counts bucket per UTC day (7 days); rates per 7-day rolling week
+ * (8 buckets).
  *
- * Metrics:
- *   - applied                — group's bids that moved to 'applied' (daily)
- *   - interviews_from_bidders — interviews where userId is a group member with roles.bidder (daily)
- *   - interviews_from_callers — interviews where userId is in the union of all callers' watches (daily)
- *   - pass_rate_from_callers  — % passed of resolved interviews scoped to callers' watched bidders (weekly)
- *   - catch_rate_from_bidders — interviews_scheduled / applied_bids for bidders' rows (weekly)
+ * "User" dimension by metric:
+ *   - applied                  → per bidder (UserBid.userId)
+ *   - interviews_from_bidders  → per bidder (Interview.userId)
+ *   - interviews_from_callers  → per caller (each caller's count of interviews in their watch set)
+ *   - pass_rate_from_callers   → per caller (each caller's pass rate over their watched bidders)
+ *   - catch_rate_from_bidders  → per bidder (each bidder's interviews/applied)
  */
 r.get(
   '/groups/:groupId/overview/chart',
@@ -540,169 +542,246 @@ r.get(
     const groupId = new mongoose.Types.ObjectId(req.params.groupId);
     const metric = String(req.query.metric);
 
-    /** Rate metrics bucket weekly (last 8 ISO weeks); count metrics bucket daily (last 7 days). */
     const isRate = metric.startsWith('pass_rate_') || metric.startsWith('catch_rate_');
     const now = new Date();
     const endOfTodayUtc = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0)
     );
 
-    /** Resolve "bidders" and "callers' watched bidders" once per request from the group's members[]. */
+    /** Resolve bidder set + per-caller watch lists from the group's members[]. */
     const g = await Group.findById(req.params.groupId).select('members creatorId').lean();
     const bidderIds = new Set();
-    const callerWatchUnion = new Set();
+    /** Map<callerUserId, Set<watchedBidderUserId>> */
+    const callerWatches = new Map();
     for (const mem of g?.members || []) {
       const roles = mem.roles || [];
       const uid = String(mem.userId);
       if (roles.includes('bidder')) bidderIds.add(uid);
       if (roles.includes('caller')) {
-        for (const w of mem.watches || []) callerWatchUnion.add(String(w));
+        callerWatches.set(uid, new Set((mem.watches || []).map(String)));
       }
     }
-    /** Group creator counts as bidder + admin, but for chart scoping we treat them as bidder too. */
+    /** Group creator is implicit admin/bidder/caller — count as bidder for series purposes. */
     if (g?.creatorId) bidderIds.add(String(g.creatorId));
+
     const toOid = (id) => new mongoose.Types.ObjectId(id);
-    const bidderOids = [...bidderIds].map(toOid);
-    const callerWatchOids = [...callerWatchUnion].map(toOid);
 
-    function emptyDaily(days) {
-      const start = new Date(endOfTodayUtc.getTime() - days * 86400000);
-      const out = [];
-      for (let i = 0; i < days; i++) {
-        const d = new Date(start.getTime() + i * 86400000);
-        const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-        out.push({ day: key, value: 0 });
-      }
-      return { points: out, start, end: endOfTodayUtc };
+    /** Pre-build bucket keys + window bounds. */
+    const bucketCount = isRate ? 8 : 7;
+    const bucketSizeMs = isRate ? 7 * 86400000 : 86400000;
+    const windowStart = new Date(endOfTodayUtc.getTime() - bucketCount * bucketSizeMs);
+    const bucketKeys = [];
+    for (let i = 0; i < bucketCount; i++) {
+      const d = new Date(windowStart.getTime() + i * bucketSizeMs);
+      bucketKeys.push(
+        `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+      );
+    }
+    function bucketIndexFor(date) {
+      const ms = date.getTime() - windowStart.getTime();
+      const idx = Math.floor(ms / bucketSizeMs);
+      return idx >= 0 && idx < bucketCount ? idx : -1;
+    }
+    function emptyPointArray() {
+      return bucketKeys.map((day) => ({ day, value: 0 }));
     }
 
-    /** Week buckets: end at the start of next ISO week; produce 8 buckets ending now. */
-    function emptyWeekly(weeks) {
-      const start = new Date(endOfTodayUtc.getTime() - weeks * 7 * 86400000);
-      const out = [];
-      for (let i = 0; i < weeks; i++) {
-        const d = new Date(start.getTime() + i * 7 * 86400000);
-        const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-        out.push({ day: key, value: 0 });
-      }
-      return { points: out, start, end: endOfTodayUtc };
+    /** Pull nicknames once for whichever set we end up using. */
+    async function lookupUsers(idSet) {
+      const ids = [...idSet];
+      if (ids.length === 0) return new Map();
+      const users = await User.find({ _id: { $in: ids.map(toOid) } })
+        .select('nickname')
+        .lean();
+      return new Map(users.map((u) => [String(u._id), u.nickname || '']));
     }
 
-    function dayBucket(dateExpr) {
-      return { $dateToString: { format: '%Y-%m-%d', date: dateExpr, timezone: 'UTC' } };
+    /** Build a series record from a per-user / per-bucket value map. */
+    function buildSeries(userOrder, nicknames, valueMap) {
+      return userOrder
+        .map((uid) => ({
+          userId: uid,
+          nickname: nicknames.get(uid) || uid.slice(-6),
+          points: bucketKeys.map((day, i) => ({
+            day,
+            value: valueMap.get(uid)?.[i] ?? 0,
+          })),
+        }))
+        /** Hide users with no data points so the legend stays clean. */
+        .filter((s) => s.points.some((p) => p.value !== 0));
     }
 
-    /** Map a date into the start-of-its-bucket day key (matching emptyWeekly's keys). */
-    function bucketKeyForWeekly(date, start) {
-      const ms = date.getTime() - start.getTime();
-      const idx = Math.floor(ms / (7 * 86400000));
-      const d = new Date(start.getTime() + idx * 7 * 86400000);
-      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-    }
-
-    if (metric === 'applied') {
-      const win = emptyDaily(7);
-      const byDay = new Map(win.points.map((p) => [p.day, p]));
-      const rows = await UserBid.aggregate([
-        { $match: { groupId, status: 'applied', updatedAt: { $gte: win.start, $lt: win.end } } },
-        { $group: { _id: dayBucket('$updatedAt'), count: { $sum: 1 } } },
-      ]);
-      for (const r of rows) {
-        const p = byDay.get(r._id);
-        if (p) p.value = r.count;
-      }
-      return res.json({ metric, bucket: 'day', from: win.start, to: win.end, points: win.points });
-    }
-
-    if (metric === 'interviews_from_bidders' || metric === 'interviews_from_callers') {
-      const scopeOids = metric === 'interviews_from_bidders' ? bidderOids : callerWatchOids;
-      const win = emptyDaily(7);
-      const byDay = new Map(win.points.map((p) => [p.day, p]));
-      if (scopeOids.length > 0) {
-        const rows = await Interview.aggregate([
-          {
-            $match: {
-              groupId,
-              userId: { $in: scopeOids },
-              scheduledDate: { $ne: null, $gte: win.start, $lt: win.end },
+    if (metric === 'applied' || metric === 'interviews_from_bidders') {
+      const userOrder = [...bidderIds];
+      const nicknames = await lookupUsers(bidderIds);
+      const valueMap = new Map(); // userId -> number[]
+      if (userOrder.length > 0) {
+        const oids = userOrder.map(toOid);
+        let rows;
+        if (metric === 'applied') {
+          rows = await UserBid.aggregate([
+            {
+              $match: {
+                groupId,
+                userId: { $in: oids },
+                status: 'applied',
+                updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
+              },
             },
-          },
-          { $group: { _id: dayBucket('$scheduledDate'), count: { $sum: 1 } } },
-        ]);
+            { $project: { userId: 1, when: '$updatedAt' } },
+          ]);
+        } else {
+          rows = await Interview.aggregate([
+            {
+              $match: {
+                groupId,
+                userId: { $in: oids },
+                scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
+              },
+            },
+            { $project: { userId: 1, when: '$scheduledDate' } },
+          ]);
+        }
         for (const r of rows) {
-          const p = byDay.get(r._id);
-          if (p) p.value = r.count;
+          const uid = String(r.userId);
+          const idx = bucketIndexFor(new Date(r.when));
+          if (idx < 0) continue;
+          if (!valueMap.has(uid)) valueMap.set(uid, new Array(bucketCount).fill(0));
+          valueMap.get(uid)[idx] += 1;
         }
       }
-      return res.json({ metric, bucket: 'day', from: win.start, to: win.end, points: win.points });
+      return res.json({
+        metric,
+        bucket: isRate ? 'week' : 'day',
+        from: windowStart,
+        to: endOfTodayUtc,
+        buckets: bucketKeys,
+        series: buildSeries(userOrder, nicknames, valueMap),
+      });
+    }
+
+    if (metric === 'interviews_from_callers') {
+      const userOrder = [...callerWatches.keys()];
+      const nicknames = await lookupUsers(new Set(userOrder));
+      const valueMap = new Map();
+      for (const callerId of userOrder) {
+        const watchedOids = [...(callerWatches.get(callerId) || [])].map(toOid);
+        if (watchedOids.length === 0) continue;
+        const rows = await Interview.find({
+          groupId,
+          userId: { $in: watchedOids },
+          scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
+        })
+          .select('scheduledDate')
+          .lean();
+        const arr = new Array(bucketCount).fill(0);
+        for (const iv of rows) {
+          const idx = bucketIndexFor(new Date(iv.scheduledDate));
+          if (idx >= 0) arr[idx] += 1;
+        }
+        valueMap.set(callerId, arr);
+      }
+      return res.json({
+        metric,
+        bucket: 'day',
+        from: windowStart,
+        to: endOfTodayUtc,
+        buckets: bucketKeys,
+        series: buildSeries(userOrder, nicknames, valueMap),
+      });
     }
 
     if (metric === 'pass_rate_from_callers') {
-      const win = emptyWeekly(8);
-      const byKey = new Map(win.points.map((p) => [p.day, p]));
-      if (callerWatchOids.length > 0) {
+      const userOrder = [...callerWatches.keys()];
+      const nicknames = await lookupUsers(new Set(userOrder));
+      const valueMap = new Map();
+      for (const callerId of userOrder) {
+        const watchedOids = [...(callerWatches.get(callerId) || [])].map(toOid);
+        if (watchedOids.length === 0) continue;
         const rows = await Interview.find({
           groupId,
-          userId: { $in: callerWatchOids },
+          userId: { $in: watchedOids },
           status: { $in: ['passed', 'failed'] },
-          updatedAt: { $gte: win.start, $lt: win.end },
+          updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
         })
           .select('updatedAt status')
           .lean();
-        const buckets = new Map();
+        const passed = new Array(bucketCount).fill(0);
+        const decided = new Array(bucketCount).fill(0);
         for (const iv of rows) {
-          const key = bucketKeyForWeekly(new Date(iv.updatedAt), win.start);
-          if (!buckets.has(key)) buckets.set(key, { passed: 0, decided: 0 });
-          const b = buckets.get(key);
-          b.decided += 1;
-          if (iv.status === 'passed') b.passed += 1;
+          const idx = bucketIndexFor(new Date(iv.updatedAt));
+          if (idx < 0) continue;
+          decided[idx] += 1;
+          if (iv.status === 'passed') passed[idx] += 1;
         }
-        for (const [key, b] of buckets) {
-          const p = byKey.get(key);
-          if (p) p.value = b.decided ? b.passed / b.decided : 0;
-        }
+        const arr = decided.map((d, i) => (d > 0 ? passed[i] / d : 0));
+        valueMap.set(callerId, arr);
       }
-      return res.json({ metric, bucket: 'week', from: win.start, to: win.end, points: win.points });
+      return res.json({
+        metric,
+        bucket: 'week',
+        from: windowStart,
+        to: endOfTodayUtc,
+        buckets: bucketKeys,
+        series: buildSeries(userOrder, nicknames, valueMap),
+      });
     }
 
     if (metric === 'catch_rate_from_bidders') {
-      const win = emptyWeekly(8);
-      const byKey = new Map(win.points.map((p) => [p.day, p]));
-      if (bidderOids.length > 0) {
+      const userOrder = [...bidderIds];
+      const nicknames = await lookupUsers(bidderIds);
+      const valueMap = new Map();
+      if (userOrder.length > 0) {
+        const oids = userOrder.map(toOid);
         const [appliedRows, ivRows] = await Promise.all([
           UserBid.find({
             groupId,
-            userId: { $in: bidderOids },
+            userId: { $in: oids },
             status: 'applied',
-            updatedAt: { $gte: win.start, $lt: win.end },
+            updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
           })
-            .select('updatedAt')
+            .select('userId updatedAt')
             .lean(),
           Interview.find({
             groupId,
-            userId: { $in: bidderOids },
-            scheduledDate: { $ne: null, $gte: win.start, $lt: win.end },
+            userId: { $in: oids },
+            scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
           })
-            .select('scheduledDate')
+            .select('userId scheduledDate')
             .lean(),
         ]);
-        const buckets = new Map();
+        const applied = new Map();
+        const interviews = new Map();
+        function bump(map, uid, idx) {
+          if (!map.has(uid)) map.set(uid, new Array(bucketCount).fill(0));
+          map.get(uid)[idx] += 1;
+        }
         for (const b of appliedRows) {
-          const key = bucketKeyForWeekly(new Date(b.updatedAt), win.start);
-          if (!buckets.has(key)) buckets.set(key, { applied: 0, interviews: 0 });
-          buckets.get(key).applied += 1;
+          const idx = bucketIndexFor(new Date(b.updatedAt));
+          if (idx >= 0) bump(applied, String(b.userId), idx);
         }
         for (const iv of ivRows) {
-          const key = bucketKeyForWeekly(new Date(iv.scheduledDate), win.start);
-          if (!buckets.has(key)) buckets.set(key, { applied: 0, interviews: 0 });
-          buckets.get(key).interviews += 1;
+          const idx = bucketIndexFor(new Date(iv.scheduledDate));
+          if (idx >= 0) bump(interviews, String(iv.userId), idx);
         }
-        for (const [key, b] of buckets) {
-          const p = byKey.get(key);
-          if (p) p.value = b.applied > 0 ? b.interviews / b.applied : 0;
+        const uidsTouched = new Set([...applied.keys(), ...interviews.keys()]);
+        for (const uid of uidsTouched) {
+          const a = applied.get(uid) || new Array(bucketCount).fill(0);
+          const i = interviews.get(uid) || new Array(bucketCount).fill(0);
+          valueMap.set(
+            uid,
+            a.map((aV, idx) => (aV > 0 ? i[idx] / aV : 0))
+          );
         }
       }
-      return res.json({ metric, bucket: 'week', from: win.start, to: win.end, points: win.points });
+      return res.json({
+        metric,
+        bucket: 'week',
+        from: windowStart,
+        to: endOfTodayUtc,
+        buckets: bucketKeys,
+        series: buildSeries(userOrder, nicknames, valueMap),
+      });
     }
 
     return res.status(400).json({ error: 'Unknown metric' });
