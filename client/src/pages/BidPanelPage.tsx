@@ -3,9 +3,13 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
+  Autocomplete,
   Box,
+  Checkbox,
   Chip,
   FormControlLabel,
+  IconButton,
+  InputAdornment,
   LinearProgress,
   Paper,
   Stack,
@@ -15,6 +19,7 @@ import {
   Button,
   Tooltip,
 } from '@mui/material';
+import ClearIcon from '@mui/icons-material/Clear';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { isAxiosError } from 'axios';
@@ -72,6 +77,11 @@ export default function BidPanelPage() {
 
   const [batchOpen, setBatchOpen] = useState(false);
 
+  /** Link column filter: only show links created by these user IDs. Empty = no filter. */
+  const [filterUserIds, setFilterUserIds] = useState<string[]>([]);
+  /** Role column filter: substring match against my own bid.role OR peer's applied role. */
+  const [filterRole, setFilterRole] = useState('');
+
   const sortParam = `${sortField}:${sortDir}`;
   const biddingEnabled = selectedDay === todayLocalYmd();
 
@@ -105,22 +115,23 @@ export default function BidPanelPage() {
     }
   };
 
+  const filterRoleTrimmed = filterRole.trim();
+  const filterUserIdsKey = filterUserIds.join(',');
   const q = useQuery({
-    queryKey: ['bid-board', groupId, selectedDay, sortParam, showPastLinkOnlyRows] as const,
+    queryKey: [
+      'bid-board',
+      groupId,
+      selectedDay,
+      sortParam,
+      showPastLinkOnlyRows,
+      filterUserIdsKey,
+      filterRoleTrimmed,
+    ] as const,
     enabled: !!groupId,
-    /**
-     * Cross-region Mongo + heavy aggregation makes this ~1s on free tier. Cache for 30s so
-     * re-clicking the same day or coming back to the tab is instant; socket invalidation still
-     * forces refetch when teammates change something.
-     */
     staleTime: 30_000,
-    /**
-     * When switching days, keep the previous day's rows visible while the new request is in
-     * flight. The user sees an instant "filter" feel instead of an empty page for ~1s.
-     */
     placeholderData: keepPreviousData,
     queryFn: async ({ queryKey }) => {
-      const [, gid, day, sort, showEmptyPast] = queryKey;
+      const [, gid, day, sort, showEmptyPast, userIdsCsv, roleText] = queryKey;
       const { from, to } = localDayIsoRange(day);
       const isToday = day === todayLocalYmd();
       const excludeLinkOnlyPast = !isToday && !showEmptyPast;
@@ -130,6 +141,8 @@ export default function BidPanelPage() {
           to,
           sort,
           ...(excludeLinkOnlyPast ? { excludeLinkOnly: 'true' } : {}),
+          ...(userIdsCsv ? { f_createdByUserIds: userIdsCsv } : {}),
+          ...(roleText ? { f_role: roleText } : {}),
         },
       });
       return data as {
@@ -192,6 +205,17 @@ export default function BidPanelPage() {
   });
 
   const perms = useGroupPermissions(groupId);
+
+  /** Group members for the "Link by user" filter dropdown. Same endpoint used by GroupMembersPanel. */
+  const filterMembersQ = useQuery({
+    queryKey: ['group', groupId, 'members-detailed'] as const,
+    enabled: !!groupId,
+    queryFn: async () =>
+      (await api.get(`/groups/${groupId}/members-detailed`)).data as {
+        members: Array<{ userId: string; nickname: string; email: string }>;
+      },
+    staleTime: 5 * 60 * 1000,
+  });
 
   const patchLinkUseless = useMutation({
     mutationFn: async (vars: { linkId: string; useless: boolean }) => {
@@ -541,6 +565,66 @@ export default function BidPanelPage() {
               </Typography>
             }
           />
+        )}
+      </Stack>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1}
+        alignItems={{ sm: 'center' }}
+        useFlexGap
+        flexWrap="wrap"
+      >
+        <Autocomplete
+          multiple
+          size="small"
+          options={filterMembersQ.data?.members ?? []}
+          getOptionLabel={(o) => o.nickname || o.email}
+          isOptionEqualToValue={(a, b) => a.userId === b.userId}
+          value={(filterMembersQ.data?.members ?? []).filter((m) =>
+            filterUserIds.includes(m.userId)
+          )}
+          onChange={(_, v) => setFilterUserIds(v.map((x) => x.userId))}
+          renderOption={(props, option, { selected }) => (
+            <li {...props} key={option.userId}>
+              <Checkbox size="small" checked={selected} sx={{ p: 0.5, mr: 0.5 }} />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2">{option.nickname || option.email}</Typography>
+              </Box>
+            </li>
+          )}
+          renderInput={(params) => (
+            <TextField {...params} label="Filter: links by user" placeholder="All users" />
+          )}
+          sx={{ flex: 1, minWidth: 240, maxWidth: 480 }}
+        />
+        <TextField
+          size="small"
+          label="Filter: role"
+          placeholder="Substring match"
+          value={filterRole}
+          onChange={(e) => setFilterRole(e.target.value)}
+          InputProps={{
+            endAdornment: filterRole ? (
+              <InputAdornment position="end">
+                <IconButton size="small" aria-label="Clear role filter" onClick={() => setFilterRole('')}>
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            ) : null,
+          }}
+          sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}
+        />
+        {(filterUserIds.length > 0 || filterRole.trim()) && (
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => {
+              setFilterUserIds([]);
+              setFilterRole('');
+            }}
+          >
+            Clear filters
+          </Button>
         )}
       </Stack>
       {(q.isLoading || (q.isPlaceholderData && q.isFetching)) && <LinearProgress />}

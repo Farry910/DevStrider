@@ -8,7 +8,7 @@ import { GroupLink } from '../models/GroupLink.js';
 import { UserBid } from '../models/UserBid.js';
 import { Interview } from '../models/Interview.js';
 import { requireAuth } from '../middleware/auth.js';
-import { assertGroupCreator, assertGroupMember } from '../services/membership.js';
+import { assertGroupCreator, assertGroupMember, assertPlatformAdmin } from '../services/membership.js';
 import { mergeOverviewWeights } from '../constants/overviewScoreWeights.js';
 import { mergeGroupTimers } from '../constants/groupTimers.js';
 import { getProfileBadgeType } from '../constants/profileBadgeTypes.js';
@@ -416,9 +416,17 @@ r.patch(
 r.get('/:groupId/members-detailed', param('groupId').isMongoId(), async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-  const m = await assertGroupMember(req.user.id, req.params.groupId);
-  if (!m.ok) return res.status(m.status).json({ error: m.error });
-  const g = m.group;
+  /** Platform admin can read any group's members (needed for ownership-transfer UI). */
+  const platform = await assertPlatformAdmin(req.user.id);
+  let g;
+  if (platform.ok) {
+    g = await Group.findById(req.params.groupId).lean();
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+  } else {
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+    g = m.group;
+  }
   const userIds = (g.members || []).map((mm) => mm.userId);
   const users = await User.find({ _id: { $in: userIds } })
     .select('nickname email avatarId')

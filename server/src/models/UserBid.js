@@ -3,7 +3,13 @@ import mongoose from 'mongoose';
 export const BID_STATUSES = [
   'draft',
   'applied',
+  /**
+   * Legacy alias kept for backward compatibility — new flows use 'phone_screening'.
+   * Existing rows with status='screening' continue to work; treat as the same stage as phone_screening
+   * in UI aggregations.
+   */
   'screening',
+  'phone_screening',
   'interview',
   'offer',
   'rejected',

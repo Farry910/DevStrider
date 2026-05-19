@@ -52,7 +52,8 @@ import {
   OVERVIEW_WEIGHT_FIELD_META,
   type OverviewScoreWeights,
 } from '../utils/overviewScore';
-import { LeaderboardWidget } from '../components/LeaderboardWidget';
+import { LeaderboardProgressLine } from '../components/LeaderboardProgressLine';
+import { OverviewChart } from '../components/OverviewChart';
 
 type GroupMeOverview = {
   group: {
@@ -62,16 +63,14 @@ type GroupMeOverview = {
   role: 'creator' | 'member' | 'none';
 };
 
-const BID_STATUS_ORDER = [
-  'draft',
-  'applied',
-  'screening',
-  'interview',
-  'offer',
-  'rejected',
-  'withdrawn',
-  'accepted',
-] as const;
+/**
+ * Columns shown in the score table. Trimmed per product spec: applied, phone_screening, interview,
+ * offer — the stages members actually care about. Legacy 'screening' counts roll into
+ * phone_screening at render time.
+ */
+const BID_STATUS_ORDER = ['applied', 'phone_screening', 'interview', 'offer'] as const;
+
+type InterviewBucketCounts = { total: number; passed: number; failed: number };
 
 type OverviewRow = {
   user: { id: string; nickname: string; email: string };
@@ -87,14 +86,16 @@ type OverviewRow = {
   assessmentsPassed: number;
   assessmentsFailed: number;
   assessmentPassRate: number | null;
+  /** Per-bucket interview outcome counts: phone_screening, interview, assessment, offer. */
+  byInterviewType?: {
+    phone_screening: InterviewBucketCounts;
+    interview: InterviewBucketCounts;
+    assessment: InterviewBucketCounts;
+    offer: InterviewBucketCounts;
+  };
 };
 
 type ScoredRow = OverviewRow & { score: number };
-
-function pct(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(n)) return '—';
-  return `${(n * 100).toFixed(1)}%`;
-}
 
 const PIE_COLORS = ['#5c6bc0', '#26a69a', '#ffb74d', '#ef5350', '#42a5f5', '#ab47bc', '#78909c', '#8d6e63'];
 
@@ -256,7 +257,8 @@ export default function OverviewPage() {
     <Stack spacing={2}>
       <Typography variant="h5">Group bid overview</Typography>
 
-      {groupId && <LeaderboardWidget groupId={groupId} />}
+      {groupId && <LeaderboardProgressLine groupId={groupId} />}
+      {groupId && <OverviewChart groupId={groupId} />}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
         <ToggleButtonGroup
@@ -302,11 +304,9 @@ export default function OverviewPage() {
       </Stack>
 
       <Typography color="text.secondary" variant="body2">
-        <strong>Links</strong> = group job links you created in this window. <strong>New bids</strong> = bid rows created
-        in the window. <strong>Touched</strong> and status columns = bid rows with any update in the window (current
-        status). <strong>Interviews</strong> (IV columns) exclude type <strong>ASSESSMENT</strong>; assessments are
-        counted separately with lower default score weights. Use score weights (below the
-        table) to match how your group values volume vs outcomes.
+        Bid status counts and interview outcomes for the selected window. Legacy
+        <code> screening </code> rows are folded into <strong>Phone screening</strong>. Use score
+        weights (below the table) to tune ranking.
       </Typography>
 
       {(meQ.isLoading || q.isLoading) && <LinearProgress />}
@@ -315,51 +315,76 @@ export default function OverviewPage() {
         <Table size="small" stickyHeader>
           <TableHead>
             <TableRow>
-              <TableCell>Member</TableCell>
-              <TableCell align="right">Score</TableCell>
-              <TableCell align="right">Links</TableCell>
-              <TableCell align="right">New bids</TableCell>
-              <TableCell align="right">Touched</TableCell>
+              <TableCell rowSpan={2}>Member</TableCell>
+              <TableCell rowSpan={2} align="right">
+                Score
+              </TableCell>
               {BID_STATUS_ORDER.map((s) => (
-                <TableCell key={s} align="right">
-                  {s}
+                <TableCell key={s} rowSpan={2} align="right">
+                  {s === 'phone_screening' ? 'Phone screening' : s.charAt(0).toUpperCase() + s.slice(1)}
                 </TableCell>
               ))}
-              <TableCell align="right">IV total</TableCell>
-              <TableCell align="right">IV pass</TableCell>
-              <TableCell align="right">IV fail</TableCell>
-              <TableCell align="right">IV pass %</TableCell>
-              <TableCell align="right">Asmt total</TableCell>
-              <TableCell align="right">Asmt pass</TableCell>
-              <TableCell align="right">Asmt fail</TableCell>
-              <TableCell align="right">Asmt pass %</TableCell>
+              <TableCell colSpan={2} align="center">
+                Phone screening
+              </TableCell>
+              <TableCell colSpan={2} align="center">
+                Interview
+              </TableCell>
+              <TableCell colSpan={2} align="center">
+                Assessment
+              </TableCell>
+              <TableCell colSpan={2} align="center">
+                Offer
+              </TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell align="right">Pass</TableCell>
+              <TableCell align="right">Fail</TableCell>
+              <TableCell align="right">Pass</TableCell>
+              <TableCell align="right">Fail</TableCell>
+              <TableCell align="right">Pass</TableCell>
+              <TableCell align="right">Fail</TableCell>
+              <TableCell align="right">Pass</TableCell>
+              <TableCell align="right">Fail</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {scored.map((row) => (
-              <TableRow key={row.user.id} hover>
-                <TableCell>{row.user.nickname}</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>
-                  {Math.round(row.score * 100) / 100}
-                </TableCell>
-                <TableCell align="right">{row.linksCreated}</TableCell>
-                <TableCell align="right">{row.bidsCreatedInRange}</TableCell>
-                <TableCell align="right">{row.bidsTouchedInRange}</TableCell>
-                {BID_STATUS_ORDER.map((s) => (
-                  <TableCell key={s} align="right">
-                    {row.byStatus[s] ?? 0}
+            {scored.map((row) => {
+              const empty = { total: 0, passed: 0, failed: 0 };
+              const bit = row.byInterviewType || {
+                phone_screening: empty,
+                interview: empty,
+                assessment: empty,
+                offer: empty,
+              };
+              return (
+                <TableRow key={row.user.id} hover>
+                  <TableCell>{row.user.nickname}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                    {Math.round(row.score * 100) / 100}
                   </TableCell>
-                ))}
-                <TableCell align="right">{row.interviewsInRange}</TableCell>
-                <TableCell align="right">{row.interviewsPassed}</TableCell>
-                <TableCell align="right">{row.interviewsFailed}</TableCell>
-                <TableCell align="right">{pct(row.interviewPassRate)}</TableCell>
-                <TableCell align="right">{row.assessmentsInRange}</TableCell>
-                <TableCell align="right">{row.assessmentsPassed}</TableCell>
-                <TableCell align="right">{row.assessmentsFailed}</TableCell>
-                <TableCell align="right">{pct(row.assessmentPassRate)}</TableCell>
-              </TableRow>
-            ))}
+                  {BID_STATUS_ORDER.map((s) => {
+                    const count =
+                      s === 'phone_screening'
+                        ? (row.byStatus.phone_screening ?? 0) + (row.byStatus.screening ?? 0)
+                        : (row.byStatus[s] ?? 0);
+                    return (
+                      <TableCell key={s} align="right">
+                        {count}
+                      </TableCell>
+                    );
+                  })}
+                  <TableCell align="right">{bit.phone_screening.passed}</TableCell>
+                  <TableCell align="right">{bit.phone_screening.failed}</TableCell>
+                  <TableCell align="right">{bit.interview.passed}</TableCell>
+                  <TableCell align="right">{bit.interview.failed}</TableCell>
+                  <TableCell align="right">{bit.assessment.passed}</TableCell>
+                  <TableCell align="right">{bit.assessment.failed}</TableCell>
+                  <TableCell align="right">{bit.offer.passed}</TableCell>
+                  <TableCell align="right">{bit.offer.failed}</TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>

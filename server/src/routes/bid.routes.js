@@ -58,6 +58,8 @@ r.get(
   query('f_sharedJd').optional().isString(),
   query('f_privateJd').optional().isString(),
   query('f_comment').optional().isString(),
+  /** Comma-separated user IDs — keeps only links whose createdByUserId is in this set. */
+  query('f_createdByUserIds').optional().isString(),
   query('excludeLinkOnly').optional().isIn(['true', '1', 'false', '0']),
   async (req, res) => {
     const errors = validationResult(req);
@@ -75,6 +77,7 @@ r.get(
       sharedJd: req.query.f_sharedJd,
       privateJd: req.query.f_privateJd,
       comment: req.query.f_comment,
+      createdByUserIds: req.query.f_createdByUserIds,
     };
     const excludeLinkOnly =
       req.query.excludeLinkOnly === 'true' || req.query.excludeLinkOnly === '1';

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 export const INTERVIEW_TYPES = [
+  'PHONE_SCREENING',
   'HR',
   'ASSESSMENT',
   'TECH_1',

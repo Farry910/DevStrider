@@ -128,6 +128,18 @@ function buildFilterStages(filters) {
       'bid.comment': { $regex: escapeRegex(tstr(filters.comment)), $options: 'i' },
     });
   }
+  /** Multi-user filter on the link creator. Comma-separated user IDs. */
+  if (tstr(filters?.createdByUserIds)) {
+    const ids = String(filters.createdByUserIds)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length > 0) {
+      and.push({
+        createdByUserId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+      });
+    }
+  }
   if (and.length === 0) return [];
   return [{ $match: { $and: and } }];
 }
