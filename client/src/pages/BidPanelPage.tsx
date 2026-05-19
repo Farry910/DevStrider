@@ -4,7 +4,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Autocomplete,
+  Badge,
   Box,
+  Button,
   Checkbox,
   Chip,
   FormControlLabel,
@@ -12,14 +14,18 @@ import {
   InputAdornment,
   LinearProgress,
   Paper,
+  Popover,
   Stack,
   Switch,
   TextField,
   Typography,
-  Button,
   Tooltip,
 } from '@mui/material';
 import ClearIcon from '@mui/icons-material/Clear';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import EastIcon from '@mui/icons-material/East';
+import PersonSearchIcon from '@mui/icons-material/PersonSearch';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { isAxiosError } from 'axios';
@@ -80,6 +86,9 @@ export default function BidPanelPage() {
   const [filterUserIds, setFilterUserIds] = useState<string[]>([]);
   /** Role column filter: substring match against my own bid.role OR peer's applied role. */
   const [filterRole, setFilterRole] = useState('');
+  /** Popover anchors for the icon-button filters. */
+  const [linkFilterAnchor, setLinkFilterAnchor] = useState<HTMLElement | null>(null);
+  const [roleFilterAnchor, setRoleFilterAnchor] = useState<HTMLElement | null>(null);
 
   const sortParam = `${sortField}:${sortDir}`;
   const biddingEnabled = selectedDay === todayLocalYmd();
@@ -459,63 +468,6 @@ export default function BidPanelPage() {
     <Stack spacing={2}>
       <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h5">Bid board</Typography>
-        {isGroupOwner && (
-          <Tooltip
-            title={
-              eligibleJunkCount > 0
-                ? 'Remove junk now, or wait — eligible links are also removed automatically at least 10 minutes after they were marked useless.'
-                : 'No junk links ready to remove. Eligible links auto-remove ≥10 min after the useless mark, or use this button to remove immediately.'
-            }
-          >
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={eligibleJunkCount === 0 || refreshJunkLinks.isPending}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Remove ${eligibleJunkCount} junk link(s)? This cannot be undone.`
-                    )
-                  ) {
-                    return;
-                  }
-                  refreshJunkLinks.mutate();
-                }}
-              >
-                Refresh junk links
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-        {perms.canExport && groupId && (
-          <DownloadCsvButton groupId={groupId} kind="bids" />
-        )}
-        {biddingEnabled && perms.canBid && (carryoverCountQ.data?.count ?? 0) > 0 && (
-          <Tooltip title="Move yesterday's links you didn't apply to onto today's board (other members are unaffected).">
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={carryOverYesterday.isPending}
-                onClick={() => {
-                  const n = carryoverCountQ.data?.count ?? 0;
-                  if (n === 0) return;
-                  if (
-                    !window.confirm(
-                      `Carry over ${n} unfinished link${n === 1 ? '' : 's'} from yesterday onto today's board?`
-                    )
-                  ) {
-                    return;
-                  }
-                  carryOverYesterday.mutate();
-                }}
-              >
-                Carry over yesterday ({carryoverCountQ.data?.count ?? 0})
-              </Button>
-            </span>
-          </Tooltip>
-        )}
         <TextField
           type="date"
           size="small"
@@ -564,7 +516,189 @@ export default function BidPanelPage() {
             }
           />
         )}
+        {/** Icon-only action strip, pushed to the right. */}
+        <Stack direction="row" spacing={0.5} sx={{ ml: 'auto' }}>
+          <Tooltip title="Filter links by user (click to pick)">
+            <IconButton
+              size="small"
+              aria-label="Filter links by user"
+              onClick={(e) => setLinkFilterAnchor(e.currentTarget)}
+            >
+              <Badge
+                color="primary"
+                badgeContent={filterUserIds.length}
+                overlap="circular"
+                sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 14, minWidth: 14 } }}
+              >
+                <PersonSearchIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Filter rows by role (substring match)">
+            <IconButton
+              size="small"
+              aria-label="Filter rows by role"
+              onClick={(e) => setRoleFilterAnchor(e.currentTarget)}
+            >
+              <Badge
+                variant="dot"
+                color="primary"
+                invisible={!filterRole.trim()}
+                overlap="circular"
+              >
+                <FilterListIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
+          {perms.canExport && groupId && (
+            <DownloadCsvButton groupId={groupId} kind="bids" iconOnly />
+          )}
+          {isGroupOwner && (
+            <Tooltip
+              title={
+                eligibleJunkCount > 0
+                  ? `Refresh junk links (${eligibleJunkCount} ready)`
+                  : 'No junk links ready to remove'
+              }
+            >
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="Refresh junk links"
+                  disabled={eligibleJunkCount === 0 || refreshJunkLinks.isPending}
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `Remove ${eligibleJunkCount} junk link(s)? This cannot be undone.`
+                      )
+                    ) {
+                      return;
+                    }
+                    refreshJunkLinks.mutate();
+                  }}
+                >
+                  <DeleteSweepIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {biddingEnabled && perms.canBid && (carryoverCountQ.data?.count ?? 0) > 0 && (
+            <Tooltip
+              title={`Carry over ${carryoverCountQ.data?.count ?? 0} unfinished link(s) from yesterday`}
+            >
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="Carry over yesterday"
+                  disabled={carryOverYesterday.isPending}
+                  onClick={() => {
+                    const n = carryoverCountQ.data?.count ?? 0;
+                    if (n === 0) return;
+                    if (
+                      !window.confirm(
+                        `Carry over ${n} unfinished link${n === 1 ? '' : 's'} from yesterday onto today's board?`
+                      )
+                    ) {
+                      return;
+                    }
+                    carryOverYesterday.mutate();
+                  }}
+                >
+                  <Badge
+                    color="primary"
+                    badgeContent={carryoverCountQ.data?.count ?? 0}
+                    overlap="circular"
+                    sx={{ '& .MuiBadge-badge': { fontSize: '0.6rem', height: 14, minWidth: 14 } }}
+                  >
+                    <EastIcon fontSize="small" />
+                  </Badge>
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+        </Stack>
       </Stack>
+
+      {/** Popover bodies for the filter icon buttons — text inputs live here, opened on click. */}
+      <Popover
+        open={Boolean(linkFilterAnchor)}
+        anchorEl={linkFilterAnchor}
+        onClose={() => setLinkFilterAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{ paper: { sx: { width: 360, p: 1.5 } } }}
+      >
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+          Show links from these users only. Empty = all users.
+        </Typography>
+        <Autocomplete
+          multiple
+          size="small"
+          options={filterMembersQ.data?.members ?? []}
+          getOptionLabel={(o) => o.nickname || o.email}
+          isOptionEqualToValue={(a, b) => a.userId === b.userId}
+          value={(filterMembersQ.data?.members ?? []).filter((m) =>
+            filterUserIds.includes(m.userId)
+          )}
+          onChange={(_, v) => setFilterUserIds(v.map((x) => x.userId))}
+          disableCloseOnSelect
+          renderOption={(props, option, { selected }) => (
+            <li {...props} key={option.userId}>
+              <Checkbox size="small" checked={selected} sx={{ p: 0.5, mr: 0.5 }} />
+              <Typography variant="body2" noWrap>
+                {option.nickname || option.email}
+              </Typography>
+            </li>
+          )}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              autoFocus
+              placeholder={filterUserIds.length === 0 ? 'All users' : ''}
+            />
+          )}
+        />
+        {filterUserIds.length > 0 && (
+          <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
+            <Button size="small" onClick={() => setFilterUserIds([])}>
+              Clear
+            </Button>
+          </Stack>
+        )}
+      </Popover>
+      <Popover
+        open={Boolean(roleFilterAnchor)}
+        anchorEl={roleFilterAnchor}
+        onClose={() => setRoleFilterAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{ paper: { sx: { width: 280, p: 1.5 } } }}
+      >
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+          Show rows where role contains this text (matches your bid OR a peer's applied role).
+        </Typography>
+        <TextField
+          autoFocus
+          size="small"
+          fullWidth
+          value={filterRole}
+          onChange={(e) => setFilterRole(e.target.value)}
+          placeholder="e.g. Senior, Lead, React"
+          InputProps={{
+            endAdornment: filterRole ? (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  aria-label="Clear role filter"
+                  onClick={() => setFilterRole('')}
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            ) : null,
+          }}
+        />
+      </Popover>
       {(q.isLoading || (q.isPlaceholderData && q.isFetching)) && <LinearProgress />}
       {q.isError && <Alert severity="error">Could not load bid board.</Alert>}
       {q.data?.capped && (
@@ -626,80 +760,6 @@ export default function BidPanelPage() {
             sortField={sortField}
             sortDir={sortDir}
             onSort={handleSort}
-            filterByColumn={{
-              link: (
-                <Autocomplete
-                  multiple
-                  size="small"
-                  options={filterMembersQ.data?.members ?? []}
-                  getOptionLabel={(o) => o.nickname || o.email}
-                  isOptionEqualToValue={(a, b) => a.userId === b.userId}
-                  value={(filterMembersQ.data?.members ?? []).filter((m) =>
-                    filterUserIds.includes(m.userId)
-                  )}
-                  onChange={(_, v) => setFilterUserIds(v.map((x) => x.userId))}
-                  disableCloseOnSelect
-                  limitTags={1}
-                  renderOption={(props, option, { selected }) => (
-                    <li {...props} key={option.userId}>
-                      <Checkbox size="small" checked={selected} sx={{ p: 0.5, mr: 0.5 }} />
-                      <Typography variant="body2" noWrap>
-                        {option.nickname || option.email}
-                      </Typography>
-                    </li>
-                  )}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      placeholder={filterUserIds.length === 0 ? 'All users' : ''}
-                      inputProps={{
-                        ...params.inputProps,
-                        'aria-label': 'Filter links by user',
-                      }}
-                      sx={{
-                        '& .MuiInputBase-root': {
-                          fontSize: '0.75rem',
-                          minHeight: 28,
-                          py: '2px',
-                        },
-                      }}
-                    />
-                  )}
-                  sx={{ width: '100%', minWidth: 0 }}
-                />
-              ),
-              role: (
-                <TextField
-                  size="small"
-                  value={filterRole}
-                  onChange={(e) => setFilterRole(e.target.value)}
-                  placeholder="Filter…"
-                  inputProps={{ 'aria-label': 'Filter role substring' }}
-                  InputProps={{
-                    endAdornment: filterRole ? (
-                      <InputAdornment position="end">
-                        <IconButton
-                          size="small"
-                          aria-label="Clear role filter"
-                          onClick={() => setFilterRole('')}
-                          sx={{ p: 0.25 }}
-                        >
-                          <ClearIcon sx={{ fontSize: 14 }} />
-                        </IconButton>
-                      </InputAdornment>
-                    ) : null,
-                  }}
-                  sx={{
-                    width: '100%',
-                    '& .MuiInputBase-root': {
-                      fontSize: '0.75rem',
-                      minHeight: 28,
-                      py: '2px',
-                    },
-                  }}
-                />
-              ),
-            }}
           />
           {biddingEnabled && perms.canBid && (
             <Box

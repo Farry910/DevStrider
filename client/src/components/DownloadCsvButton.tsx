@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Button,
+  IconButton,
   Menu,
   MenuItem,
   ListItemText,
@@ -16,6 +17,8 @@ type Props = {
   /** Label override (defaults to "Download" + kind). */
   label?: string;
   disabled?: boolean;
+  /** Render as an icon-only button rather than a text button. */
+  iconOnly?: boolean;
 };
 
 const RANGES: Array<{ key: 'daily' | 'weekly' | 'monthly'; label: string }> = [
@@ -28,7 +31,7 @@ const RANGES: Array<{ key: 'daily' | 'weekly' | 'monthly'; label: string }> = [
  * Streamed CSV download. Uses axios with `responseType: 'blob'` so the browser receives a binary
  * file even though the server emits text/csv. Server-side scope is enforced by role.
  */
-export function DownloadCsvButton({ groupId, kind, label, disabled }: Props) {
+export function DownloadCsvButton({ groupId, kind, label, disabled, iconOnly }: Props) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
 
@@ -61,17 +64,28 @@ export function DownloadCsvButton({ groupId, kind, label, disabled }: Props) {
 
   return (
     <>
-      <Tooltip title={`Download ${kind} as CSV`}>
+      <Tooltip title={downloading ? `Downloading ${kind}…` : `Download ${kind} as CSV`}>
         <span>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<DownloadIcon />}
-            disabled={disabled || downloading != null}
-            onClick={(e) => setAnchor(e.currentTarget)}
-          >
-            {downloading ? 'Downloading…' : label || `Download ${kind}`}
-          </Button>
+          {iconOnly ? (
+            <IconButton
+              size="small"
+              aria-label={`Download ${kind} as CSV`}
+              disabled={disabled || downloading != null}
+              onClick={(e) => setAnchor(e.currentTarget)}
+            >
+              <DownloadIcon fontSize="small" />
+            </IconButton>
+          ) : (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<DownloadIcon />}
+              disabled={disabled || downloading != null}
+              onClick={(e) => setAnchor(e.currentTarget)}
+            >
+              {downloading ? 'Downloading…' : label || `Download ${kind}`}
+            </Button>
+          )}
         </span>
       </Tooltip>
       <Menu open={Boolean(anchor)} anchorEl={anchor} onClose={() => setAnchor(null)}>

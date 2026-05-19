@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   FormControlLabel,
@@ -31,6 +32,45 @@ function blankEdu(): Education {
 function blankCert(): Certification {
   return { name: '', issuer: '', year: null };
 }
+
+/**
+ * Prefer the browser's full IANA list when available (`Intl.supportedValuesOf`, Node 18+ / modern
+ * browsers). Fall back to a curated set of common zones so the dropdown is still useful on older
+ * runtimes. `freeSolo` on Autocomplete lets the user type any zone string regardless.
+ */
+function getTimezoneOptions(): string[] {
+  type IntlWithValues = typeof Intl & { supportedValuesOf?: (k: string) => string[] };
+  const i = Intl as IntlWithValues;
+  if (typeof i.supportedValuesOf === 'function') {
+    try {
+      const all = i.supportedValuesOf('timeZone');
+      if (Array.isArray(all) && all.length > 0) return all;
+    } catch {
+      /* fall through */
+    }
+  }
+  return [
+    'UTC',
+    'America/New_York',
+    'America/Chicago',
+    'America/Denver',
+    'America/Los_Angeles',
+    'America/Mexico_City',
+    'America/Sao_Paulo',
+    'America/Toronto',
+    'Europe/London',
+    'Europe/Berlin',
+    'Europe/Paris',
+    'Europe/Madrid',
+    'Asia/Tokyo',
+    'Asia/Kolkata',
+    'Asia/Shanghai',
+    'Asia/Singapore',
+    'Australia/Sydney',
+  ];
+}
+
+const TIMEZONE_OPTIONS = getTimezoneOptions();
 
 export default function ProfileSettingsPage() {
   const qc = useQueryClient();
@@ -136,13 +176,22 @@ export default function ProfileSettingsPage() {
             />
           </Stack>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
-            <TextField
-              label="Timezone (IANA, e.g. America/Mexico_City)"
-              value={form.timezone}
-              onChange={(e) => update('timezone', e.target.value)}
-              fullWidth
+            <Autocomplete
+              freeSolo
               size="small"
-              helperText="Used to display times in your local zone. Storage stays UTC."
+              fullWidth
+              options={TIMEZONE_OPTIONS}
+              value={form.timezone || ''}
+              onChange={(_, v) => update('timezone', (v ?? '').toString())}
+              onInputChange={(_, v) => update('timezone', v ?? '')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Timezone (IANA, e.g. America/Mexico_City)"
+                  helperText="Pick from the list or type any IANA zone. Storage stays UTC."
+                />
+              )}
+              sx={{ flex: 1, minWidth: 0 }}
             />
             <Button
               size="small"
