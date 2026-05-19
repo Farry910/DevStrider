@@ -19,6 +19,7 @@ import {
 import CheckIcon from '@mui/icons-material/Check';
 import EditIcon from '@mui/icons-material/Edit';
 import EventIcon from '@mui/icons-material/Event';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -87,6 +88,7 @@ import { presetAvatarSrc } from '../../avatarPresets';
 import { composeResume } from '../../utils/composeResume';
 import type { Profile } from '../../api/profile';
 import { isOptimisticId } from '../../utils/optimisticBidBoard';
+import { BidContentViewer } from './BidContentViewer';
 
 const BID_STATUSES = [
   'draft',
@@ -473,6 +475,14 @@ export function BidBoardVirtualBody({
   const [bidActionsMenu, setBidActionsMenu] = useState<{
     bidId: string;
     anchor: HTMLElement;
+  } | null>(null);
+  /** Page modal showing a row's full JD or composed resume, opened via the eye-icon button. */
+  const [viewer, setViewer] = useState<{
+    title: string;
+    subtitle?: string;
+    body: string;
+    copyLabel: string;
+    serif?: boolean;
   } | null>(null);
   const jdInputRefs = useRef(new Map<string, HTMLInputElement | HTMLTextAreaElement>());
   const gptResumeInputRefs = useRef(new Map<string, HTMLInputElement | HTMLTextAreaElement>());
@@ -998,27 +1008,37 @@ export function BidBoardVirtualBody({
                   </>
                 ) : (
                   <>
-                    <Tooltip {...BID_BOARD_TOOLTIP_COMMON}
-                      describeChild
-                      title={
-                        <Box sx={{ maxWidth: '100%', whiteSpace: 'pre-wrap', typography: 'caption' }}>
-                          {mergedJdText(row, b).trim() ? mergedJdText(row, b) : '—'}
-                        </Box>
-                      }
+                    <Typography
+                      variant="caption"
+                      noWrap
+                      sx={{
+                        flex: '1 1 auto',
+                        minWidth: 0,
+                        textAlign: 'center',
+                        fontWeight: 600,
+                      }}
                     >
-                      <Typography
-                        variant="caption"
-                        noWrap
-                        sx={{
-                          flex: '1 1 auto',
-                          minWidth: 0,
-                          cursor: 'help',
-                          textAlign: 'center',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {jdAttachedLabel(row, b)}
-                      </Typography>
+                      {jdAttachedLabel(row, b)}
+                    </Typography>
+                    <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="View job description">
+                      <span>
+                        <IconButton
+                          size="small"
+                          aria-label="View job description"
+                          disabled={!mergedJdText(row, b).trim()}
+                          onClick={() =>
+                            setViewer({
+                              title: 'Job description',
+                              subtitle: [b.company, b.role].filter(Boolean).join(' · ') || undefined,
+                              body: mergedJdText(row, b),
+                              copyLabel: 'job description',
+                            })
+                          }
+                          sx={{ flexShrink: 0, p: 0.25, ml: 0.25 }}
+                        >
+                          <VisibilityIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </span>
                     </Tooltip>
                     <CellCopyButton
                       label="job description"
@@ -1066,36 +1086,46 @@ export function BidBoardVirtualBody({
                   </>
                 ) : (
                   <>
-                    <Tooltip {...BID_BOARD_TOOLTIP_COMMON}
-                      describeChild
-                      title={
-                        <Box
-                          sx={{
-                            maxWidth: 520,
-                            maxHeight: 480,
-                            overflow: 'auto',
-                            whiteSpace: 'pre-wrap',
-                            typography: 'caption',
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {composeResume(myProfile, b.gptResumeContent ?? '') ?? '—'}
-                        </Box>
-                      }
+                    <Typography
+                      variant="caption"
+                      noWrap
+                      sx={{
+                        flex: '1 1 auto',
+                        minWidth: 0,
+                        textAlign: 'center',
+                        fontWeight: 600,
+                      }}
                     >
-                      <Typography
-                        variant="caption"
-                        noWrap
-                        sx={{
-                          flex: '1 1 auto',
-                          minWidth: 0,
-                          cursor: 'help',
-                          textAlign: 'center',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {gptResumeAttachedLabel(b)}
-                      </Typography>
+                      {gptResumeAttachedLabel(b)}
+                    </Typography>
+                    <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="View resume">
+                      <span>
+                        <IconButton
+                          size="small"
+                          aria-label="View resume"
+                          disabled={
+                            !(
+                              composeResume(myProfile, b.gptResumeContent ?? '') ??
+                              b.gptResumeContent
+                            )?.trim()
+                          }
+                          onClick={() => {
+                            const composed = composeResume(myProfile, b.gptResumeContent ?? '');
+                            const body = composed ?? b.gptResumeContent ?? '';
+                            setViewer({
+                              title: 'Resume',
+                              subtitle:
+                                [b.company, b.role].filter(Boolean).join(' · ') || undefined,
+                              body,
+                              copyLabel: 'resume',
+                              serif: true,
+                            });
+                          }}
+                          sx={{ flexShrink: 0, p: 0.25, ml: 0.25 }}
+                        >
+                          <VisibilityIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </span>
                     </Tooltip>
                     <CellCopyButton
                       label="GPT resume"
@@ -1404,6 +1434,15 @@ export function BidBoardVirtualBody({
         />
       </MenuItem>
     </Menu>
+    <BidContentViewer
+      open={Boolean(viewer)}
+      onClose={() => setViewer(null)}
+      title={viewer?.title ?? ''}
+      subtitle={viewer?.subtitle}
+      body={viewer?.body ?? ''}
+      copyLabel={viewer?.copyLabel ?? 'content'}
+      serif={viewer?.serif}
+    />
     </>
   );
 }
