@@ -129,7 +129,16 @@ export default function ProfileSettingsPage() {
         </Typography>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
-            label="Display name"
+            label="Nickname (shown to teammates)"
+            value={form.nickname}
+            onChange={(e) => update('nickname', e.target.value)}
+            fullWidth
+            size="small"
+            inputProps={{ maxLength: 80 }}
+            helperText="Used on the bid board, leaderboard, and member lists. 1-80 chars."
+          />
+          <TextField
+            label="Display name (resume header)"
             value={form.displayName}
             onChange={(e) => update('displayName', e.target.value)}
             fullWidth
@@ -377,6 +386,7 @@ export default function ProfileSettingsPage() {
           disabled={profileMut.isPending}
           onClick={() =>
             profileMut.mutate({
+              nickname: form.nickname,
               displayName: form.displayName,
               headline: form.headline,
               location: form.location,

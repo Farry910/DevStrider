@@ -159,9 +159,27 @@ export async function buildBidBoardPage({
   from,
   to,
   excludeLinkOnly = false,
+  /**
+   * Scope of "bid" rows shown:
+   *   - { kind: 'self', userId } (default) → viewer's own bid per link
+   *   - { kind: 'watches', userIds: [] }  → bids from this caller's watched bidders (caller-only viewers)
+   * Caller view picks the most-recent watched bid per link so the row shows that bidder's resume/JD.
+   * Multi-row (one row per watched bidder) is a planned follow-up.
+   */
+  bidScope = null,
 }) {
   const gid = new mongoose.Types.ObjectId(groupId);
   const uid = new mongoose.Types.ObjectId(userId);
+  /** Resolve the bid-lookup target: either viewer's userId, or the caller's watches. */
+  const scopedKind = bidScope?.kind === 'watches' ? 'watches' : 'self';
+  const scopedOids =
+    scopedKind === 'watches'
+      ? (bidScope.userIds || []).map((id) => new mongoose.Types.ObjectId(String(id)))
+      : [uid];
+  const scopedMatchExpr =
+    scopedKind === 'watches'
+      ? { $in: ['$userId', scopedOids] }
+      : { $eq: ['$userId', uid] };
   const sortStage = parseSort(sort);
   const t0 = new Date(from);
   const t1 = new Date(to);
@@ -196,7 +214,7 @@ export async function buildBidBoardPage({
               $expr: {
                 $and: [
                   { $eq: ['$groupLinkId', '$$linkId'] },
-                  { $eq: ['$userId', uid] },
+                  scopedMatchExpr,
                 ],
               },
             },
@@ -205,7 +223,22 @@ export async function buildBidBoardPage({
         as: 'bidArr',
       },
     },
-    { $addFields: { bid: { $arrayElemAt: ['$bidArr', 0] } } },
+    /**
+     * Caller view: $unwind so each watched-bidder bid becomes its own row (link header repeats,
+     * bid varies). preserveNullAndEmptyArrays: true so links with zero watched bids still appear
+     * — those rows might still be in-window via link.createdAt.
+     */
+    ...(scopedKind === 'watches'
+      ? [
+          {
+            $unwind: {
+              path: '$bidArr',
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          { $addFields: { bid: '$bidArr' } },
+        ]
+      : [{ $addFields: { bid: { $arrayElemAt: ['$bidArr', 0] } } }]),
     {
       $lookup: {
         from: UB_COL,
@@ -596,7 +629,15 @@ export async function buildBidBoardPage({
     const bidsForLink = allMemberBidsOnPageLinks.filter(
       (x) => String(x.groupLinkId) === String(link._id)
     );
-    const bid = bidByLink.get(String(link._id));
+    /**
+     * Caller view uses the un-populated bid embedded by the aggregation ($unwind result), since
+     * the viewer has no bid of their own and the populated `bidByLink` map is keyed by the viewer.
+     * Self view keeps the populated bid (with lastModifiedBy.nickname / email).
+     */
+    const bid =
+      scopedKind === 'watches'
+        ? link.bid
+        : bidByLink.get(String(link._id));
     const peer = link._peerHint;
     const { linkDuplicate: linkDup, duplicateEarlierUrlBid } = urlDupForLinkAndBid(link, bid);
     const { duplicateCompanyRole: dupCr, duplicateEarlierBid } = companyRoleDupForLink(
@@ -620,6 +661,13 @@ export async function buildBidBoardPage({
     }
 
     return {
+      /**
+       * Stable per-row key. For caller view a single link may appear multiple times (one per
+       * watched-bidder bid); the bid id disambiguates. Self view falls back to link id.
+       */
+      rowKey: bid
+        ? `${String(link._id)}-${String(bid._id)}`
+        : String(link._id),
       link: {
         id: link._id,
         url: link.url,

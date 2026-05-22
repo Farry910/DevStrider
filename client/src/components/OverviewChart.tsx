@@ -9,7 +9,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { getMyProfile } from '../api/profile';
 import {
   CartesianGrid,
   Legend,
@@ -22,36 +21,29 @@ import {
 } from 'recharts';
 import { useTheme } from '@mui/material/styles';
 import api from '../api/client';
+import { getMyProfile } from '../api/profile';
 
-type Metric =
-  | 'applied'
-  | 'interviews_from_bidders'
-  | 'interviews_from_callers'
-  | 'pass_rate_from_callers'
-  | 'catch_rate_from_bidders';
+type Metric = 'bids' | 'interviews' | 'catch_rate' | 'pass_rate' | 'fail_rate';
+type XAxisMode = 'week' | 'month';
+type InterviewBucket = 'during' | 'into';
 
-const METRICS: Array<{ key: Metric; label: string; isRate?: boolean }> = [
-  { key: 'applied', label: 'Applied bids' },
-  { key: 'interviews_from_bidders', label: 'Interviews from bidders' },
-  { key: 'interviews_from_callers', label: 'Interviews from callers' },
-  { key: 'pass_rate_from_callers', label: 'Pass rate from callers', isRate: true },
-  { key: 'catch_rate_from_bidders', label: 'Catch rate from bidders', isRate: true },
+const METRICS: Array<{ key: Metric; label: string; isRate?: boolean; usesInterview?: boolean }> = [
+  { key: 'bids', label: 'Applied bids' },
+  { key: 'interviews', label: 'Interviews', usesInterview: true },
+  { key: 'catch_rate', label: 'Catch rate (bids → interviews)', isRate: true, usesInterview: true },
+  { key: 'pass_rate', label: 'Pass rate (passed / decided)', isRate: true, usesInterview: true },
+  { key: 'fail_rate', label: 'Fail rate (failed / decided)', isRate: true, usesInterview: true },
 ];
 
-type UserSeries = {
-  userId: string;
-  nickname: string;
-  points: Array<{ day: string; value: number }>;
-};
+const X_AXIS_OPTIONS: Array<{ key: XAxisMode; label: string }> = [
+  { key: 'week', label: 'Week (7 days, 1-day buckets)' },
+  { key: 'month', label: 'Month (4 weeks, 1-week buckets)' },
+];
 
-type ChartResponse = {
-  metric: Metric;
-  bucket: 'day' | 'week';
-  from: string;
-  to: string;
-  buckets: string[];
-  series: UserSeries[];
-};
+const INTERVIEW_BUCKET_OPTIONS: Array<{ key: InterviewBucket; label: string }> = [
+  { key: 'into', label: 'Scheduled into the week (by interview date)' },
+  { key: 'during', label: 'Scheduled during the week (by booking date)' },
+];
 
 /** Compact selector range: UTC-12 through UTC+14 in 1-hour steps, with a special UTC entry. */
 const OFFSET_HOUR_OPTIONS = (() => {
@@ -96,11 +88,30 @@ const SERIES_COLORS = [
   '#d4e157',
 ];
 
+type UserSeries = {
+  userId: string;
+  nickname: string;
+  points: Array<{ day: string; value: number }>;
+};
+
+type ChartResponse = {
+  metric: Metric;
+  xAxis: XAxisMode;
+  interviewBucket: InterviewBucket;
+  bucket: 'day' | 'week';
+  from: string;
+  to: string;
+  buckets: string[];
+  series: UserSeries[];
+};
+
 type Props = { groupId: string };
 
 export function OverviewChart({ groupId }: Props) {
   const theme = useTheme();
-  const [metric, setMetric] = useState<Metric>('applied');
+  const [metric, setMetric] = useState<Metric>('bids');
+  const [xAxis, setXAxis] = useState<XAxisMode>('week');
+  const [interviewBucket, setInterviewBucket] = useState<InterviewBucket>('into');
   const [tzOffsetHours, setTzOffsetHours] = useState<number>(0);
 
   /** Default the offset from the user's profile timezone the first time their profile loads. */
@@ -113,30 +124,41 @@ export function OverviewChart({ groupId }: Props) {
   useEffect(() => {
     if (!profileTz) return;
     const minutes = ianaToOffsetMinutes(profileTz);
-    /** Hour-granularity selector; snap minutes-aware zones (India +5:30) to nearest hour. */
     setTzOffsetHours(Math.round(minutes / 60));
-    /** Only seed once, on profile load. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileTz]);
 
+  const metricMeta = METRICS.find((m) => m.key === metric)!;
+  const showInterviewBucket = Boolean(metricMeta.usesInterview);
+
   const q = useQuery({
-    queryKey: ['overview-chart', groupId, metric, tzOffsetHours] as const,
+    queryKey: [
+      'overview-chart',
+      groupId,
+      metric,
+      xAxis,
+      showInterviewBucket ? interviewBucket : 'n/a',
+      tzOffsetHours,
+    ] as const,
     enabled: !!groupId,
     queryFn: async () =>
       (
         await api.get(`/groups/${groupId}/overview/chart`, {
-          params: { metric, tzOffsetMinutes: tzOffsetHours * 60 },
+          params: {
+            metric,
+            xAxis,
+            tzOffsetMinutes: tzOffsetHours * 60,
+            ...(showInterviewBucket ? { interviewBucket } : {}),
+          },
         })
       ).data as ChartResponse,
     refetchOnWindowFocus: true,
     staleTime: 30_000,
   });
 
-  const metricMeta = METRICS.find((m) => m.key === metric)!;
-
   /**
    * Pivot per-user series into recharts' row-per-bucket shape:
-   * [{ day: '05-13', [userId1]: v, [userId2]: v, ... }, ...]
+   * [{ day: 'MM-DD', [userId1]: v, [userId2]: v, ... }, ...]
    * Values are converted to % for rate metrics so axes look right.
    */
   const { data, series } = useMemo(() => {
@@ -157,17 +179,32 @@ export function OverviewChart({ groupId }: Props) {
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        alignItems={{ sm: 'center' }}
+        direction={{ xs: 'column', md: 'row' }}
+        alignItems={{ md: 'center' }}
         justifyContent="space-between"
         spacing={1}
         sx={{ mb: 1 }}
       >
-        <Typography variant="subtitle1">Weekly trend</Typography>
-        <Stack direction="row" spacing={1}>
+        <Typography variant="subtitle1">Trend</Typography>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <TextField
             select
             size="small"
+            label="X-axis"
+            value={xAxis}
+            onChange={(e) => setXAxis(e.target.value as XAxisMode)}
+            sx={{ minWidth: 220 }}
+          >
+            {X_AXIS_OPTIONS.map((o) => (
+              <MenuItem key={o.key} value={o.key}>
+                {o.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Y-axis"
             value={metric}
             onChange={(e) => setMetric(e.target.value as Metric)}
             sx={{ minWidth: 260 }}
@@ -178,6 +215,22 @@ export function OverviewChart({ groupId }: Props) {
               </MenuItem>
             ))}
           </TextField>
+          {showInterviewBucket && (
+            <TextField
+              select
+              size="small"
+              label="Interview bucket"
+              value={interviewBucket}
+              onChange={(e) => setInterviewBucket(e.target.value as InterviewBucket)}
+              sx={{ minWidth: 280 }}
+            >
+              {INTERVIEW_BUCKET_OPTIONS.map((o) => (
+                <MenuItem key={o.key} value={o.key}>
+                  {o.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
           <TextField
             select
             size="small"
@@ -195,12 +248,17 @@ export function OverviewChart({ groupId }: Props) {
         </Stack>
       </Stack>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Last 7 days bucketed by{' '}
+        {xAxis === 'week' ? 'Last 7 days; 1 point per day. ' : 'Last 4 weeks; 1 point per week. '}
+        Day boundary anchored to{' '}
         {tzOffsetHours === 0
           ? 'UTC midnight'
-          : `UTC${tzOffsetHours > 0 ? '+' : '-'}${Math.abs(tzOffsetHours)} midnight`}
-        ; one line per user.
-        {metricMeta.isRate ? ' Values shown as % for that day.' : ''}
+          : `UTC${tzOffsetHours > 0 ? '+' : '-'}${Math.abs(tzOffsetHours)} midnight`}.
+        {metricMeta.isRate ? ' Values shown as %.' : ''}
+        {showInterviewBucket
+          ? interviewBucket === 'into'
+            ? ' Interviews bucketed by scheduled date.'
+            : ' Interviews bucketed by booking date.'
+          : ''}
       </Typography>
       {q.isLoading && <LinearProgress sx={{ mb: 1 }} />}
       {q.isError && (
@@ -210,7 +268,7 @@ export function OverviewChart({ groupId }: Props) {
       )}
       {!q.isLoading && series.length === 0 && q.data && (
         <Typography variant="caption" color="text.secondary">
-          No data for the selected metric in this window.
+          No data for the selected combination in this window.
         </Typography>
       )}
       <Box sx={{ width: '100%', height: 280 }}>

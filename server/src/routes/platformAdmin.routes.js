@@ -94,13 +94,13 @@ r.post(
     }
     const oldOwnerId = String(g.creatorId);
 
-    /** Old owner: demote to ops with empty watches. Insert if missing (creator wasn't in members[]
-     * before this PR). */
+    /**
+     * Hand the admin (creatorId) to the new owner. Old owner keeps their existing member roles
+     * (they aren't demoted). Old owner is ensured to be in `members[]` with their previous roles
+     * if they weren't tracked there (legacy data); default to ['ops'] only if they were brand new.
+     */
     const oldOwnerMember = (g.members || []).find((m) => String(m.userId) === oldOwnerId);
-    if (oldOwnerMember) {
-      oldOwnerMember.roles = ['ops'];
-      oldOwnerMember.watches = [];
-    } else {
+    if (!oldOwnerMember) {
       g.members.push({
         userId: g.creatorId,
         roles: ['ops'],

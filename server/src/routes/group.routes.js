@@ -22,6 +22,8 @@ import {
 import { ProfileBadgeRequest } from '../models/ProfileBadgeRequest.js';
 import { Feedback } from '../models/Feedback.js';
 import { BidAssistantActivity } from '../models/BidAssistantActivity.js';
+import { Notification } from '../models/Notification.js';
+import { emitNotificationToUser } from '../socket/hexGameSocket.js';
 
 const r = Router();
 r.use(requireAuth);
@@ -217,6 +219,147 @@ r.patch(
   }
 );
 
+/**
+ * Member requests changes to their own roles. Creates a notification for the group owner so they
+ * can review and apply the change in the Members & roles panel. No state change is made until the
+ * owner explicitly grants the roles.
+ */
+r.post(
+  '/:groupId/role-requests',
+  param('groupId').isMongoId(),
+  body('requestedRoles').isArray({ min: 1, max: 3 }),
+  body('requestedRoles.*').isIn(['bidder', 'caller', 'ops']),
+  body('message').optional().isString().isLength({ max: 500 }),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+    const requestedRoles = [...new Set(req.body.requestedRoles)];
+    const message = req.body.message ? String(req.body.message).trim() : '';
+    const requester = await User.findById(req.user.id).select('nickname email').lean();
+    const notif = await Notification.create({
+      userId: m.group.creatorId,
+      kind: 'role_request',
+      payload: {
+        groupId: String(m.group._id),
+        groupName: m.group.name,
+        requesterId: String(req.user.id),
+        requesterNickname: requester?.nickname || '',
+        requesterEmail: requester?.email || '',
+        requestedRoles,
+        message,
+      },
+    });
+    emitNotificationToUser(String(m.group.creatorId), {
+      id: String(notif._id),
+      kind: 'role_request',
+      payload: notif.payload,
+      createdAt: notif.createdAt,
+    });
+    return res.status(201).json({ ok: true });
+  }
+);
+
+/**
+ * Group owner: approve a pending role-request notification. Applies the requested roles to the
+ * requester's member record and marks the notification read. The requester's existing roles are
+ * replaced with the requested set (deduped, defaulting to ['ops'] if empty).
+ */
+r.post(
+  '/:groupId/role-requests/:notificationId/approve',
+  param('groupId').isMongoId(),
+  param('notificationId').isMongoId(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const notif = await Notification.findOne({
+      _id: req.params.notificationId,
+      userId: req.user.id,
+      kind: 'role_request',
+    });
+    if (!notif) return res.status(404).json({ error: 'Role request not found' });
+    const payload = notif.payload || {};
+    if (String(payload.groupId) !== String(req.params.groupId)) {
+      return res.status(400).json({ error: 'Role request does not match this group' });
+    }
+    const requesterId = String(payload.requesterId || '');
+    if (!mongoose.isValidObjectId(requesterId)) {
+      return res.status(400).json({ error: 'Invalid requester id in notification' });
+    }
+    const requestedRoles = Array.isArray(payload.requestedRoles)
+      ? [...new Set(payload.requestedRoles.filter((r) => ['bidder', 'caller', 'ops'].includes(r)))]
+      : [];
+    const g = await Group.findById(req.params.groupId);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    let target = g.members.find((m) => String(m.userId) === requesterId);
+    if (!target && String(g.creatorId) === requesterId) {
+      g.members.push({
+        userId: g.creatorId,
+        roles: ['ops'],
+        watches: [],
+        joinedAt: g.createdAt || new Date(),
+      });
+      target = g.members[g.members.length - 1];
+    }
+    if (!target) return res.status(404).json({ error: 'Requester is no longer a member' });
+    target.roles = requestedRoles.length === 0 ? ['ops'] : requestedRoles;
+    await g.save();
+    if (!notif.readAt) {
+      notif.readAt = new Date();
+      await notif.save();
+    }
+    return res.json({ ok: true, roles: target.roles, userId: requesterId });
+  }
+);
+
+/** Group owner: deny a pending role-request notification — marks read, no role change. */
+r.post(
+  '/:groupId/role-requests/:notificationId/deny',
+  param('groupId').isMongoId(),
+  param('notificationId').isMongoId(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const notif = await Notification.findOne({
+      _id: req.params.notificationId,
+      userId: req.user.id,
+      kind: 'role_request',
+    });
+    if (!notif) return res.status(404).json({ error: 'Role request not found' });
+    if (String((notif.payload || {}).groupId) !== String(req.params.groupId)) {
+      return res.status(400).json({ error: 'Role request does not match this group' });
+    }
+    if (!notif.readAt) {
+      notif.readAt = new Date();
+      await notif.save();
+    }
+    return res.json({ ok: true });
+  }
+);
+
+/** Group owner: toggle past-day bid edits (add link / edit / delete / fast-feed on non-today boards). */
+r.patch(
+  '/:groupId/allow-past-day-edit',
+  param('groupId').isMongoId(),
+  body('allowPastDayEdit').isBoolean(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const cr = await assertGroupCreator(req.user.id, req.params.groupId);
+    if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
+    const g = await Group.findById(req.params.groupId);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    g.allowPastDayEdit = Boolean(req.body.allowPastDayEdit);
+    await g.save();
+    return res.json({ allowPastDayEdit: g.allowPastDayEdit });
+  }
+);
+
 r.get('/:groupId/me', param('groupId').isMongoId(), async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -243,6 +386,7 @@ r.get('/:groupId/me', param('groupId').isMongoId(), async (req, res) => {
     memberRoles,
     watches,
     status: g.status || 'approved',
+    allowPastDayEdit: Boolean(g.allowPastDayEdit),
     removal: {
       assisterUserId: assisterId,
       ownerConfirmedAt: g.removalOwnerConfirmedAt,
@@ -462,10 +606,21 @@ r.patch(
     if (!cr.ok) return res.status(cr.status).json({ error: cr.error });
     const g = await Group.findById(req.params.groupId);
     if (!g) return res.status(404).json({ error: 'Group not found' });
-    if (String(g.creatorId) === String(req.params.userId)) {
-      return res.status(400).json({ error: 'Group owner roles are managed by ownership transfer' });
+    /**
+     * The creator is implicit admin via creatorId; their explicit member roles can still be set
+     * (bidder/caller/ops) so they show up in caller watch picks and bidder counts. If they aren't
+     * in members[] yet (legacy data), insert with whatever roles are being assigned.
+     */
+    let target = g.members.find((m) => String(m.userId) === String(req.params.userId));
+    if (!target && String(g.creatorId) === String(req.params.userId)) {
+      g.members.push({
+        userId: g.creatorId,
+        roles: ['ops'],
+        watches: [],
+        joinedAt: g.createdAt || new Date(),
+      });
+      target = g.members[g.members.length - 1];
     }
-    const target = g.members.find((m) => String(m.userId) === String(req.params.userId));
     if (!target) return res.status(404).json({ error: 'Member not found' });
     /** Dedup + ensure default ['ops'] if empty so the user always has at least watch capability. */
     const next = [...new Set(req.body.roles)];

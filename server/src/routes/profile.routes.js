@@ -50,6 +50,7 @@ function isValidIanaTimezone(tz) {
 
 r.patch(
   '/me',
+  body('nickname').optional().isString().trim().isLength({ min: 1, max: 80 }),
   body('displayName').optional().isString().isLength({ max: 200 }),
   body('headline').optional().isString().isLength({ max: 200 }),
   body('location').optional().isString().isLength({ max: 200 }),
@@ -67,6 +68,7 @@ r.patch(
     if (!u) return res.status(404).json({ error: 'User not found' });
     const patch = req.body || {};
     for (const k of [
+      'nickname',
       'displayName',
       'headline',
       'location',

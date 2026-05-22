@@ -18,6 +18,8 @@ import {
   Stack,
   Switch,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
   Tooltip,
 } from '@mui/material';
@@ -26,6 +28,7 @@ import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import EastIcon from '@mui/icons-material/East';
 import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import LinkIcon from '@mui/icons-material/Link';
 import api from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { isAxiosError } from 'axios';
@@ -60,6 +63,8 @@ export default function BidPanelPage() {
   }, []);
 
   const [selectedDay, setSelectedDay] = useState(todayLocalYmd);
+  /** 'day' fetches the selected day's window; 'week' fetches the 7 days ending on the selected day. */
+  const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
   const [sortField, setSortField] = useState<BidSortField>('linkCreatedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -86,9 +91,12 @@ export default function BidPanelPage() {
   const [filterUserIds, setFilterUserIds] = useState<string[]>([]);
   /** Role column filter: substring match against my own bid.role OR peer's applied role. */
   const [filterRole, setFilterRole] = useState('');
+  /** Link URL substring filter; server already supports f_url. */
+  const [filterLinkUrl, setFilterLinkUrl] = useState('');
   /** Popover anchors for the icon-button filters. */
   const [linkFilterAnchor, setLinkFilterAnchor] = useState<HTMLElement | null>(null);
   const [roleFilterAnchor, setRoleFilterAnchor] = useState<HTMLElement | null>(null);
+  const [linkUrlFilterAnchor, setLinkUrlFilterAnchor] = useState<HTMLElement | null>(null);
 
   const sortParam = `${sortField}:${sortDir}`;
   const biddingEnabled = selectedDay === todayLocalYmd();
@@ -124,25 +132,40 @@ export default function BidPanelPage() {
   };
 
   const filterRoleTrimmed = filterRole.trim();
+  const filterLinkUrlTrimmed = filterLinkUrl.trim();
   const filterUserIdsKey = filterUserIds.join(',');
   const q = useQuery({
     queryKey: [
       'bid-board',
       groupId,
       selectedDay,
+      viewMode,
       sortParam,
       showPastLinkOnlyRows,
       filterUserIdsKey,
       filterRoleTrimmed,
+      filterLinkUrlTrimmed,
     ] as const,
     enabled: !!groupId,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     queryFn: async ({ queryKey }) => {
-      const [, gid, day, sort, showEmptyPast, userIdsCsv, roleText] = queryKey;
-      const { from, to } = localDayIsoRange(day);
+      const [, gid, day, mode, sort, showEmptyPast, userIdsCsv, roleText, urlText] = queryKey;
+      /** Day mode: just that day's window. Week mode: 7 days ending on the selected day (inclusive). */
+      let from: string;
+      let to: string;
+      if (mode === 'week') {
+        const dayRange = localDayIsoRange(day);
+        const endMs = new Date(dayRange.to).getTime();
+        from = new Date(endMs - 7 * 86400000).toISOString();
+        to = dayRange.to;
+      } else {
+        const dayRange = localDayIsoRange(day);
+        from = dayRange.from;
+        to = dayRange.to;
+      }
       const isToday = day === todayLocalYmd();
-      const excludeLinkOnlyPast = !isToday && !showEmptyPast;
+      const excludeLinkOnlyPast = mode === 'day' && !isToday && !showEmptyPast;
       const { data } = await api.get(`/groups/${gid}/bid-board`, {
         params: {
           from,
@@ -151,6 +174,7 @@ export default function BidPanelPage() {
           ...(excludeLinkOnlyPast ? { excludeLinkOnly: 'true' } : {}),
           ...(userIdsCsv ? { f_createdByUserIds: userIdsCsv } : {}),
           ...(roleText ? { f_role: roleText } : {}),
+          ...(urlText ? { f_url: urlText } : {}),
         },
       });
       return data as {
@@ -213,6 +237,11 @@ export default function BidPanelPage() {
   });
 
   const perms = useGroupPermissions(groupId);
+  /**
+   * Write-gate for the *selected* day. True when looking at today, or any day if the group owner
+   * has enabled past-day edits. Use this for composer, fast-feed, carry-over, edit-row controls.
+   */
+  const canEditSelectedDay = biddingEnabled || perms.allowPastDayEdit;
 
   /** Group members for the "Link by user" filter dropdown. Same endpoint used by GroupMembersPanel. */
   const filterMembersQ = useQuery({
@@ -379,9 +408,10 @@ export default function BidPanelPage() {
   const appliedCount = rows.filter((r) => r.myBid?.status === 'applied').length;
 
   async function commitFastFeed(linkId: string, existingBidId: string | null) {
-    if (!biddingEnabled || !groupId) return;
+    if (!canEditSelectedDay || !groupId) return;
     if (isOptimisticId(linkId)) return; // parent link not yet saved server-side
-    const { from, to } = localDayIsoRange(todayLocalYmd());
+    /** Use the *selected* day so past-day edits hit the right window when allowPastDayEdit is on. */
+    const { from, to } = localDayIsoRange(selectedDay);
     const raw = fastFeed[linkId] ?? '';
     const parsed = parseFastFeedLine(raw);
     if (!parsed) return;
@@ -458,7 +488,12 @@ export default function BidPanelPage() {
 
   function submitComposerLink() {
     const u = composerUrl.trim();
-    if (!biddingEnabled || u.length < 5 || addLink.isPending) return;
+    /**
+     * Removed `addLink.isPending` guard so users can queue multiple URLs back-to-back without
+     * waiting for the previous POST to settle. Optimistic UI handles the visual rollback per-row;
+     * the server's unique index handles the dedup race.
+     */
+    if (!canEditSelectedDay || u.length < 5) return;
     addLink.mutate(u);
   }
 
@@ -468,12 +503,30 @@ export default function BidPanelPage() {
     <Stack spacing={2}>
       <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="wrap" useFlexGap gap={1}>
         <Typography variant="h5">Bid board</Typography>
+        <ToggleButtonGroup
+          size="small"
+          value={viewMode}
+          exclusive
+          onChange={(_, v: 'day' | 'week' | null) => {
+            if (v) setViewMode(v);
+          }}
+          aria-label="View mode"
+        >
+          <ToggleButton value="day" sx={{ py: 0.25, px: 1, fontSize: '0.7rem' }}>
+            Day
+          </ToggleButton>
+          <ToggleButton value="week" sx={{ py: 0.25, px: 1, fontSize: '0.7rem' }}>
+            Week
+          </ToggleButton>
+        </ToggleButtonGroup>
         <TextField
           type="date"
           size="small"
           value={selectedDay}
           onChange={(e) => setSelectedDay(e.target.value)}
-          inputProps={{ 'aria-label': 'Day' }}
+          inputProps={{
+            'aria-label': viewMode === 'week' ? 'Week ending day' : 'Day',
+          }}
           sx={{
             width: 'auto',
             maxWidth: 118,
@@ -547,6 +600,22 @@ export default function BidPanelPage() {
                 overlap="circular"
               >
                 <FilterListIcon fontSize="small" />
+              </Badge>
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Filter links by URL (substring match)">
+            <IconButton
+              size="small"
+              aria-label="Filter links by URL"
+              onClick={(e) => setLinkUrlFilterAnchor(e.currentTarget)}
+            >
+              <Badge
+                variant="dot"
+                color="primary"
+                invisible={!filterLinkUrl.trim()}
+                overlap="circular"
+              >
+                <LinkIcon fontSize="small" />
               </Badge>
             </IconButton>
           </Tooltip>
@@ -699,6 +768,39 @@ export default function BidPanelPage() {
           }}
         />
       </Popover>
+      <Popover
+        open={Boolean(linkUrlFilterAnchor)}
+        anchorEl={linkUrlFilterAnchor}
+        onClose={() => setLinkUrlFilterAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        slotProps={{ paper: { sx: { width: 320, p: 1.5 } } }}
+      >
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+          Show rows where the link URL contains this text (substring match, case-insensitive).
+        </Typography>
+        <TextField
+          autoFocus
+          size="small"
+          fullWidth
+          value={filterLinkUrl}
+          onChange={(e) => setFilterLinkUrl(e.target.value)}
+          placeholder="e.g. linkedin.com, /jobs/, crowdstrike"
+          InputProps={{
+            endAdornment: filterLinkUrl ? (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  aria-label="Clear link URL filter"
+                  onClick={() => setFilterLinkUrl('')}
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            ) : null,
+          }}
+        />
+      </Popover>
       {(q.isLoading || (q.isPlaceholderData && q.isFetching)) && <LinearProgress />}
       {q.isError && <Alert severity="error">Could not load bid board.</Alert>}
       {q.data?.capped && (
@@ -706,8 +808,9 @@ export default function BidPanelPage() {
       )}
       {!biddingEnabled && (
         <Alert severity="info">
-          Past day — you can still edit, remove, or schedule interviews from bids shown for this date.
-          Use today&apos;s date to add new job URLs.
+          {perms.allowPastDayEdit
+            ? 'Past day — the group owner has enabled past-day edits, so you can add links and edit bids here too.'
+            : 'Past day — you can still edit, remove, or schedule interviews from bids shown for this date. Use today’s date to add new job URLs.'}
         </Alert>
       )}
       {addLink.isError && (
@@ -761,7 +864,7 @@ export default function BidPanelPage() {
             sortDir={sortDir}
             onSort={handleSort}
           />
-          {biddingEnabled && perms.canBid && (
+          {canEditSelectedDay && perms.canBid && (
             <Box
               sx={{
                 ...bidBoardRowGridSx,
@@ -790,7 +893,6 @@ export default function BidPanelPage() {
                     }
                   }}
                   placeholder="Add job URL — row appears in the list below"
-                  disabled={addLink.isPending}
                   fullWidth
                   variant="outlined"
                   size="small"
@@ -824,7 +926,7 @@ export default function BidPanelPage() {
             setIvDraft={setIvDraft}
             createInterview={createInterview}
             currentUserId={user?.id}
-            allowNewInputFlow={biddingEnabled && perms.canBid}
+            allowNewInputFlow={canEditSelectedDay && perms.canBid}
             patchLinkUseless={patchLinkUseless}
             myProfile={profileQ.data ?? null}
             readOnly={!perms.canBid}

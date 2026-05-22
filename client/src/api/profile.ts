@@ -81,6 +81,20 @@ export async function markAllNotificationsRead(): Promise<void> {
   await api.post('/notifications/read-all');
 }
 
+export async function approveRoleRequest(
+  groupId: string,
+  notificationId: string
+): Promise<{ ok: true; roles: string[]; userId: string }> {
+  const { data } = await api.post<{ ok: true; roles: string[]; userId: string }>(
+    `/groups/${groupId}/role-requests/${notificationId}/approve`
+  );
+  return data;
+}
+
+export async function denyRoleRequest(groupId: string, notificationId: string): Promise<void> {
+  await api.post(`/groups/${groupId}/role-requests/${notificationId}/deny`);
+}
+
 export type AchievementProgress = {
   goals: Goals;
   progress: {

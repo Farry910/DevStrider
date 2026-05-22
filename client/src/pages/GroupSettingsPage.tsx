@@ -7,9 +7,11 @@ import {
   Box,
   Button,
   Chip,
+  FormControlLabel,
   LinearProgress,
   Paper,
   Stack,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -40,6 +42,7 @@ type GroupMe = {
   };
   role: 'creator' | 'member' | 'none';
   isMember: boolean;
+  allowPastDayEdit?: boolean;
   removal: {
     assisterUserId: string | null;
     ownerConfirmedAt: string | null;
@@ -161,6 +164,16 @@ export default function GroupSettingsPage() {
         qc.removeQueries({ queryKey: ['group', groupId] });
         nav('/', { replace: true });
       }
+    },
+  });
+
+  const allowPastDayEditMut = useMutation({
+    mutationFn: async (allow: boolean) =>
+      api.patch(`/groups/${groupId}/allow-past-day-edit`, { allowPastDayEdit: allow }),
+    onSuccess: (_, allow) => {
+      qc.setQueryData(['group', groupId, 'me'], (prev: GroupMe | undefined) =>
+        prev ? { ...prev, allowPastDayEdit: allow } : prev
+      );
     },
   });
 
@@ -362,6 +375,36 @@ export default function GroupSettingsPage() {
             </Alert>
           )}
         </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" gutterBottom>
+          Past-day bid edits
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          When enabled, members with the BIDDER role can add links and edit bids on past-day
+          boards too. New links are backdated to the end of that day so they appear on the right
+          board. Default: off (writes are restricted to today's UTC calendar day).
+        </Typography>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={Boolean(meQ.data?.allowPastDayEdit)}
+              onChange={(_, c) => allowPastDayEditMut.mutate(c)}
+              disabled={allowPastDayEditMut.isPending}
+            />
+          }
+          label={
+            <Typography variant="body2">
+              {meQ.data?.allowPastDayEdit ? 'Past-day edits enabled' : 'Past-day edits disabled'}
+            </Typography>
+          }
+        />
+        {allowPastDayEditMut.isError && (
+          <Alert severity="error" sx={{ mt: 1 }}>
+            Could not save the setting.
+          </Alert>
+        )}
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2 }}>

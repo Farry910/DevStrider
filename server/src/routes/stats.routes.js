@@ -527,17 +527,27 @@ r.get(
 r.get(
   '/groups/:groupId/overview/chart',
   param('groupId').isMongoId(),
-  query('metric').isIn([
-    'applied',
-    'interviews_from_bidders',
-    'interviews_from_callers',
-    'pass_rate_from_callers',
-    'catch_rate_from_bidders',
-  ]),
   /**
-   * Optional viewer-side timezone offset in minutes (signed). E.g. -360 for UTC-6 (Mexico City),
-   * +330 for UTC+5:30 (India), 0 for UTC (default). Used to align day buckets to the viewer's
-   * calendar day rather than UTC midnight.
+   * Y-axis metric:
+   *   - bids        — count of UserBids that hit 'applied', bucketed by updatedAt
+   *   - interviews  — count of Interviews, bucketed by chosen interviewBucket field
+   *   - catch_rate  — interviews / bids per bucket
+   *   - pass_rate   — passed / (passed+failed) per bucket
+   *   - fail_rate   — failed / (passed+failed) per bucket
+   */
+  query('metric').isIn(['bids', 'interviews', 'catch_rate', 'pass_rate', 'fail_rate']),
+  /** X-axis granularity. `week` = 7 daily buckets; `month` = 4 weekly buckets. */
+  query('xAxis').optional().isIn(['week', 'month']),
+  /**
+   * Which Interview timestamp to bucket by:
+   *   - during — bucket by Interview.createdAt (when the interview was scheduled)
+   *   - into   — bucket by Interview.scheduledDate (when the interview takes place)
+   * Only affects interview-related metrics (interviews, catch_rate, pass_rate, fail_rate).
+   */
+  query('interviewBucket').optional().isIn(['during', 'into']),
+  /**
+   * Viewer-side timezone offset in minutes (signed). E.g. -360 for UTC-6 (Mexico City), +330 for
+   * UTC+5:30 (India), 0 for UTC (default). Used to align day buckets to the viewer's calendar day.
    */
   query('tzOffsetMinutes').optional().isInt({ min: -720, max: 840 }),
   async (req, res) => {
@@ -547,6 +557,8 @@ r.get(
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const groupId = new mongoose.Types.ObjectId(req.params.groupId);
     const metric = String(req.query.metric);
+    const xAxis = req.query.xAxis === 'month' ? 'month' : 'week';
+    const interviewBucket = req.query.interviewBucket === 'during' ? 'during' : 'into';
     const tzOffsetMinutes = Number.isFinite(Number(req.query.tzOffsetMinutes))
       ? Number(req.query.tzOffsetMinutes)
       : 0;
@@ -589,9 +601,12 @@ r.get(
 
     const toOid = (id) => new mongoose.Types.ObjectId(id);
 
-    /** All metrics bucket per viewer-local day, 7 days total. */
-    const bucketCount = 7;
-    const bucketSizeMs = 86400000;
+    /**
+     * Bucket geometry: week = 7 × 1-day buckets; month = 4 × 7-day buckets. Total window length
+     * always equals bucketCount × bucketSizeMs ending at endOfTodayUtc.
+     */
+    const bucketCount = xAxis === 'month' ? 4 : 7;
+    const bucketSizeMs = xAxis === 'month' ? 7 * 86400000 : 86400000;
     const windowStart = new Date(endOfTodayUtc.getTime() - bucketCount * bucketSizeMs);
     const bucketKeys = [];
     for (let i = 0; i < bucketCount; i++) {
@@ -635,180 +650,130 @@ r.get(
         .filter((s) => s.points.some((p) => p.value !== 0));
     }
 
-    if (metric === 'applied' || metric === 'interviews_from_bidders') {
-      const userOrder = [...bidderIds];
-      const nicknames = await lookupUsers(bidderIds);
-      const valueMap = new Map(); // userId -> number[]
-      if (userOrder.length > 0) {
-        const oids = userOrder.map(toOid);
-        let rows;
-        if (metric === 'applied') {
-          rows = await UserBid.aggregate([
-            {
-              $match: {
-                groupId,
-                userId: { $in: oids },
-                status: 'applied',
-                updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
-              },
-            },
-            { $project: { userId: 1, when: '$updatedAt' } },
-          ]);
-        } else {
-          rows = await Interview.aggregate([
-            {
-              $match: {
-                groupId,
-                userId: { $in: oids },
-                scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
-              },
-            },
-            { $project: { userId: 1, when: '$scheduledDate' } },
-          ]);
-        }
-        for (const r of rows) {
-          const uid = String(r.userId);
-          const idx = bucketIndexFor(new Date(r.when));
-          if (idx < 0) continue;
-          if (!valueMap.has(uid)) valueMap.set(uid, new Array(bucketCount).fill(0));
-          valueMap.get(uid)[idx] += 1;
-        }
-      }
+    /** All metrics scope by group bidders (interview/bid userId in bidderIds). */
+    const userOrder = [...bidderIds];
+    const nicknames = await lookupUsers(bidderIds);
+    const valueMap = new Map(); // userId -> number[]
+    if (userOrder.length === 0) {
       return res.json({
         metric,
-        bucket: 'day',
+        xAxis,
+        interviewBucket,
+        bucket: xAxis === 'month' ? 'week' : 'day',
         from: windowStart,
         to: endOfTodayUtc,
         buckets: bucketKeys,
-        series: buildSeries(userOrder, nicknames, valueMap),
+        series: [],
       });
     }
+    const oids = userOrder.map(toOid);
+    /** Bucketing field for interview-related metrics. */
+    const ivBucketField = interviewBucket === 'during' ? 'createdAt' : 'scheduledDate';
 
-    if (metric === 'interviews_from_callers') {
-      const userOrder = [...callerWatches.keys()];
-      const nicknames = await lookupUsers(new Set(userOrder));
-      const valueMap = new Map();
-      for (const callerId of userOrder) {
-        const watchedOids = [...(callerWatches.get(callerId) || [])].map(toOid);
-        if (watchedOids.length === 0) continue;
-        const rows = await Interview.find({
-          groupId,
-          userId: { $in: watchedOids },
-          scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
-        })
-          .select('scheduledDate')
-          .lean();
-        const arr = new Array(bucketCount).fill(0);
-        for (const iv of rows) {
-          const idx = bucketIndexFor(new Date(iv.scheduledDate));
-          if (idx >= 0) arr[idx] += 1;
-        }
-        valueMap.set(callerId, arr);
+    function bump(map, uid, idx) {
+      if (!map.has(uid)) map.set(uid, new Array(bucketCount).fill(0));
+      map.get(uid)[idx] += 1;
+    }
+
+    if (metric === 'bids') {
+      const rows = await UserBid.find({
+        groupId,
+        userId: { $in: oids },
+        status: 'applied',
+        updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
+      })
+        .select('userId updatedAt')
+        .lean();
+      for (const r of rows) {
+        const idx = bucketIndexFor(new Date(r.updatedAt));
+        if (idx >= 0) bump(valueMap, String(r.userId), idx);
       }
-      return res.json({
-        metric,
-        bucket: 'day',
-        from: windowStart,
-        to: endOfTodayUtc,
-        buckets: bucketKeys,
-        series: buildSeries(userOrder, nicknames, valueMap),
-      });
-    }
-
-    if (metric === 'pass_rate_from_callers') {
-      const userOrder = [...callerWatches.keys()];
-      const nicknames = await lookupUsers(new Set(userOrder));
-      const valueMap = new Map();
-      for (const callerId of userOrder) {
-        const watchedOids = [...(callerWatches.get(callerId) || [])].map(toOid);
-        if (watchedOids.length === 0) continue;
-        const rows = await Interview.find({
+    } else if (metric === 'interviews') {
+      const ivMatch = {
+        groupId,
+        userId: { $in: oids },
+        [ivBucketField]: { $gte: windowStart, $lt: endOfTodayUtc },
+      };
+      if (ivBucketField === 'scheduledDate') ivMatch.scheduledDate.$ne = null;
+      const rows = await Interview.find(ivMatch).select(`userId ${ivBucketField}`).lean();
+      for (const r of rows) {
+        const idx = bucketIndexFor(new Date(r[ivBucketField]));
+        if (idx >= 0) bump(valueMap, String(r.userId), idx);
+      }
+    } else if (metric === 'catch_rate') {
+      /** interviews_in_bucket / bids_in_bucket, per bidder. */
+      const ivMatch = {
+        groupId,
+        userId: { $in: oids },
+        [ivBucketField]: { $gte: windowStart, $lt: endOfTodayUtc },
+      };
+      if (ivBucketField === 'scheduledDate') ivMatch.scheduledDate.$ne = null;
+      const [appliedRows, ivRows] = await Promise.all([
+        UserBid.find({
           groupId,
-          userId: { $in: watchedOids },
-          status: { $in: ['passed', 'failed'] },
+          userId: { $in: oids },
+          status: 'applied',
           updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
         })
-          .select('updatedAt status')
-          .lean();
-        const passed = new Array(bucketCount).fill(0);
-        const decided = new Array(bucketCount).fill(0);
-        for (const iv of rows) {
-          const idx = bucketIndexFor(new Date(iv.updatedAt));
-          if (idx < 0) continue;
-          decided[idx] += 1;
-          if (iv.status === 'passed') passed[idx] += 1;
-        }
-        const arr = decided.map((d, i) => (d > 0 ? passed[i] / d : 0));
-        valueMap.set(callerId, arr);
+          .select('userId updatedAt')
+          .lean(),
+        Interview.find(ivMatch).select(`userId ${ivBucketField}`).lean(),
+      ]);
+      const applied = new Map();
+      const interviews = new Map();
+      for (const b of appliedRows) {
+        const idx = bucketIndexFor(new Date(b.updatedAt));
+        if (idx >= 0) bump(applied, String(b.userId), idx);
       }
-      return res.json({
-        metric,
-        bucket: 'day',
-        from: windowStart,
-        to: endOfTodayUtc,
-        buckets: bucketKeys,
-        series: buildSeries(userOrder, nicknames, valueMap),
-      });
+      for (const iv of ivRows) {
+        const idx = bucketIndexFor(new Date(iv[ivBucketField]));
+        if (idx >= 0) bump(interviews, String(iv.userId), idx);
+      }
+      const uidsTouched = new Set([...applied.keys(), ...interviews.keys()]);
+      for (const uid of uidsTouched) {
+        const a = applied.get(uid) || new Array(bucketCount).fill(0);
+        const i = interviews.get(uid) || new Array(bucketCount).fill(0);
+        valueMap.set(uid, a.map((aV, idx) => (aV > 0 ? i[idx] / aV : 0)));
+      }
+    } else if (metric === 'pass_rate' || metric === 'fail_rate') {
+      /** numerator / (passed+failed), per bidder, bucketed by chosen interview timestamp. */
+      const target = metric === 'pass_rate' ? 'passed' : 'failed';
+      const ivMatch = {
+        groupId,
+        userId: { $in: oids },
+        status: { $in: ['passed', 'failed'] },
+        [ivBucketField]: { $gte: windowStart, $lt: endOfTodayUtc },
+      };
+      if (ivBucketField === 'scheduledDate') ivMatch.scheduledDate.$ne = null;
+      const rows = await Interview.find(ivMatch)
+        .select(`userId status ${ivBucketField}`)
+        .lean();
+      const matched = new Map();
+      const decided = new Map();
+      for (const iv of rows) {
+        const idx = bucketIndexFor(new Date(iv[ivBucketField]));
+        if (idx < 0) continue;
+        bump(decided, String(iv.userId), idx);
+        if (iv.status === target) bump(matched, String(iv.userId), idx);
+      }
+      const uidsTouched = new Set(decided.keys());
+      for (const uid of uidsTouched) {
+        const m = matched.get(uid) || new Array(bucketCount).fill(0);
+        const d = decided.get(uid) || new Array(bucketCount).fill(0);
+        valueMap.set(uid, d.map((dV, idx) => (dV > 0 ? m[idx] / dV : 0)));
+      }
     }
 
-    if (metric === 'catch_rate_from_bidders') {
-      const userOrder = [...bidderIds];
-      const nicknames = await lookupUsers(bidderIds);
-      const valueMap = new Map();
-      if (userOrder.length > 0) {
-        const oids = userOrder.map(toOid);
-        const [appliedRows, ivRows] = await Promise.all([
-          UserBid.find({
-            groupId,
-            userId: { $in: oids },
-            status: 'applied',
-            updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
-          })
-            .select('userId updatedAt')
-            .lean(),
-          Interview.find({
-            groupId,
-            userId: { $in: oids },
-            scheduledDate: { $ne: null, $gte: windowStart, $lt: endOfTodayUtc },
-          })
-            .select('userId scheduledDate')
-            .lean(),
-        ]);
-        const applied = new Map();
-        const interviews = new Map();
-        function bump(map, uid, idx) {
-          if (!map.has(uid)) map.set(uid, new Array(bucketCount).fill(0));
-          map.get(uid)[idx] += 1;
-        }
-        for (const b of appliedRows) {
-          const idx = bucketIndexFor(new Date(b.updatedAt));
-          if (idx >= 0) bump(applied, String(b.userId), idx);
-        }
-        for (const iv of ivRows) {
-          const idx = bucketIndexFor(new Date(iv.scheduledDate));
-          if (idx >= 0) bump(interviews, String(iv.userId), idx);
-        }
-        const uidsTouched = new Set([...applied.keys(), ...interviews.keys()]);
-        for (const uid of uidsTouched) {
-          const a = applied.get(uid) || new Array(bucketCount).fill(0);
-          const i = interviews.get(uid) || new Array(bucketCount).fill(0);
-          valueMap.set(
-            uid,
-            a.map((aV, idx) => (aV > 0 ? i[idx] / aV : 0))
-          );
-        }
-      }
-      return res.json({
-        metric,
-        bucket: 'day',
-        from: windowStart,
-        to: endOfTodayUtc,
-        buckets: bucketKeys,
-        series: buildSeries(userOrder, nicknames, valueMap),
-      });
-    }
-
-    return res.status(400).json({ error: 'Unknown metric' });
+    return res.json({
+      metric,
+      xAxis,
+      interviewBucket,
+      bucket: xAxis === 'month' ? 'week' : 'day',
+      from: windowStart,
+      to: endOfTodayUtc,
+      buckets: bucketKeys,
+      series: buildSeries(userOrder, nicknames, valueMap),
+    });
   }
 );
 

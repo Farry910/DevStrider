@@ -14,6 +14,9 @@ import {
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import CheckIcon from '@mui/icons-material/Check';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import DescriptionIcon from '@mui/icons-material/Description';
+import ArticleIcon from '@mui/icons-material/Article';
+import { BidContentViewer } from '../bid/BidContentViewer';
 import EditIcon from '@mui/icons-material/Edit';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
@@ -50,6 +53,9 @@ export type InterviewRowType = {
   recruiterCompanyDuplicateWarning?: boolean;
   createdAt: string;
   updatedAt?: string;
+  /** Snapshotted at create time so callers see stable context across edits. */
+  attachedJobDescription?: string;
+  attachedResumeContent?: string;
 };
 
 type MutPatch = (payload: { id: string; body: Record<string, unknown> }) => void;
@@ -156,6 +162,14 @@ export function InterviewVirtualBody({
   allowedNextTypes,
 }: Props) {
   const [editingInterviewId, setEditingInterviewId] = useState<string | null>(null);
+  /** Modal viewer for the snapshotted JD + resume attached at interview-create time. */
+  const [viewer, setViewer] = useState<{
+    title: string;
+    subtitle?: string;
+    body: string;
+    copyLabel: string;
+    serif?: boolean;
+  } | null>(null);
 
   const finishEditing = () => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -179,6 +193,7 @@ export function InterviewVirtualBody({
   const vitems = virtualizer.getVirtualItems();
 
   return (
+    <>
     <Box sx={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
       {vitems.map((v) => {
         const item = items[v.index];
@@ -559,6 +574,47 @@ export function InterviewVirtualBody({
                     </IconButton>
                   </span>
                 </Tooltip>
+                <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="View attached job description">
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="View attached job description"
+                      disabled={!(row.attachedJobDescription || '').trim()}
+                      onClick={() =>
+                        setViewer({
+                          title: 'Job description',
+                          subtitle:
+                            [row.company, row.role].filter(Boolean).join(' · ') || undefined,
+                          body: row.attachedJobDescription || '',
+                          copyLabel: 'job description',
+                        })
+                      }
+                    >
+                      <DescriptionIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="View attached resume">
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="View attached resume"
+                      disabled={!(row.attachedResumeContent || '').trim()}
+                      onClick={() =>
+                        setViewer({
+                          title: 'Resume',
+                          subtitle:
+                            [row.company, row.role].filter(Boolean).join(' · ') || undefined,
+                          body: row.attachedResumeContent || '',
+                          copyLabel: 'resume',
+                          serif: true,
+                        })
+                      }
+                    >
+                      <ArticleIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <Tooltip {...BID_BOARD_TOOLTIP_COMMON} title="Add next interview stage">
                   <IconButton
                     size="small"
@@ -666,5 +722,15 @@ export function InterviewVirtualBody({
         );
       })}
     </Box>
+    <BidContentViewer
+      open={Boolean(viewer)}
+      onClose={() => setViewer(null)}
+      title={viewer?.title ?? ''}
+      subtitle={viewer?.subtitle}
+      body={viewer?.body ?? ''}
+      copyLabel={viewer?.copyLabel ?? 'content'}
+      serif={viewer?.serif}
+    />
+    </>
   );
 }

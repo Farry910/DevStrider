@@ -120,6 +120,12 @@ export type GroupBidOnLink = {
 };
 
 export type BoardRow = {
+  /**
+   * Unique key for the row. For caller-only viewers, the bid board is multi-row per link
+   * (one row per watched bidder's bid), so the link.id alone isn't unique. Server provides
+   * `${linkId}-${bidId}` when there's a bid, or just the linkId when there isn't.
+   */
+  rowKey?: string;
   link: {
     id: string;
     url: string;
@@ -506,7 +512,7 @@ export function BidBoardVirtualBody({
     getScrollElement: () => scrollElement,
     estimateSize: () => 44,
     overscan: 12,
-    getItemKey: (index) => rows[index]?.link?.id ?? String(index),
+    getItemKey: (index) => rows[index]?.rowKey ?? rows[index]?.link?.id ?? String(index),
   });
 
   const vitems = virtualizer.getVirtualItems();
@@ -622,7 +628,6 @@ export function BidBoardVirtualBody({
                         <IconButton
                           size="small"
                           aria-label="Mark as useless"
-                          disabled={patchLinkUseless.isPending}
                           onClick={() =>
                             patchLinkUseless.mutate({
                               linkId: row.link.id,
@@ -1367,7 +1372,6 @@ export function BidBoardVirtualBody({
           const marked = Boolean(menuRow.link.markedUselessAt);
           return (
             <MenuItem
-              disabled={patchLinkUseless.isPending}
               onClick={() => {
                 closeBidActionsMenu();
                 patchLinkUseless.mutate({
@@ -1392,7 +1396,7 @@ export function BidBoardVirtualBody({
           );
         })()}
       <MenuItem
-        disabled={readOnly || deleteBid.isPending}
+        disabled={readOnly}
         onClick={() => {
           const id = bidActionsMenu?.bidId;
           closeBidActionsMenu();

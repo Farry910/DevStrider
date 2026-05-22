@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-export const NOTIFICATION_KINDS = ['achievement'];
+export const NOTIFICATION_KINDS = ['achievement', 'role_request'];
 
 const notificationSchema = new mongoose.Schema(
   {

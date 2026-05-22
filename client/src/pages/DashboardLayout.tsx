@@ -7,6 +7,8 @@ import {
   Avatar,
   Box,
   Button,
+  Chip,
+  Stack,
   Divider,
   Drawer,
   IconButton,
@@ -42,6 +44,7 @@ import api from '../api/client';
 import { presetAvatarSrc } from '../avatarPresets';
 import { ProfileAvatarDialog } from '../components/ProfileAvatarDialog';
 import { NotificationBell } from '../components/NotificationBell';
+import { RoleRequestDialog } from '../components/RoleRequestDialog';
 
 const DRAWER_WIDTH_EXPANDED = 268;
 const DRAWER_WIDTH_COLLAPSED = 72;
@@ -56,6 +59,7 @@ type GroupMe = {
   };
   isMember: boolean;
   role: 'creator' | 'member' | 'none';
+  effectiveRoles?: Array<'admin' | 'bidder' | 'caller' | 'ops'>;
   removal?: {
     assisterUserId: string | null;
     ownerConfirmedAt: string | null;
@@ -79,6 +83,7 @@ export default function DashboardLayout() {
   const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
+  const [roleRequestOpen, setRoleRequestOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
@@ -310,15 +315,52 @@ export default function DashboardLayout() {
         {groupId && (
           <>
             {!collapsed && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: 'block', px: 2, pb: 0.75 }}
-                noWrap
-                title={groupMe?.group?.name}
-              >
-                {groupMeLoading ? '…' : groupMe?.group?.name ?? 'Group'}
-              </Typography>
+              <Box sx={{ px: 2, pb: 0.75 }}>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: 'block' }}
+                  noWrap
+                  title={groupMe?.group?.name}
+                >
+                  {groupMeLoading ? '…' : groupMe?.group?.name ?? 'Group'}
+                </Typography>
+                {Array.isArray(groupMe?.effectiveRoles) && groupMe.effectiveRoles.length > 0 && (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }} flexWrap="wrap" useFlexGap>
+                    {groupMe.effectiveRoles.map((r) => (
+                      <Chip
+                        key={r}
+                        size="small"
+                        label={r.toUpperCase()}
+                        color={
+                          r === 'admin'
+                            ? 'primary'
+                            : r === 'bidder'
+                              ? 'success'
+                              : r === 'caller'
+                                ? 'info'
+                                : 'default'
+                        }
+                        variant="outlined"
+                        sx={{
+                          height: 18,
+                          '& .MuiChip-label': { px: 0.6, fontSize: '0.6rem', fontWeight: 600 },
+                        }}
+                      />
+                    ))}
+                  </Stack>
+                )}
+                {groupMe?.isMember && groupMe.role !== 'creator' && (
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => setRoleRequestOpen(true)}
+                    sx={{ mt: 0.5, fontSize: '0.65rem', textTransform: 'none', p: 0 }}
+                  >
+                    Request role change
+                  </Button>
+                )}
+              </Box>
             )}
             <Tooltip title="Bid board" placement="right" disableHoverListener={!collapsed}>
               <ListItemButton
@@ -744,6 +786,18 @@ export default function DashboardLayout() {
           nickname={user.nickname}
           avatarId={user.avatarId}
           onSaved={applyUser}
+        />
+      )}
+      {groupId && (
+        <RoleRequestDialog
+          open={roleRequestOpen}
+          onClose={() => setRoleRequestOpen(false)}
+          groupId={groupId}
+          currentRoles={
+            (groupMe?.effectiveRoles ?? []).filter(
+              (r): r is 'bidder' | 'caller' | 'ops' => r !== 'admin'
+            )
+          }
         />
       )}
     </Box>

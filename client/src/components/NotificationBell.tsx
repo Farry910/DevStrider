@@ -17,6 +17,8 @@ import {
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import CheckIcon from '@mui/icons-material/Check';
 import {
+  approveRoleRequest,
+  denyRoleRequest,
   getNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -34,6 +36,16 @@ function describe(n: NotificationItem): string {
     if (kind === 'weekly_interviews')
       return `Weekly goal hit: ${value}/${target} interviews this week.`;
     if (kind === 'monthly_offers') return `Monthly goal hit: ${value}/${target} offers this month.`;
+  }
+  if (n.kind === 'role_request') {
+    const p = (n.payload || {}) as Record<string, unknown>;
+    const who = String(p.requesterNickname || p.requesterEmail || 'A member');
+    const group = String(p.groupName || 'your group');
+    const roles = Array.isArray(p.requestedRoles)
+      ? (p.requestedRoles as string[]).map((s) => s.toUpperCase()).join(', ')
+      : '';
+    const msg = String(p.message || '');
+    return `${who} in "${group}" requested roles: ${roles}.${msg ? ' — ' + msg : ''}`;
   }
   return 'New notification.';
 }
@@ -65,6 +77,24 @@ export function NotificationBell() {
   });
   const readAllMut = useMutation({
     mutationFn: async () => markAllNotificationsRead(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications', 'me'] }),
+  });
+  /**
+   * Approve a role-request directly from the bell — applies the requested roles to the requester
+   * and marks the notification read. Invalidates groups so the requester sees their new roles next
+   * time their `/me` fetches resolve.
+   */
+  const approveMut = useMutation({
+    mutationFn: async (vars: { groupId: string; notificationId: string }) =>
+      approveRoleRequest(vars.groupId, vars.notificationId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['notifications', 'me'] });
+      void qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+  const denyMut = useMutation({
+    mutationFn: async (vars: { groupId: string; notificationId: string }) =>
+      denyRoleRequest(vars.groupId, vars.notificationId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications', 'me'] }),
   });
 
@@ -115,39 +145,78 @@ export function NotificationBell() {
           </Box>
         ) : (
           <List dense disablePadding sx={{ maxHeight: 400, overflow: 'auto' }}>
-            {items.map((n) => (
-              <Box key={n.id}>
-                <ListItem
-                  alignItems="flex-start"
-                  secondaryAction={
-                    n.readAt ? null : (
-                      <Tooltip title="Mark read">
-                        <IconButton
+            {items.map((n) => {
+              const isRoleReq = n.kind === 'role_request';
+              const rrPayload = isRoleReq ? ((n.payload || {}) as Record<string, unknown>) : null;
+              const rrGroupId = rrPayload ? String(rrPayload.groupId || '') : '';
+              const rrApprovable = isRoleReq && !n.readAt && Boolean(rrGroupId);
+              return (
+                <Box key={n.id}>
+                  <ListItem
+                    alignItems="flex-start"
+                    secondaryAction={
+                      isRoleReq || n.readAt ? null : (
+                        <Tooltip title="Mark read">
+                          <IconButton
+                            size="small"
+                            aria-label="Mark notification read"
+                            disabled={readMut.isPending}
+                            onClick={() => readMut.mutate(n.id)}
+                          >
+                            <CheckIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )
+                    }
+                    sx={{
+                      bgcolor: n.readAt ? 'transparent' : 'action.hover',
+                      pr: !isRoleReq && !n.readAt ? 6 : 1.5,
+                      pb: rrApprovable ? 0.5 : undefined,
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                    }}
+                  >
+                    <ListItemText
+                      primary={describe(n)}
+                      primaryTypographyProps={{ variant: 'body2' }}
+                      secondary={new Date(n.createdAt).toLocaleString()}
+                      secondaryTypographyProps={{ variant: 'caption' }}
+                    />
+                    {rrApprovable && (
+                      <Stack direction="row" spacing={1} sx={{ mt: 0.75 }}>
+                        <Button
                           size="small"
-                          aria-label="Mark notification read"
-                          disabled={readMut.isPending}
-                          onClick={() => readMut.mutate(n.id)}
+                          variant="contained"
+                          disabled={approveMut.isPending || denyMut.isPending}
+                          onClick={() =>
+                            approveMut.mutate({ groupId: rrGroupId, notificationId: n.id })
+                          }
                         >
-                          <CheckIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    )
-                  }
-                  sx={{
-                    bgcolor: n.readAt ? 'transparent' : 'action.hover',
-                    pr: n.readAt ? 1.5 : 6,
-                  }}
-                >
-                  <ListItemText
-                    primary={describe(n)}
-                    primaryTypographyProps={{ variant: 'body2' }}
-                    secondary={new Date(n.createdAt).toLocaleString()}
-                    secondaryTypographyProps={{ variant: 'caption' }}
-                  />
-                </ListItem>
-                <Divider component="li" />
-              </Box>
-            ))}
+                          Approve
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="inherit"
+                          disabled={approveMut.isPending || denyMut.isPending}
+                          onClick={() =>
+                            denyMut.mutate({ groupId: rrGroupId, notificationId: n.id })
+                          }
+                        >
+                          Deny
+                        </Button>
+                      </Stack>
+                    )}
+                    {isRoleReq && n.readAt && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+                        Resolved.
+                      </Typography>
+                    )}
+                  </ListItem>
+                  <Divider component="li" />
+                </Box>
+              );
+            })}
           </List>
         )}
       </Popover>

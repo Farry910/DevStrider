@@ -136,7 +136,7 @@ export function GroupMembersPanel({ groupId, isAdmin }: Props) {
                     {m.email}
                   </Typography>
                 </Box>
-                {isAdmin && !m.isCreator && (
+                {isAdmin && (
                   <Box>
                     {!editing ? (
                       <IconButton size="small" aria-label="Edit roles" onClick={() => startEdit(m)}>
@@ -171,7 +171,11 @@ export function GroupMembersPanel({ groupId, isAdmin }: Props) {
                   Roles:
                 </Typography>
                 {!editing
-                  ? (m.isCreator ? (['admin'] as const) : m.roles).map((r) => (
+                  ? /** Show the implicit 'admin' chip for the creator plus any explicit member roles. */
+                    [
+                      ...(m.isCreator ? (['admin'] as const) : []),
+                      ...m.roles,
+                    ].map((r) => (
                       <Chip
                         key={r}
                         size="small"
@@ -197,6 +201,44 @@ export function GroupMembersPanel({ groupId, isAdmin }: Props) {
                       />
                     ))}
               </Stack>
+              {editing && (
+                <Stack
+                  direction="row"
+                  spacing={0.5}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  useFlexGap
+                  sx={{ mt: 0.5 }}
+                >
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ mr: 0.5 }}
+                  >
+                    Presets:
+                  </Typography>
+                  {(
+                    [
+                      { label: 'View only', roles: ['ops'] as Role[] },
+                      { label: 'Can see bids', roles: ['bidder', 'ops'] as Role[] },
+                      {
+                        label: 'Can see bids + interviews',
+                        roles: ['bidder', 'caller', 'ops'] as Role[],
+                      },
+                      { label: 'Caller', roles: ['caller', 'ops'] as Role[] },
+                    ] as const
+                  ).map((p) => (
+                    <Chip
+                      key={p.label}
+                      size="small"
+                      label={p.label}
+                      variant="outlined"
+                      onClick={() => setDraftRoles([...p.roles])}
+                      sx={{ height: 22, '& .MuiChip-label': { px: 0.85, fontSize: '0.7rem' } }}
+                    />
+                  ))}
+                </Stack>
+              )}
               {(m.roles.includes('caller') ||
                 m.roles.includes('ops') ||
                 (editing && (draftRoles.includes('caller') || draftRoles.includes('ops')))) && (

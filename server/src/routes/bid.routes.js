@@ -3,7 +3,13 @@ import { body, param, query, validationResult } from 'express-validator';
 import { GroupLink } from '../models/GroupLink.js';
 import { UserBid, BID_STATUSES } from '../models/UserBid.js';
 import { requireAuth } from '../middleware/auth.js';
-import { assertGroupCreator, assertGroupMember, assertGroupRole } from '../services/membership.js';
+import {
+  assertGroupCreator,
+  assertGroupMember,
+  assertGroupRole,
+  getEffectiveRoles,
+  watchedUserIdsFor,
+} from '../services/membership.js';
 import { buildBidBoardPage } from '../services/bidBoard.js';
 import { normalizeGroupUrl } from '../utils/urlNorm.js';
 import { escapeRegex } from '../utils/regex.js';
@@ -81,6 +87,18 @@ r.get(
     };
     const excludeLinkOnly =
       req.query.excludeLinkOnly === 'true' || req.query.excludeLinkOnly === '1';
+    /**
+     * Pick the bid-scope: caller-only viewers see their watched bidders' bids; everyone else
+     * (bidders, admin, or mixed roles) sees their own bid per link as before.
+     */
+    const viewerRoles = getEffectiveRoles(m.group, req.user.id);
+    const isCallerOnly =
+      viewerRoles.includes('caller') &&
+      !viewerRoles.includes('bidder') &&
+      !viewerRoles.includes('admin');
+    const bidScope = isCallerOnly
+      ? { kind: 'watches', userIds: watchedUserIdsFor(m.group, req.user.id) }
+      : { kind: 'self', userId: req.user.id };
     const data = await buildBidBoardPage({
       groupId: req.params.groupId,
       userId: req.user.id,
@@ -89,6 +107,7 @@ r.get(
       from: req.query.from,
       to: req.query.to,
       excludeLinkOnly,
+      bidScope,
     });
     return res.json(data);
   }
@@ -191,8 +210,21 @@ r.post(
       dayEnd = b.end;
     }
 
-    const nw = assertNowInWindow(dayStart, dayEnd);
-    if (!nw.ok) return res.status(nw.status).json({ error: nw.error });
+    /** Honor group setting: if the owner allowed past-day edits, skip the "now must be in window" gate. */
+    if (!m.group?.allowPastDayEdit) {
+      const nw = assertNowInWindow(dayStart, dayEnd);
+      if (!nw.ok) return res.status(nw.status).json({ error: nw.error });
+    }
+
+    /**
+     * When the group allows past-day edits and `now` is past the requested window, backdate the
+     * link's createdAt + new bid's createdAt/updatedAt to the end of the targeted day so the row
+     * appears on that day's bid board (the day-slice rule keys off these timestamps).
+     */
+    const nowMs = Date.now();
+    const isPastDay =
+      Boolean(m.group?.allowPastDayEdit) && dayEnd.getTime() <= nowMs;
+    const backdate = isPastDay ? new Date(dayEnd.getTime() - 1) : null;
 
     let link =
       (await GroupLink.findOne({ groupId: req.params.groupId, urlNorm })) ||
@@ -227,6 +259,9 @@ r.post(
         status: 'draft',
         lastModifiedBy: req.user.id,
         audit: [{ userId: req.user.id, action: 'create' }],
+        ...(backdate
+          ? { createdAt: backdate, updatedAt: backdate, firstCreatedAt: backdate }
+          : {}),
       });
       emitBidBoardInvalidate(req.params.groupId);
       return res.status(201).json({ link, bid, joinedExistingLink: true });
@@ -239,6 +274,7 @@ r.post(
       urlNorm,
       sharedJobDescription: '',
       createdByUserId: req.user.id,
+      ...(backdate ? { createdAt: backdate, updatedAt: backdate } : {}),
     });
     const bid = await UserBid.create({
       groupId: req.params.groupId,
@@ -247,6 +283,9 @@ r.post(
       status: 'draft',
       lastModifiedBy: req.user.id,
       audit: [{ userId: req.user.id, action: 'create' }],
+      ...(backdate
+        ? { createdAt: backdate, updatedAt: backdate, firstCreatedAt: backdate }
+        : {}),
     });
     emitBidBoardInvalidate(req.params.groupId);
     return res.status(201).json({ link: newLink, bid, joinedExistingLink: false });
@@ -267,8 +306,10 @@ r.post(
     if (!m.ok) return res.status(m.status).json({ error: m.error });
     const w = parseBiddingWindow(req.query.from, req.query.to);
     if (!w.ok) return res.status(w.status).json({ error: w.error });
-    const nw = assertNowInWindow(w.winStart, w.winEnd);
-    if (!nw.ok) return res.status(nw.status).json({ error: nw.error });
+    if (!m.group?.allowPastDayEdit) {
+      const nw = assertNowInWindow(w.winStart, w.winEnd);
+      if (!nw.ok) return res.status(nw.status).json({ error: nw.error });
+    }
 
     const link = await GroupLink.findOne({
       _id: req.params.linkId,

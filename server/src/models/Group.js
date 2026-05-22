@@ -77,6 +77,12 @@ const groupSchema = new mongoose.Schema(
     overviewScoreWeights: { type: mongoose.Schema.Types.Mixed, default: undefined },
     /** Owner-tunable timers (junk auto-removal grace, duplicate detection window, etc.). */
     timers: { type: groupTimersSchema, default: () => ({}) },
+    /**
+     * When true, members may add links / edit / delete / fast-feed on past-day boards (not just
+     * today). When false (default), bid writes are restricted to the current UTC calendar day via
+     * assertNowInWindow.
+     */
+    allowPastDayEdit: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

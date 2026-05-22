@@ -9,6 +9,7 @@ export type GroupMeResponse = {
   memberRoles: Array<'bidder' | 'caller' | 'ops'>;
   watches: string[];
   status: 'pending' | 'approved';
+  allowPastDayEdit: boolean;
 };
 
 export type GroupPermissions = {
@@ -22,6 +23,8 @@ export type GroupPermissions = {
   canEditInterview: boolean;
   canExport: boolean;
   canManageMembers: boolean;
+  /** Group setting: when true, members can add/edit/delete bids on past-day boards too. */
+  allowPastDayEdit: boolean;
   loading: boolean;
   effectiveRoles: GroupMeResponse['effectiveRoles'];
   watches: string[];
@@ -37,6 +40,7 @@ const EMPTY: GroupPermissions = {
   canEditInterview: false,
   canExport: false,
   canManageMembers: false,
+  allowPastDayEdit: false,
   loading: false,
   effectiveRoles: [],
   watches: [],
@@ -70,6 +74,7 @@ export function useGroupPermissions(groupId: string | undefined): GroupPermissio
     canEditInterview: isAdmin || isCaller,
     canExport: isAdmin || isBidder || isCaller,
     canManageMembers: isAdmin,
+    allowPastDayEdit: Boolean(q.data.allowPastDayEdit),
     loading: false,
     effectiveRoles: roles,
     watches: q.data.watches || [],
