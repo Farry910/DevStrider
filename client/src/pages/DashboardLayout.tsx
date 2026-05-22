@@ -37,6 +37,7 @@ import WorkspacePremiumOutlinedIcon from '@mui/icons-material/WorkspacePremiumOu
 import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import PersonOutlineIcon from '@mui/icons-material/PersonOutline';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import AdminPanelSettingsOutlinedIcon from '@mui/icons-material/AdminPanelSettingsOutlined';
 import { useAuth } from '../auth/AuthContext';
 import { useGroupPresence } from '../hooks/useGroupPresence';
@@ -478,6 +479,25 @@ export default function DashboardLayout() {
                     </ListItemIcon>
                     {!collapsed && (
                       <ListItemText primary="Feedback" primaryTypographyProps={{ variant: 'body2' }} />
+                    )}
+                  </ListItemButton>
+                </Tooltip>
+                <Tooltip title="Resume profile (this group)" placement="right" disableHoverListener={!collapsed}>
+                  <ListItemButton
+                    component={NavLink}
+                    to={`/g/${groupId}/profile`}
+                    onClick={() => setMobileOpen(false)}
+                    sx={{
+                      ...itemSx(pathname === `/g/${groupId}/profile`),
+                      justifyContent: collapsed ? 'center' : undefined,
+                      px: collapsed ? 1 : undefined,
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: collapsed ? 0 : 36, justifyContent: 'center' }}>
+                      <DescriptionOutlinedIcon fontSize="small" />
+                    </ListItemIcon>
+                    {!collapsed && (
+                      <ListItemText primary="Resume profile" primaryTypographyProps={{ variant: 'body2' }} />
                     )}
                   </ListItemButton>
                 </Tooltip>

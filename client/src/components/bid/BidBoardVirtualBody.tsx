@@ -86,7 +86,7 @@ import { FormatStatusBadge } from '../FormatStatusBadge';
 import { alpha, useTheme, type Theme } from '@mui/material/styles';
 import { presetAvatarSrc } from '../../avatarPresets';
 import { composeResume } from '../../utils/composeResume';
-import type { Profile } from '../../api/profile';
+import type { Profile, ResumeProfile } from '../../api/profile';
 import { isOptimisticId } from '../../utils/optimisticBidBoard';
 import { BidContentViewer } from './BidContentViewer';
 
@@ -126,6 +126,12 @@ export type BoardRow = {
    * `${linkId}-${bidId}` when there's a bid, or just the linkId when there isn't.
    */
   rowKey?: string;
+  /**
+   * Per-group resume profile of the row owner — viewer for self view, watched bidder for caller
+   * view. null when the owner hasn't visited their group profile yet (composer falls back to
+   * `myProfile` so the viewer's own resume still renders).
+   */
+  profile?: ResumeProfile | null;
   link: {
     id: string;
     url: string;
@@ -1110,12 +1116,15 @@ export function BidBoardVirtualBody({
                           aria-label="View resume"
                           disabled={
                             !(
-                              composeResume(myProfile, b.gptResumeContent ?? '') ??
+                              composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '') ??
                               b.gptResumeContent
                             )?.trim()
                           }
                           onClick={() => {
-                            const composed = composeResume(myProfile, b.gptResumeContent ?? '');
+                            const composed = composeResume(
+                              row.profile ?? myProfile,
+                              b.gptResumeContent ?? ''
+                            );
                             const body = composed ?? b.gptResumeContent ?? '';
                             setViewer({
                               title: 'Resume',
@@ -1134,7 +1143,10 @@ export function BidBoardVirtualBody({
                     </Tooltip>
                     <CellCopyButton
                       label="GPT resume"
-                      getText={() => composeResume(myProfile, b.gptResumeContent ?? '') ?? b.gptResumeContent}
+                      getText={() =>
+                        composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '') ??
+                        b.gptResumeContent
+                      }
                     />
                   </>
                 )}

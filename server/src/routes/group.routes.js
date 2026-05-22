@@ -24,6 +24,7 @@ import { Feedback } from '../models/Feedback.js';
 import { BidAssistantActivity } from '../models/BidAssistantActivity.js';
 import { Notification } from '../models/Notification.js';
 import { emitNotificationToUser } from '../socket/hexGameSocket.js';
+import { getOrSeedGroupProfile, patchGroupProfile } from '../services/groupProfileService.js';
 
 const r = Router();
 r.use(requireAuth);
@@ -339,6 +340,58 @@ r.post(
       await notif.save();
     }
     return res.json({ ok: true });
+  }
+);
+
+/**
+ * Per-group profile for the current user. Lazily seeded from the user's top-level profile on
+ * first read so existing users don't lose data; subsequent edits are group-scoped. Only members
+ * of the group can read/write their own per-group profile.
+ */
+r.get('/:groupId/profile/me', param('groupId').isMongoId(), async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  const m = await assertGroupMember(req.user.id, req.params.groupId);
+  if (!m.ok) return res.status(m.status).json({ error: m.error });
+  const doc = await getOrSeedGroupProfile(req.user.id, req.params.groupId);
+  return res.json({ profile: doc.toObject() });
+});
+
+const isOptionalYear = (v) =>
+  v === null || v === undefined || v === '' || (Number.isInteger(Number(v)) && Number(v) >= 1900 && Number(v) <= 2100);
+
+r.patch(
+  '/:groupId/profile/me',
+  param('groupId').isMongoId(),
+  body('displayName').optional().isString().isLength({ max: 120 }),
+  body('headline').optional().isString().isLength({ max: 200 }),
+  body('location').optional().isString().isLength({ max: 120 }),
+  body('phone').optional().isString().isLength({ max: 40 }),
+  body('personalEmail').optional().isString().isLength({ max: 200 }),
+  body('linkedinUrl').optional().isString().isLength({ max: 300 }),
+  body('education').optional().isArray({ max: 20 }),
+  body('education.*.degree').optional().isString().isLength({ max: 120 }),
+  body('education.*.school').optional().isString().isLength({ max: 200 }),
+  body('education.*.location').optional().isString().isLength({ max: 120 }),
+  body('education.*.startYear').optional({ nullable: true }).custom(isOptionalYear),
+  body('education.*.endYear').optional({ nullable: true }).custom(isOptionalYear),
+  body('certifications').optional().isArray({ max: 30 }),
+  body('certifications.*.name').optional().isString().isLength({ max: 200 }),
+  body('certifications.*.issuer').optional().isString().isLength({ max: 200 }),
+  body('certifications.*.year').optional({ nullable: true }).custom(isOptionalYear),
+  body('experiences').optional().isArray({ max: 30 }),
+  body('experiences.*.company').optional().isString().isLength({ max: 200 }),
+  body('experiences.*.role').optional().isString().isLength({ max: 200 }),
+  body('experiences.*.location').optional().isString().isLength({ max: 120 }),
+  body('experiences.*.startYear').optional({ nullable: true }).custom(isOptionalYear),
+  body('experiences.*.endYear').optional({ nullable: true }).custom(isOptionalYear),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+    const doc = await patchGroupProfile(req.user.id, req.params.groupId, req.body || {});
+    return res.json({ profile: doc.toObject() });
   }
 );
 

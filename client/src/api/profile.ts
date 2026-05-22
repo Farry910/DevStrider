@@ -14,6 +14,35 @@ export type Certification = {
   year: number | null;
 };
 
+/**
+ * Per-group resume experience entry. Years are optional individually so partial periods
+ * ("2022 -" for current roles, "- 2020" for legacy entries) render gracefully.
+ */
+export type Experience = {
+  company: string;
+  role: string;
+  location: string;
+  startYear: number | null;
+  endYear: number | null;
+};
+
+/**
+ * Per-group resume profile — the source of truth the resume composer pulls from. Same field set
+ * as the user-level Profile minus identity/account fields (email, nickname, avatar, timezone,
+ * goals, leaderboard opt-in), plus experiences[].
+ */
+export type ResumeProfile = {
+  displayName: string;
+  headline: string;
+  location: string;
+  phone: string;
+  personalEmail: string;
+  linkedinUrl: string;
+  education: Education[];
+  certifications: Certification[];
+  experiences: Experience[];
+};
+
 export type Goals = {
   bidsPerDay: number;
   interviewsPerWeek: number;
@@ -52,6 +81,26 @@ export async function patchMyProfile(patch: Partial<Profile>): Promise<Profile> 
 export async function patchMyGoals(goals: Partial<Goals>): Promise<Goals> {
   const { data } = await api.patch<{ goals: Goals }>('/profile/me/goals', goals);
   return data.goals;
+}
+
+/**
+ * Fetch the current user's per-group profile for the given group. The server lazily seeds the
+ * record from the user's top-level profile on first read so existing users don't lose data.
+ */
+export async function getGroupProfile(groupId: string): Promise<ResumeProfile> {
+  const { data } = await api.get<{ profile: ResumeProfile }>(`/groups/${groupId}/profile/me`);
+  return data.profile;
+}
+
+export async function patchGroupProfile(
+  groupId: string,
+  patch: Partial<ResumeProfile>
+): Promise<ResumeProfile> {
+  const { data } = await api.patch<{ profile: ResumeProfile }>(
+    `/groups/${groupId}/profile/me`,
+    patch
+  );
+  return data.profile;
 }
 
 export type NotificationItem = {

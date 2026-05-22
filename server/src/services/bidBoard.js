@@ -9,6 +9,7 @@ import { isAllowedAvatarId } from '../constants/avatarPresets.js';
 import { avatarBadgeTintForGroup } from '../constants/profileBadgeTypes.js';
 import { norm } from './text.js';
 import { escapeRegex } from '../utils/regex.js';
+import { loadGroupProfilesForUsers } from './groupProfileService.js';
 
 const UB_COL = UserBid.collection.name;
 
@@ -404,6 +405,23 @@ export async function buildBidBoardPage({
         .lean(),
     ]);
 
+  /**
+   * Resume-composer profiles for the row owners — viewer for self view, per-row bidder for caller
+   * view. Not seeded here (those rows just compose with empty header fields); editing the
+   * per-group profile is what creates the doc.
+   */
+  const profileOwnerIds =
+    scopedKind === 'watches'
+      ? [
+          ...new Set(
+            rawRows
+              .map((l) => (l.bid && l.bid.userId ? String(l.bid.userId) : null))
+              .filter(Boolean)
+          ),
+        ]
+      : [String(userId)];
+  const profileByOwner = await loadGroupProfilesForUsers(groupId, profileOwnerIds);
+
   const bidIdsOnPage = allMemberBidsOnPageLinks.map((b) => b._id);
   const junkIvBlock =
     bidIdsOnPage.length === 0
@@ -660,6 +678,31 @@ export async function buildBidBoardPage({
       }
     }
 
+    /**
+     * Row owner is the user whose resume the composer will render: the viewer in self view,
+     * the bidder in caller view. May be null on a caller-view row with no bid (link header only).
+     */
+    const rowOwnerId =
+      scopedKind === 'watches'
+        ? bid && bid.userId
+          ? String(bid.userId)
+          : null
+        : String(userId);
+    const ownerProfile = rowOwnerId ? profileByOwner.get(rowOwnerId) : null;
+    const profileForRow = ownerProfile
+      ? {
+          displayName: ownerProfile.displayName || '',
+          headline: ownerProfile.headline || '',
+          location: ownerProfile.location || '',
+          phone: ownerProfile.phone || '',
+          personalEmail: ownerProfile.personalEmail || '',
+          linkedinUrl: ownerProfile.linkedinUrl || '',
+          education: ownerProfile.education || [],
+          certifications: ownerProfile.certifications || [],
+          experiences: ownerProfile.experiences || [],
+        }
+      : null;
+
     return {
       /**
        * Stable per-row key. For caller view a single link may appear multiple times (one per
@@ -668,6 +711,8 @@ export async function buildBidBoardPage({
       rowKey: bid
         ? `${String(link._id)}-${String(bid._id)}`
         : String(link._id),
+      /** Per-group profile of the row owner. null when the owner hasn't visited their profile yet. */
+      profile: profileForRow,
       link: {
         id: link._id,
         url: link.url,

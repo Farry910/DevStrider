@@ -14,6 +14,7 @@ import GroupSettingsPage from './pages/GroupSettingsPage';
 import ProfileBadgesPage from './pages/ProfileBadgesPage';
 import GroupProfileBadgeRequestsPage from './pages/GroupProfileBadgeRequestsPage';
 import GroupFeedbackPage from './pages/GroupFeedbackPage';
+import GroupProfilePage from './pages/GroupProfilePage';
 import ProfileSettingsPage from './pages/ProfileSettingsPage';
 const PlatformAdminPage = lazy(() => import('./pages/PlatformAdminPage'));
 const InterviewPanelPage = lazy(() => import('./pages/InterviewPanelPage'));
@@ -98,6 +99,7 @@ export default function App() {
           <Route path="g/:groupId/join-requests" element={<GroupJoinRequestsPage />} />
           <Route path="g/:groupId/profile-badges" element={<ProfileBadgesPage />} />
           <Route path="g/:groupId/badge-requests" element={<GroupProfileBadgeRequestsPage />} />
+          <Route path="g/:groupId/profile" element={<GroupProfilePage />} />
           <Route path="g/:groupId/settings" element={<GroupSettingsPage />} />
           <Route path="g/:groupId/feedback" element={<GroupFeedbackPage />} />
         </Route>
