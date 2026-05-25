@@ -808,8 +808,10 @@ r.get(
     const groupId = new mongoose.Types.ObjectId(req.params.groupId);
 
     /**
-     * Use `firstCreatedAt` when present (immutable initial-creation time the assistant stamps),
-     * falling back to `createdAt` for legacy rows that pre-date that field.
+     * Bucket by the moment the bid actually became a bid (status moved off `draft`) — so
+     * URL-only draft rows don't appear at the wrong slot. Falls back to firstCreatedAt /
+     * createdAt for legacy rows that pre-date the `appliedAt` field; those rows will be off
+     * but the chart still renders something for past days.
      */
     const rows = await UserBid.aggregate([
       {
@@ -820,7 +822,7 @@ r.get(
       },
       {
         $addFields: {
-          _ts: { $ifNull: ['$firstCreatedAt', '$createdAt'] },
+          _ts: { $ifNull: ['$appliedAt', { $ifNull: ['$firstCreatedAt', '$createdAt'] }] },
         },
       },
       { $match: { _ts: { $gte: start, $lt: end } } },

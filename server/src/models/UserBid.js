@@ -47,13 +47,28 @@ const userBidSchema = new mongoose.Schema(
     audit: [auditEntrySchema],
     /** Set once when the bid row is created; never changes on edits (see pre-save). */
     firstCreatedAt: { type: Date, immutable: true },
+    /**
+     * First moment the bid moved off `draft`. Stays null while the row is still an "empty"
+     * draft (URL-only); set once and never moved again, even if status later cycles through
+     * interview/offer/etc. Used by anything that needs to count "real" bids by apply time
+     * rather than row-creation time (e.g. the Overview bids-per-10-min chart).
+     */
+    appliedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-userBidSchema.pre('save', function setFirstCreatedAt(next) {
+userBidSchema.pre('save', function setLifecycleStamps(next) {
   if (this.isNew && this.firstCreatedAt == null) {
     this.firstCreatedAt = new Date();
+  }
+  /**
+   * Lock `appliedAt` on the first transition away from `draft`. On a brand-new row that's
+   * already non-draft (fast-feed at create time), anchor it to firstCreatedAt so the
+   * timestamps stay self-consistent.
+   */
+  if (this.appliedAt == null && this.status && this.status !== 'draft') {
+    this.appliedAt = this.isNew ? this.firstCreatedAt : new Date();
   }
   next();
 });
