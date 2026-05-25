@@ -30,7 +30,7 @@ function blankCert(): Certification {
   return { name: '', issuer: '', year: null };
 }
 function blankExp(): Experience {
-  return { company: '', role: '', location: '', startYear: null, endYear: null };
+  return { company: '', location: '', startYear: null, endYear: null };
 }
 
 export default function GroupProfilePage() {
@@ -132,7 +132,9 @@ export default function GroupProfilePage() {
           <Box>
             <Typography variant="subtitle1">Experiences</Typography>
             <Typography variant="caption" color="text.secondary">
-              Substitutes [Experience 1], [Experience 2], … in the resume body. Order matters.
+              Substitutes [Experience 1], [Experience 2], … in the resume body. The role/title
+              for each comes from the body's [Subtitle N] line — only company, location, and
+              years live here. Order matters.
             </Typography>
           </Box>
           <Button
@@ -149,21 +151,11 @@ export default function GroupProfilePage() {
               key={i}
               sx={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr 80px 80px 36px',
+                gridTemplateColumns: '1fr 1fr 80px 80px 36px',
                 gap: 1,
                 alignItems: 'center',
               }}
             >
-              <TextField
-                size="small"
-                label="Role"
-                value={x.role}
-                onChange={(ev) => {
-                  const arr = [...form.experiences];
-                  arr[i] = { ...x, role: ev.target.value };
-                  update('experiences', arr);
-                }}
-              />
               <TextField
                 size="small"
                 label="Company"

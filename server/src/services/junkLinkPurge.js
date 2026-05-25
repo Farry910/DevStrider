@@ -1,9 +1,7 @@
-import { Group } from '../models/Group.js';
 import { GroupLink } from '../models/GroupLink.js';
 import { UserBid } from '../models/UserBid.js';
 import { Interview } from '../models/Interview.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
-import { mergeGroupTimers } from '../constants/groupTimers.js';
 
 /** Eligible: marked useless, no group application snapshot, ≤1 bid (creator’s), no interviews on that bid. */
 export async function linkEligibleForJunkPurge(link) {
@@ -62,31 +60,3 @@ async function purgeCandidateLinks(candidates) {
   return { removed: removedIds.length, linkIds: removedIds, groupIds: [...groupIdSet] };
 }
 
-/**
- * Auto-purge: each link must be older than that group’s `junkRemovalGraceMinutes` since marked useless.
- */
-export async function purgeEligibleJunkLinksUsingGroupTimers() {
-  const candidates = await GroupLink.find({ markedUselessAt: { $ne: null } }).lean();
-  if (candidates.length === 0) return { removed: 0, linkIds: [], groupIds: [] };
-
-  const gids = [...new Set(candidates.map((c) => String(c.groupId)))];
-  const groups = await Group.find({ _id: { $in: gids } }).select('timers').lean();
-  const graceMsByGroup = new Map(
-    groups.map((g) => {
-      const t = mergeGroupTimers(g.timers, {});
-      return [String(g._id), t.junkRemovalGraceMinutes * 60 * 1000];
-    })
-  );
-
-  const now = Date.now();
-  const ready = [];
-  for (const link of candidates) {
-    const ms =
-      graceMsByGroup.get(String(link.groupId)) ??
-      mergeGroupTimers(undefined, {}).junkRemovalGraceMinutes * 60 * 1000;
-    if (new Date(link.markedUselessAt).getTime() > now - ms) continue;
-    ready.push(link);
-  }
-
-  return purgeCandidateLinks(ready);
-}

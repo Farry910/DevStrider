@@ -495,6 +495,7 @@ export function BidBoardVirtualBody({
     body: string;
     copyLabel: string;
     serif?: boolean;
+    boldLines?: string[];
   } | null>(null);
   const jdInputRefs = useRef(new Map<string, HTMLInputElement | HTMLTextAreaElement>());
   const gptResumeInputRefs = useRef(new Map<string, HTMLInputElement | HTMLTextAreaElement>());
@@ -1116,8 +1117,8 @@ export function BidBoardVirtualBody({
                           aria-label="View resume"
                           disabled={
                             !(
-                              composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '') ??
-                              b.gptResumeContent
+                              composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '')
+                                ?.text ?? b.gptResumeContent
                             )?.trim()
                           }
                           onClick={() => {
@@ -1125,7 +1126,7 @@ export function BidBoardVirtualBody({
                               row.profile ?? myProfile,
                               b.gptResumeContent ?? ''
                             );
-                            const body = composed ?? b.gptResumeContent ?? '';
+                            const body = composed?.text ?? b.gptResumeContent ?? '';
                             setViewer({
                               title: 'Resume',
                               subtitle:
@@ -1133,6 +1134,7 @@ export function BidBoardVirtualBody({
                               body,
                               copyLabel: 'resume',
                               serif: true,
+                              boldLines: composed?.boldLines,
                             });
                           }}
                           sx={{ flexShrink: 0, p: 0.25, ml: 0.25 }}
@@ -1144,7 +1146,7 @@ export function BidBoardVirtualBody({
                     <CellCopyButton
                       label="GPT resume"
                       getText={() =>
-                        composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '') ??
+                        composeResume(row.profile ?? myProfile, b.gptResumeContent ?? '')?.text ??
                         b.gptResumeContent
                       }
                     />
@@ -1458,6 +1460,7 @@ export function BidBoardVirtualBody({
       body={viewer?.body ?? ''}
       copyLabel={viewer?.copyLabel ?? 'content'}
       serif={viewer?.serif}
+      boldLines={viewer?.boldLines}
     />
     </>
   );

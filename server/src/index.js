@@ -23,7 +23,6 @@ import achievementRoutes from './routes/achievement.routes.js';
 import platformAdminRoutes from './routes/platformAdmin.routes.js';
 import exportRoutes from './routes/export.routes.js';
 import { registerHexGameSocket } from './socket/hexGameSocket.js';
-import { purgeEligibleJunkLinksUsingGroupTimers } from './services/junkLinkPurge.js';
 import { ensurePlatformAdmin } from './services/platformAdminSeed.js';
 import { migrateLegacyGroups } from './services/legacyGroupMigration.js';
 
@@ -117,15 +116,8 @@ app.use(errorHandler);
 
 const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/devstrider';
 
-/** Periodically remove junk links ≥10 min after creator marked useless (same rules as owner purge). */
-let junkAutoPurgeIntervalId = null;
-
 function shutdown(signal) {
   console.log(`${signal}: shutting down…`);
-  if (junkAutoPurgeIntervalId != null) {
-    clearInterval(junkAutoPurgeIntervalId);
-    junkAutoPurgeIntervalId = null;
-  }
   httpServer.close((err) => {
     if (err) console.error('HTTP server close error', err);
     io.close(() => {
@@ -172,12 +164,6 @@ connectDb(uri)
       } else {
         console.log(`API + Socket.IO listening on http://${HOST}:${PORT}`);
       }
-      junkAutoPurgeIntervalId = setInterval(() => {
-        purgeEligibleJunkLinksUsingGroupTimers().catch((e) => {
-          console.error('junk auto-purge failed', e);
-        });
-      }, 60_000);
-      junkAutoPurgeIntervalId.unref?.();
     });
   })
   .catch((e) => {

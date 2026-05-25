@@ -75,7 +75,8 @@ r.get(
       UserBid.countDocuments({
         groupId: gid,
         userId: uid,
-        status: 'applied',
+        /** Anything that's been submitted counts toward the daily bid goal. */
+        status: { $ne: 'draft' },
         updatedAt: { $gte: day.start, $lt: day.end },
       }),
       Interview.countDocuments({

@@ -21,14 +21,13 @@ const certificationSchema = new mongoose.Schema(
 );
 
 /**
- * Resume experience entry — one per role. Period is structured (startYear/endYear, both nullable)
- * so the composer can render "Acme Corp · 2022 - 2024" consistently. Location is optional and only
- * surfaces when non-empty.
+ * Resume experience entry — one per company. The role/title for each entry lives in the bid
+ * body's `[Subtitle N]` placeholder (sourced from GPT output) rather than the profile, so the
+ * composer pairs profile.experiences[N-1] with the body's roleN.
  */
 const experienceSchema = new mongoose.Schema(
   {
     company: { type: String, default: '', trim: true },
-    role: { type: String, default: '', trim: true },
     location: { type: String, default: '', trim: true },
     startYear: { type: Number, default: null },
     endYear: { type: Number, default: null },

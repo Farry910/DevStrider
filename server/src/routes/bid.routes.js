@@ -362,7 +362,12 @@ r.patch(
   }
 );
 
-/** Link creator only: mark / unmark this posting as useless (owner can later purge eligible junk). */
+/**
+ * Link creator only: mark / unmark this posting as useless. When marking, immediately purge the
+ * link if no one else has applied (and no interview is attached) — that's the common case after
+ * the inserter's own action, so we skip the old grace-period wait. When the link can't purge
+ * (another member has a bid), it stays visible with the Useless chip so others see the warning.
+ */
 r.patch(
   '/groups/:groupId/links/:linkId/useless',
   param('groupId').isMongoId(),
@@ -383,12 +388,19 @@ r.patch(
     }
     if (req.body.useless) {
       link.markedUselessAt = new Date();
-    } else {
-      link.markedUselessAt = null;
+      await link.save();
+      const result = await purgeEligibleJunkLinks({
+        groupId: req.params.groupId,
+        minimumMarkedAgeMs: 0,
+      });
+      const purged = result.linkIds.includes(String(link._id));
+      emitBidBoardInvalidate(req.params.groupId);
+      return res.json({ link: purged ? null : link, purged });
     }
+    link.markedUselessAt = null;
     await link.save();
     emitBidBoardInvalidate(req.params.groupId);
-    return res.json({ link });
+    return res.json({ link, purged: false });
   }
 );
 

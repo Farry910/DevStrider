@@ -679,7 +679,8 @@ r.get(
       const rows = await UserBid.find({
         groupId,
         userId: { $in: oids },
-        status: 'applied',
+        /** Any non-draft bid counts — once submitted, it stays a bid even if status moves on. */
+        status: { $ne: 'draft' },
         updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
       })
         .select('userId updatedAt')
@@ -712,7 +713,8 @@ r.get(
         UserBid.find({
           groupId,
           userId: { $in: oids },
-          status: 'applied',
+          /** catch_rate denominator counts every submitted bid, not just current 'applied' rows. */
+          status: { $ne: 'draft' },
           updatedAt: { $gte: windowStart, $lt: endOfTodayUtc },
         })
           .select('userId updatedAt')
@@ -773,6 +775,80 @@ r.get(
       to: endOfTodayUtc,
       buckets: bucketKeys,
       series: buildSeries(userOrder, nicknames, valueMap),
+    });
+  }
+);
+
+/**
+ * Raw timestamps + nickname per non-draft bid for a single calendar day (in the viewer's tz, via
+ * tzOffsetMinutes). Used by the Overview "bids per hour" chart — client buckets into 24 hourly
+ * columns. Kept dumb on purpose: matches the user's preference for heavy frontend / light
+ * backend, and a busy day rarely exceeds a few hundred rows.
+ *
+ * Query params:
+ *   - date: YYYY-MM-DD (the local calendar day in the viewer's tz)
+ *   - tzOffsetMinutes: minutes east of UTC (e.g. -300 for EST, 540 for JST)
+ */
+r.get(
+  '/groups/:groupId/stats/bids-by-day',
+  param('groupId').isMongoId(),
+  query('date').matches(/^\d{4}-\d{2}-\d{2}$/),
+  query('tzOffsetMinutes').isInt({ min: -14 * 60, max: 14 * 60 }),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const m = await assertGroupMember(req.user.id, req.params.groupId);
+    if (!m.ok) return res.status(m.status).json({ error: m.error });
+
+    const [y, mo, d] = req.query.date.split('-').map(Number);
+    const tzOff = Number(req.query.tzOffsetMinutes);
+    /** Local midnight in the viewer's tz, expressed as UTC. tzOffsetMinutes is "east of UTC". */
+    const start = new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0) - tzOff * 60_000);
+    const end = new Date(start.getTime() + 24 * 60 * 60_000);
+    const groupId = new mongoose.Types.ObjectId(req.params.groupId);
+
+    /**
+     * Use `firstCreatedAt` when present (immutable initial-creation time the assistant stamps),
+     * falling back to `createdAt` for legacy rows that pre-date that field.
+     */
+    const rows = await UserBid.aggregate([
+      {
+        $match: {
+          groupId,
+          status: { $ne: 'draft' },
+        },
+      },
+      {
+        $addFields: {
+          _ts: { $ifNull: ['$firstCreatedAt', '$createdAt'] },
+        },
+      },
+      { $match: { _ts: { $gte: start, $lt: end } } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: '_user',
+        },
+      },
+      { $addFields: { _user: { $arrayElemAt: ['$_user', 0] } } },
+      {
+        $project: {
+          _id: 0,
+          userId: { $toString: '$userId' },
+          nickname: { $ifNull: ['$_user.nickname', ''] },
+          ts: '$_ts',
+        },
+      },
+    ]);
+
+    return res.json({
+      date: req.query.date,
+      tzOffsetMinutes: tzOff,
+      from: start.toISOString(),
+      to: end.toISOString(),
+      bids: rows,
     });
   }
 );

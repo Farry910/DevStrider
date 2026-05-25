@@ -92,7 +92,6 @@ export default function GroupSettingsPage() {
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [locationKey, setLocationKey] = useState('');
-  const [junkRemovalGraceMinutes, setJunkRemovalGraceMinutes] = useState(10);
   const [bidDuplicateLookbackDays, setBidDuplicateLookbackDays] = useState(365);
   const [possibleTimerMinutes, setPossibleTimerMinutes] = useState(0);
 
@@ -117,7 +116,6 @@ export default function GroupSettingsPage() {
       setName(g.name);
       setLocationKey(g.locationKey);
       if (g.timers) {
-        setJunkRemovalGraceMinutes(g.timers.junkRemovalGraceMinutes);
         setBidDuplicateLookbackDays(g.timers.bidDuplicateLookbackDays);
         setPossibleTimerMinutes(g.timers.possibleTimerMinutes ?? 0);
       }
@@ -267,7 +265,6 @@ export default function GroupSettingsPage() {
   const t0 = meQ.data.group.timers;
   const timersDirty =
     t0 == null ||
-    junkRemovalGraceMinutes !== t0.junkRemovalGraceMinutes ||
     bidDuplicateLookbackDays !== t0.bidDuplicateLookbackDays ||
     possibleTimerMinutes !== (t0.possibleTimerMinutes ?? 0);
 
@@ -323,20 +320,11 @@ export default function GroupSettingsPage() {
           Timers & detection
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Auto-removal waits this long after a link is marked useless (group owner can remove sooner). Duplicate
-          URL / company+role flags only compare listings from the last N days. The last field is reserved for future
-          timed features (0 = off).
+          Duplicate URL / company+role flags only compare listings from the last N days. The last
+          field is reserved for future timed features (0 = off). Marked-useless links now delete
+          immediately when no other member has applied — there's no grace timer to configure.
         </Typography>
         <Stack spacing={2}>
-          <TextField
-            label="Junk auto-removal grace (minutes)"
-            type="number"
-            inputProps={{ min: 1, max: 10080 }}
-            value={junkRemovalGraceMinutes}
-            onChange={(e) => setJunkRemovalGraceMinutes(Number(e.target.value))}
-            fullWidth
-            size="small"
-          />
           <TextField
             label="Bid duplicate detection lookback (days)"
             type="number"
@@ -360,7 +348,6 @@ export default function GroupSettingsPage() {
             disabled={!timersDirty || timersMut.isPending}
             onClick={() =>
               timersMut.mutate({
-                junkRemovalGraceMinutes,
                 bidDuplicateLookbackDays,
                 possibleTimerMinutes,
               })

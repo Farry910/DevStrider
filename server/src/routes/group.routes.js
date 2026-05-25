@@ -381,7 +381,6 @@ r.patch(
   body('certifications.*.year').optional({ nullable: true }).custom(isOptionalYear),
   body('experiences').optional().isArray({ max: 30 }),
   body('experiences.*.company').optional().isString().isLength({ max: 200 }),
-  body('experiences.*.role').optional().isString().isLength({ max: 200 }),
   body('experiences.*.location').optional().isString().isLength({ max: 120 }),
   body('experiences.*.startYear').optional({ nullable: true }).custom(isOptionalYear),
   body('experiences.*.endYear').optional({ nullable: true }).custom(isOptionalYear),

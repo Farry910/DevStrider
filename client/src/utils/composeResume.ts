@@ -1,10 +1,27 @@
 import type { Profile, ResumeProfile } from '../api/profile';
 
 /**
- * Format an Experience entry as a one-line header: "Role · Company · Location · 2022 - 2024".
- * Empty fields drop out. Used to substitute [Experience N] placeholders in the resume body.
+ * Output of composeResume. `text` is the plain string the copy button puts on the clipboard;
+ * `boldLines` is the subset of `text` lines (by verbatim string) the viewer should render as
+ * bold/larger — currently the experience header lines we synthesize from
+ * `[Subtitle N]` + profile.experiences[N-1]. Plain text stays paste-ready.
  */
-function formatExperience(exp: ResumeProfile['experiences'][number]): string {
+export type ComposedResume = {
+  text: string;
+  boldLines: string[];
+};
+
+function nameForProfile(p: ResumeProfile | Profile | null | undefined): string {
+  if (!p) return '';
+  if (p.displayName) return p.displayName;
+  return 'nickname' in p && p.nickname ? (p.nickname as string) : '';
+}
+
+function formatExperienceHeader(
+  role: string,
+  exp: ResumeProfile['experiences'][number] | undefined
+): string {
+  if (!exp) return role.trim();
   const range =
     exp.startYear && exp.endYear
       ? `${exp.startYear} - ${exp.endYear}`
@@ -13,41 +30,84 @@ function formatExperience(exp: ResumeProfile['experiences'][number]): string {
         : exp.endYear
           ? `- ${exp.endYear}`
           : '';
-  return [exp.role, exp.company, exp.location, range].filter(Boolean).join(' · ');
+  return [role, exp.company, exp.location, range]
+    .map((s) => (s || '').trim())
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /**
- * Apply placeholder rules in-place on the body the user pastes from ChatGPT:
- *   [Title]            → line removed
- *   [Subtitle N]       → line removed
- *   [Experience N]     → replaced with profile.experiences[N-1] formatted as a header
- *   [Summary] [Skills] → left as literal text so the user can fill them in by hand
- *
- * Substitution is line-anchored to avoid eating surrounding bullet text; an unmatched
- * [Experience N] (no profile entry at that index) is stripped so a stray placeholder
- * doesn't leak into the final paste.
+ * Walk the bid body line-by-line and apply substitution rules:
+ *   `[Title]`/`[Title]:` / `[FolderName]`/`[FolderName]:` / bare `Edit`
+ *     → strip the line entirely.
+ *   `[Subtitle N]`/`[Subtitle N]:`
+ *     → strip the marker AND consume the next non-empty content line as roleN[N].
+ *   `[Experience N]`/`[Experience N]:`
+ *     → replace with a header `roleN[N] · company · location · 2022 - 2024`, drawn from
+ *       profile.experiences[N-1]. Falls back gracefully when a piece is missing. Header
+ *       strings are recorded in `boldLines` so the viewer can render them bigger.
+ *   First non-empty line that matches the profile name (case-insensitive)
+ *     → strip (legacy template variant where GPT prepended the user's name).
+ *   `[Summary]`/`[Summary]:` / `[Skills]`/`[Skills]:` lines pass through literal.
  */
-function applyPlaceholders(body: string, experiences: ResumeProfile['experiences']): string {
-  const lines = body.split('\n');
+function applyPlaceholders(
+  body: string,
+  experiences: ResumeProfile['experiences'],
+  profileName: string
+): { lines: string[]; boldSet: Set<string> } {
+  const inLines = body.split('\n');
+  const roleByIndex = new Map<number, string>();
+  const stripIndex = new Set<number>();
+  /** Pre-pass 1: capture each [Subtitle N] role from the next non-empty line, mark both stripped. */
+  for (let i = 0; i < inLines.length; i++) {
+    const m = inLines[i].trim().match(/^\[subtitle\s+(\d+)\]:?\s*$/i);
+    if (!m) continue;
+    stripIndex.add(i);
+    for (let j = i + 1; j < inLines.length; j++) {
+      if (inLines[j].trim() === '') continue;
+      roleByIndex.set(Number(m[1]), inLines[j].trim());
+      stripIndex.add(j);
+      break;
+    }
+  }
+  /** Pre-pass 2: drop a leading "JOSHUA"-style line that duplicates the profile display name. */
+  if (profileName) {
+    const pname = profileName.trim().toLowerCase();
+    for (let i = 0; i < inLines.length; i++) {
+      const t = inLines[i].trim();
+      if (!t) continue;
+      if (t.toLowerCase() === pname) stripIndex.add(i);
+      break;
+    }
+  }
+
   const out: string[] = [];
-  for (const raw of lines) {
+  const boldSet = new Set<string>();
+  for (let i = 0; i < inLines.length; i++) {
+    if (stripIndex.has(i)) continue;
+    const raw = inLines[i];
     const trimmed = raw.trim();
-    if (trimmed === '[Title]') continue;
-    const subMatch = trimmed.match(/^\[Subtitle\s+\d+\]$/i);
-    if (subMatch) continue;
-    const expMatch = trimmed.match(/^\[Experience\s+(\d+)\]$/i);
+
+    if (/^\[title\]:?\s*$/i.test(trimmed)) continue;
+    if (/^\[foldername\]:?\s*$/i.test(trimmed)) continue;
+    if (trimmed.toLowerCase() === 'edit') continue;
+
+    const expMatch = trimmed.match(/^\[experience\s+(\d+)\]:?\s*$/i);
     if (expMatch) {
       const idx = Number(expMatch[1]) - 1;
       const exp = idx >= 0 ? experiences[idx] : undefined;
-      if (!exp) continue;
-      const formatted = formatExperience(exp);
-      if (formatted) out.push(formatted);
+      const role = roleByIndex.get(idx + 1) ?? '';
+      const header = formatExperienceHeader(role, exp);
+      if (header) {
+        out.push(header);
+        boldSet.add(header);
+      }
       continue;
     }
+
     out.push(raw);
   }
-  /** Collapse runs of >2 blank lines from the stripped placeholders. */
-  return out.join('\n').replace(/\n{3,}/g, '\n\n');
+  return { lines: out, boldSet };
 }
 
 /**
@@ -60,7 +120,7 @@ function applyPlaceholders(body: string, experiences: ResumeProfile['experiences
 export function composeResume(
   profile: ResumeProfile | Profile | null | undefined,
   body: string
-): string | null {
+): ComposedResume | null {
   const trimmedBody = (body || '').trim();
   if (!profile && !trimmedBody) return null;
 
@@ -69,15 +129,19 @@ export function composeResume(
     profile && 'experiences' in profile && Array.isArray(profile.experiences)
       ? profile.experiences
       : [];
-  const processedBody = trimmedBody ? applyPlaceholders(trimmedBody, experiences).trim() : '';
+
+  const placeholderResult = trimmedBody
+    ? applyPlaceholders(trimmedBody, experiences, nameForProfile(profile))
+    : { lines: [], boldSet: new Set<string>() };
+  const processedBody = placeholderResult.lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   const lines: string[] = [];
 
   if (profile) {
-    const name =
-      profile.displayName ||
-      ('nickname' in profile ? (profile.nickname as string) : '') ||
-      '';
+    const name = nameForProfile(profile);
     if (name) lines.push(name.toUpperCase());
     if (profile.headline) lines.push(profile.headline);
 
@@ -120,6 +184,7 @@ export function composeResume(
     }
   }
 
-  const out = lines.join('\n').trim();
-  return out ? out : null;
+  const text = lines.join('\n').trim();
+  if (!text) return null;
+  return { text, boldLines: [...placeholderResult.boldSet] };
 }

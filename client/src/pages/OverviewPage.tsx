@@ -51,6 +51,7 @@ import {
 } from '../utils/overviewScore';
 import { LeaderboardProgressLine } from '../components/LeaderboardProgressLine';
 import { OverviewChart } from '../components/OverviewChart';
+import { BidsPerHourChart } from '../components/BidsPerHourChart';
 
 type GroupMeOverview = {
   group: {
@@ -224,6 +225,7 @@ export default function OverviewPage() {
 
       {groupId && <LeaderboardProgressLine groupId={groupId} />}
       {groupId && <OverviewChart groupId={groupId} />}
+      {groupId && <BidsPerHourChart groupId={groupId} />}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
         <ToggleButtonGroup
@@ -337,10 +339,20 @@ export default function OverviewPage() {
                     {Math.round(row.score * 100) / 100}
                   </TableCell>
                   {BID_STATUS_ORDER.map((s) => {
+                    /**
+                     * "applied" here means any submitted (non-draft) bid — once a bid leaves
+                     * draft, it stays counted as applied even after status moves to interview /
+                     * offer / etc. The dedicated stage columns still show their current totals.
+                     */
                     const count =
-                      s === 'phone_screening'
-                        ? (row.byStatus.phone_screening ?? 0) + (row.byStatus.screening ?? 0)
-                        : (row.byStatus[s] ?? 0);
+                      s === 'applied'
+                        ? Object.entries(row.byStatus).reduce(
+                            (sum, [k, v]) => (k === 'draft' ? sum : sum + (v ?? 0)),
+                            0
+                          )
+                        : s === 'phone_screening'
+                          ? (row.byStatus.phone_screening ?? 0) + (row.byStatus.screening ?? 0)
+                          : (row.byStatus[s] ?? 0);
                     return (
                       <TableCell key={s} align="right">
                         {count}

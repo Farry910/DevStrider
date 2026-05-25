@@ -15,12 +15,12 @@ export type Certification = {
 };
 
 /**
- * Per-group resume experience entry. Years are optional individually so partial periods
- * ("2022 -" for current roles, "- 2020" for legacy entries) render gracefully.
+ * Per-group resume experience entry. Role/title is NOT stored here — it comes from the bid
+ * body's `[Subtitle N]` placeholder so each bid can tune the title per posting. Years are
+ * optional individually so partial periods ("2022 -" current, "- 2020" legacy) render gracefully.
  */
 export type Experience = {
   company: string;
-  role: string;
   location: string;
   startYear: number | null;
   endYear: number | null;

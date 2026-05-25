@@ -53,10 +53,15 @@ function utcMonthBounds(d = new Date()) {
 const KIND_HANDLERS = {
   async daily_bids({ userId, groupId, target }) {
     const { start, end } = utcDayBounds();
+    /**
+     * Any non-draft bid counts as an applied bid for the daily goal — once submitted, the bid
+     * stays on the books even if its status later moves to interview/offer/etc. Only draft
+     * (uncommitted) rows don't count.
+     */
     const count = await UserBid.countDocuments({
       groupId,
       userId,
-      status: 'applied',
+      status: { $ne: 'draft' },
       updatedAt: { $gte: start, $lt: end },
     });
     return { count, periodKey: periodKeyDay() };
