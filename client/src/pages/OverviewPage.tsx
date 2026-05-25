@@ -8,6 +8,7 @@ import {
   AccordionSummary,
   Box,
   Button,
+  Chip,
   LinearProgress,
   Paper,
   Stack,
@@ -51,7 +52,7 @@ import {
 } from '../utils/overviewScore';
 import { LeaderboardProgressLine } from '../components/LeaderboardProgressLine';
 import { OverviewChart } from '../components/OverviewChart';
-import { BidsPerHourChart } from '../components/BidsPerHourChart';
+import { BidsPer10MinChart } from '../components/BidsPer10MinChart';
 
 type GroupMeOverview = {
   group: {
@@ -105,6 +106,12 @@ export default function OverviewPage() {
   const [ownerWeights, setOwnerWeights] = useState<OverviewScoreWeights>(DEFAULT_OVERVIEW_WEIGHTS);
   const ownerSyncedForGroupRef = useRef<string | null>(null);
   const lastSavedJson = useRef<string | null>(null);
+  /**
+   * Shared chart filter — userIds the charts should render. `null` initially (meaning "all
+   * users") until the overview rows arrive; from then on we track the set the user toggles via
+   * the chip row. We don't reset on range change so the filter stays sticky across edits.
+   */
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string> | null>(null);
 
   const meQ = useQuery({
     queryKey: ['group', groupId, 'me'],
@@ -217,15 +224,99 @@ export default function OverviewPage() {
     [scored]
   );
 
+  /** Members visible in the current window — used to seed/refresh the shared chart filter. */
+  const memberOptions = useMemo(
+    () =>
+      scored.map((r) => ({ id: r.user.id, nickname: r.user.nickname || '—' })),
+    [scored]
+  );
+
+  /**
+   * Auto-fill the selection on first load + add new members as they appear. We never remove
+   * deselected ids on re-runs so the user's deselections stick across range changes.
+   */
+  useEffect(() => {
+    if (memberOptions.length === 0) return;
+    setSelectedUserIds((prev) => {
+      if (prev === null) {
+        return new Set(memberOptions.map((m) => m.id));
+      }
+      let changed = false;
+      const next = new Set(prev);
+      for (const m of memberOptions) {
+        if (!next.has(m.id)) {
+          next.add(m.id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [memberOptions]);
+
+  function toggleUserSelected(id: string) {
+    setSelectedUserIds((prev) => {
+      const base = prev ?? new Set(memberOptions.map((m) => m.id));
+      const next = new Set(base);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllUsers() {
+    setSelectedUserIds(new Set(memberOptions.map((m) => m.id)));
+  }
+  function clearUsers() {
+    setSelectedUserIds(new Set());
+  }
+
   if (!groupId) return null;
 
   return (
     <Stack spacing={2}>
       <Typography variant="h5">Group bid overview</Typography>
 
+      {memberOptions.length > 0 && (
+        <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            flexWrap="wrap"
+            useFlexGap
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+              Show in charts:
+            </Typography>
+            {memberOptions.map((m) => {
+              const checked = selectedUserIds == null || selectedUserIds.has(m.id);
+              return (
+                <Chip
+                  key={m.id}
+                  label={m.nickname}
+                  size="small"
+                  color={checked ? 'primary' : 'default'}
+                  variant={checked ? 'filled' : 'outlined'}
+                  onClick={() => toggleUserSelected(m.id)}
+                  sx={{ cursor: 'pointer' }}
+                />
+              );
+            })}
+            <Box sx={{ flex: 1 }} />
+            <Button size="small" onClick={selectAllUsers}>
+              All
+            </Button>
+            <Button size="small" onClick={clearUsers}>
+              None
+            </Button>
+          </Stack>
+        </Paper>
+      )}
+
       {groupId && <LeaderboardProgressLine groupId={groupId} />}
-      {groupId && <OverviewChart groupId={groupId} />}
-      {groupId && <BidsPerHourChart groupId={groupId} />}
+      {groupId && <OverviewChart groupId={groupId} selectedUserIds={selectedUserIds} />}
+      {groupId && (
+        <BidsPer10MinChart groupId={groupId} selectedUserIds={selectedUserIds} />
+      )}
 
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
         <ToggleButtonGroup

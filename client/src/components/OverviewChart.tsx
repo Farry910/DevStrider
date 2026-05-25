@@ -105,9 +105,16 @@ type ChartResponse = {
   series: UserSeries[];
 };
 
-type Props = { groupId: string };
+type Props = {
+  groupId: string;
+  /**
+   * Set of user-ids to keep visible. `null` means "show all" (matching pre-filter behaviour).
+   * An empty set hides every line — the chart shows a "no users selected" hint.
+   */
+  selectedUserIds?: Set<string> | null;
+};
 
-export function OverviewChart({ groupId }: Props) {
+export function OverviewChart({ groupId, selectedUserIds = null }: Props) {
   const theme = useTheme();
   const [metric, setMetric] = useState<Metric>('bids');
   const [xAxis, setXAxis] = useState<XAxisMode>('week');
@@ -164,17 +171,22 @@ export function OverviewChart({ groupId }: Props) {
   const { data, series } = useMemo(() => {
     const buckets = q.data?.buckets ?? [];
     const allSeries = q.data?.series ?? [];
+    /** Apply the shared user filter — null means show every user. */
+    const visibleSeries =
+      selectedUserIds == null
+        ? allSeries
+        : allSeries.filter((s) => selectedUserIds.has(s.userId));
     const rows = buckets.map((day) => {
       const row: Record<string, string | number> = { day: day.slice(5) };
-      for (const s of allSeries) {
+      for (const s of visibleSeries) {
         const point = s.points.find((p) => p.day === day);
         const raw = point?.value ?? 0;
         row[s.userId] = metricMeta.isRate ? Math.round(raw * 1000) / 10 : raw;
       }
       return row;
     });
-    return { data: rows, series: allSeries };
-  }, [q.data, metricMeta.isRate]);
+    return { data: rows, series: visibleSeries };
+  }, [q.data, metricMeta.isRate, selectedUserIds]);
 
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
