@@ -11,7 +11,7 @@ import {
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import api from '../api/client';
-import { AVATAR_PRESET_IDS, presetAvatarSrc, type AvatarId } from '../avatarPresets';
+import { AVATAR_PRESET_IDS, avatarLabel, presetAvatarSrc, type AvatarId } from '../avatarPresets';
 
 type SessionUser = {
   id: string;
@@ -67,35 +67,46 @@ export function ProfileAvatarDialog({ open, onClose, nickname, avatarId, onSaved
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(5, 1fr)',
             gap: 1.5,
             justifyItems: 'center',
+            maxHeight: 360,
+            overflowY: 'auto',
+            pr: 0.5,
           }}
         >
           {AVATAR_PRESET_IDS.map((id) => {
             const src = presetAvatarSrc(id);
             const active = selected === id;
+            const isAnimal = id.startsWith('animal-');
             return (
               <Box key={id} sx={{ textAlign: 'center' }}>
                 <Avatar
                   onClick={() => setSelected(id)}
                   src={src ?? undefined}
                   sx={{
-                    width: 56,
-                    height: 56,
+                    width: 52,
+                    height: 52,
                     cursor: 'pointer',
                     fontSize: '1.25rem',
-                    bgcolor: 'primary.dark',
+                    /** Animal SVGs render edge-to-edge; give them a neutral light bg so the colored emoji reads. */
+                    bgcolor: isAnimal ? 'background.paper' : 'primary.dark',
                     boxShadow: active ? 4 : 0,
                     outline: active ? 2 : 0,
                     outlineColor: 'primary.main',
                     outlineOffset: 2,
+                    '& img': isAnimal ? { p: 0.5, objectFit: 'contain' } : undefined,
                   }}
                 >
                   {id === 'initial' ? initialLetter(nickname) : null}
                 </Avatar>
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                  {id === 'initial' ? 'Initial' : `Preset ${id.slice(-1)}`}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ mt: 0.5, fontSize: '0.65rem', lineHeight: 1.2 }}
+                >
+                  {avatarLabel(id)}
                 </Typography>
               </Box>
             );
