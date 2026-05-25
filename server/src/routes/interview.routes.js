@@ -28,16 +28,27 @@ const MAX_INTERVIEW_LIST = 2000;
 /**
  * Filter value for `userId` on Interview queries, based on caller's roles in this group.
  * - ADMIN: undefined (no userId filter — sees all).
- * - CALLER/OPS: `{ $in: watches }` or null when watches is empty (deny everything).
- * - BIDDER (no caller/ops): own userId only.
+ * - BIDDER + CALLER/OPS: own userId plus watched bidders' userIds.
+ * - CALLER/OPS only: `{ $in: watches }` or self only when watches is empty (always see your own).
+ * - BIDDER only: own userId only.
  */
 function userScopeFor(group, userId) {
   const roles = getEffectiveRoles(group, userId);
   if (roles.includes('admin')) return { kind: 'all' };
-  if (roles.includes('caller') || roles.includes('ops')) {
+  const isCaller = roles.includes('caller') || roles.includes('ops');
+  const isBidder = roles.includes('bidder');
+  if (isCaller) {
     const watches = watchedUserIdsFor(group, userId);
-    if (watches.length === 0) return { kind: 'none' };
-    return { kind: 'in', ids: watches };
+    /**
+     * Bidder+caller (or bidder+ops) sees their own interviews plus watched bidders'. A
+     * caller-only user with empty watches sees nothing. A bidder-only user (handled below)
+     * only sees their own.
+     */
+    const ids = isBidder
+      ? [String(userId), ...watches.filter((w) => String(w) !== String(userId))]
+      : watches;
+    if (ids.length === 0) return { kind: 'none' };
+    return { kind: 'in', ids };
   }
   return { kind: 'self' };
 }
@@ -328,9 +339,13 @@ r.patch(
     /** CALLER must have the interview's owner in their watches; ADMIN bypasses. */
     const roles = m.roles || [];
     if (!roles.includes('admin')) {
-      const watches = watchedUserIdsFor(m.group, req.user.id);
-      if (!watches.includes(String(iv.userId))) {
-        return res.status(403).json({ error: 'Interview owner not in your watches' });
+      /** Self-owned interview always passes; otherwise CALLER needs owner in their watches. */
+      const isSelf = String(iv.userId) === String(req.user.id);
+      if (!isSelf) {
+        const watches = watchedUserIdsFor(m.group, req.user.id);
+        if (!watches.includes(String(iv.userId))) {
+          return res.status(403).json({ error: 'Interview owner not in your watches' });
+        }
       }
     }
 
@@ -394,9 +409,13 @@ r.delete(
     if (!iv) return res.status(404).json({ error: 'Interview not found' });
     const roles = m.roles || [];
     if (!roles.includes('admin')) {
-      const watches = watchedUserIdsFor(m.group, req.user.id);
-      if (!watches.includes(String(iv.userId))) {
-        return res.status(403).json({ error: 'Interview owner not in your watches' });
+      /** Self-owned interview always passes; otherwise CALLER needs owner in their watches. */
+      const isSelf = String(iv.userId) === String(req.user.id);
+      if (!isSelf) {
+        const watches = watchedUserIdsFor(m.group, req.user.id);
+        if (!watches.includes(String(iv.userId))) {
+          return res.status(403).json({ error: 'Interview owner not in your watches' });
+        }
       }
     }
     await deleteInterviewAndDescendants(
