@@ -5,7 +5,7 @@ import { GroupLink } from '../models/GroupLink.js';
 import { UserBid } from '../models/UserBid.js';
 import { requireAuth } from '../middleware/auth.js';
 import { assertGroupMember } from '../services/membership.js';
-import { normalizeGroupUrl, normalizeGroupUrlBase } from '../utils/urlNorm.js';
+import { normalizeGroupUrl } from '../utils/urlNorm.js';
 import { parseFastFeedLine, splitTrailingFastFeed } from '../utils/parseFastFeed.js';
 import { emitBidBoardInvalidate } from '../socket/hexGameSocket.js';
 import { awardAchievementsAsync } from '../services/achievementService.js';
@@ -47,12 +47,14 @@ function assertNowInWindow(winStart, winEnd) {
 }
 
 /**
- * Match saved group links when the job URL is the same “front” as a stored link.
- * Full normalized match first, then origin+path without query (tracking params), then longest shared URL prefix.
+ * Strict URL match: a recording joins an existing link only when the normalized URL is identical
+ * (queries and hash included). Different query strings or hashes produce a new link — that's the
+ * group's signal that the second posting is a distinct job (or a re-bid on a known repost).
+ * The raw-URL lookup is kept as a backstop so legacy rows without `urlNorm` still resolve, and
+ * the missing field gets backfilled in place.
  */
 async function findGroupLinkForBidAssistant(groupId, urlRaw) {
   const urlNorm = normalizeGroupUrl(urlRaw);
-  const urlBase = normalizeGroupUrlBase(urlRaw);
 
   let link = await GroupLink.findOne({ groupId, urlNorm });
   let urlMatch = link ? 'norm' : null;
@@ -73,33 +75,7 @@ async function findGroupLinkForBidAssistant(groupId, urlRaw) {
       } else throw e;
     }
   }
-  if (link) return { link, urlMatch };
-
-  const candidates = await GroupLink.find({ groupId }).sort({ updatedAt: -1 }).lean();
-  const byBase = candidates.filter((c) => normalizeGroupUrlBase(c.url) === urlBase);
-  if (byBase.length) {
-    link = await GroupLink.findById(byBase[0]._id);
-    return { link, urlMatch: 'base' };
-  }
-
-  let best = null;
-  let bestLen = -1;
-  for (const c of candidates) {
-    const sb = normalizeGroupUrlBase(c.url);
-    if (!sb || !urlBase) continue;
-    const shorter = sb.length <= urlBase.length ? sb : urlBase;
-    const longer = sb.length > urlBase.length ? sb : urlBase;
-    if (shorter.length < 24) continue;
-    if (longer.startsWith(shorter) && shorter.length > bestLen) {
-      bestLen = shorter.length;
-      best = c;
-    }
-  }
-  if (best) {
-    link = await GroupLink.findById(best._id);
-    return { link, urlMatch: 'prefix' };
-  }
-  return { link: null, urlMatch: null };
+  return { link: link ?? null, urlMatch: link ? urlMatch : null };
 }
 
 function applyFastFeedToBid(bid, parsedFf) {
