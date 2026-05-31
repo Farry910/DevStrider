@@ -10,11 +10,15 @@
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="Interviews" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="0" Text="Interviews" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <DatePicker Grid.Column="1" SelectedDate="{Binding From, Mode=TwoWay}" Margin="16,0,4,0" VerticalAlignment="Center"/>
       <DatePicker Grid.Column="2" SelectedDate="{Binding To, Mode=TwoWay}" Margin="0,0,16,0" VerticalAlignment="Center"/>
       <TextBlock Grid.Column="3" Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
-      <Button Grid.Column="4" Content="Refresh" Command="{Binding ReloadCommand}" Style="{StaticResource GhostButton}"/>
+      <Button Grid.Column="4"
+              Command="{Binding ReloadCommand}"
+              Style="{StaticResource IconButton}"
+              ToolTip="Refresh"
+              Content="&#xE72C;"/>
     </Grid>
 
     <DataGrid ItemsSource="{Binding Items}" SelectionUnit="FullRow">
@@ -38,16 +42,20 @@
             </x:Array>
           </DataGridComboBoxColumn.ItemsSource>
         </DataGridComboBoxColumn>
-        <DataGridTemplateColumn Header="Actions" Width="160">
+        <DataGridTemplateColumn Header="Actions" Width="90">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">
-                <Button Content="Save"
-                        Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
-                <Button Content="Delete"
-                        Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                <Button Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Save"
+                        Content="&#xE74E;"/>
+                <Button Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource DangerIconButton}"
+                        ToolTip="Delete"
+                        Content="&#xE74D;"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

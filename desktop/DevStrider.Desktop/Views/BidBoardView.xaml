@@ -10,14 +10,19 @@
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="Bid board" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="0" Text="Bid board" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <DatePicker Grid.Column="1" SelectedDate="{Binding SelectedDay, Mode=TwoWay}" Margin="16,0" VerticalAlignment="Center"/>
       <TextBlock Grid.Column="2" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0" Foreground="{StaticResource Muted}"/>
-      <Button Grid.Column="3" Content="Refresh" Command="{Binding ReloadCommand}" Style="{StaticResource GhostButton}"/>
+      <Button Grid.Column="3"
+              Command="{Binding ReloadCommand}"
+              Style="{StaticResource IconButton}"
+              ToolTip="Refresh">
+        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14"/>
+      </Button>
     </Grid>
 
     <!-- Add link -->
-    <Border DockPanel.Dock="Top" Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="10" Margin="0,0,0,8">
+    <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
@@ -26,7 +31,12 @@
         </Grid.ColumnDefinitions>
         <TextBox Grid.Column="0" Text="{Binding NewLinkUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job URL"/>
         <TextBox Grid.Column="1" Text="{Binding NewLinkSharedJd, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Shared JD (optional)"/>
-        <Button Grid.Column="2" Content="Add link" Command="{Binding AddLinkCommand}"/>
+        <Button Grid.Column="2" Command="{Binding AddLinkCommand}" ToolTip="Add link">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Add link" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
       </Grid>
     </Border>
 
@@ -55,19 +65,25 @@
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="Origin"     Binding="{Binding Bid.Origin}" Width="120"/>
         <DataGridTextColumn Header="Created"    Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:MMM dd HH:mm}'}" Width="120"/>
-        <DataGridTemplateColumn Header="Actions" Width="200">
+        <DataGridTemplateColumn Header="Actions" Width="120">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">
-                <Button Content="Save"
-                        Command="{Binding DataContext.SaveBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
-                <Button Content="Useless"
-                        Command="{Binding DataContext.ToggleUselessCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
-                <Button Content="Delete bid"
-                        Command="{Binding DataContext.DeleteBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                <Button Command="{Binding DataContext.SaveBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Save row"
+                        Content="&#xE74E;"/>
+                <Button Command="{Binding DataContext.ToggleUselessCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Mark useless"
+                        Content="&#xE711;"/>
+                <Button Command="{Binding DataContext.DeleteBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource DangerIconButton}"
+                        ToolTip="Delete bid"
+                        Content="&#xE74D;"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

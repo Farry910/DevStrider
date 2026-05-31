@@ -3,10 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="0,0,0,16" MaxWidth="820" HorizontalAlignment="Left">
-      <TextBlock Text="Resume profile" FontSize="20" FontWeight="SemiBold"/>
-      <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource Muted}" Margin="0,4,0,12"/>
+      <TextBlock Text="Resume profile" Style="{StaticResource H1}"/>
+      <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,4,0,12"/>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Header" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Display name"/>
@@ -44,13 +44,13 @@
         </StackPanel>
       </Border>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <DockPanel LastChildFill="False" Margin="0,0,0,4">
             <TextBlock Text="Experiences" FontWeight="SemiBold" VerticalAlignment="Center" DockPanel.Dock="Left"/>
-            <Button Content="Add" Command="{Binding AddExperienceCommand}" Style="{StaticResource GhostButton}" DockPanel.Dock="Right"/>
+            <Button Command="{Binding AddExperienceCommand}" Style="{StaticResource IconButton}" ToolTip="Add experience" Content="&#xE710;" DockPanel.Dock="Right"/>
           </DockPanel>
-          <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,8"
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8"
                      Text="Role/title for each entry is captured from the bid body's [Subtitle N] line. Order matters."/>
           <ItemsControl ItemsSource="{Binding Experiences}">
             <ItemsControl.ItemTemplate>
@@ -67,9 +67,10 @@
                   <TextBox Grid.Column="1" Margin="0,0,4,0" Text="{Binding Location, UpdateSourceTrigger=PropertyChanged}" Tag="Location"/>
                   <TextBox Grid.Column="2" Margin="0,0,4,0" Text="{Binding StartYear, UpdateSourceTrigger=PropertyChanged}" Tag="From"/>
                   <TextBox Grid.Column="3" Margin="0,0,4,0" Text="{Binding EndYear, UpdateSourceTrigger=PropertyChanged}" Tag="To"/>
-                  <Button Grid.Column="4" Content="Remove"
+                  <Button Grid.Column="4"
                           Command="{Binding DataContext.RemoveExperienceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                          Style="{StaticResource DangerIconButton}" ToolTip="Remove" Content="&#xE74D;"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -77,11 +78,11 @@
         </StackPanel>
       </Border>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <DockPanel LastChildFill="False" Margin="0,0,0,4">
             <TextBlock Text="Education" FontWeight="SemiBold" VerticalAlignment="Center" DockPanel.Dock="Left"/>
-            <Button Content="Add" Command="{Binding AddEducationCommand}" Style="{StaticResource GhostButton}" DockPanel.Dock="Right"/>
+            <Button Command="{Binding AddEducationCommand}" Style="{StaticResource IconButton}" ToolTip="Add education" Content="&#xE710;" DockPanel.Dock="Right"/>
           </DockPanel>
           <ItemsControl ItemsSource="{Binding Education}">
             <ItemsControl.ItemTemplate>
@@ -100,9 +101,10 @@
                   <TextBox Grid.Column="2" Margin="0,0,4,0" Text="{Binding Location, UpdateSourceTrigger=PropertyChanged}" Tag="Location"/>
                   <TextBox Grid.Column="3" Margin="0,0,4,0" Text="{Binding StartYear, UpdateSourceTrigger=PropertyChanged}" Tag="From"/>
                   <TextBox Grid.Column="4" Margin="0,0,4,0" Text="{Binding EndYear, UpdateSourceTrigger=PropertyChanged}" Tag="To"/>
-                  <Button Grid.Column="5" Content="Remove"
+                  <Button Grid.Column="5"
                           Command="{Binding DataContext.RemoveEducationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                          Style="{StaticResource DangerIconButton}" ToolTip="Remove" Content="&#xE74D;"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -110,11 +112,11 @@
         </StackPanel>
       </Border>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <DockPanel LastChildFill="False" Margin="0,0,0,4">
             <TextBlock Text="Certifications" FontWeight="SemiBold" VerticalAlignment="Center" DockPanel.Dock="Left"/>
-            <Button Content="Add" Command="{Binding AddCertificationCommand}" Style="{StaticResource GhostButton}" DockPanel.Dock="Right"/>
+            <Button Command="{Binding AddCertificationCommand}" Style="{StaticResource IconButton}" ToolTip="Add certification" Content="&#xE710;" DockPanel.Dock="Right"/>
           </DockPanel>
           <ItemsControl ItemsSource="{Binding Certifications}">
             <ItemsControl.ItemTemplate>
@@ -129,9 +131,10 @@
                   <TextBox Grid.Column="0" Margin="0,0,4,0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Tag="Name"/>
                   <TextBox Grid.Column="1" Margin="0,0,4,0" Text="{Binding Issuer, UpdateSourceTrigger=PropertyChanged}" Tag="Issuer"/>
                   <TextBox Grid.Column="2" Margin="0,0,4,0" Text="{Binding Year, UpdateSourceTrigger=PropertyChanged}" Tag="Year"/>
-                  <Button Grid.Column="3" Content="Remove"
+                  <Button Grid.Column="3"
                           Command="{Binding DataContext.RemoveCertificationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                          Style="{StaticResource DangerIconButton}" ToolTip="Remove" Content="&#xE74D;"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -139,7 +142,12 @@
         </StackPanel>
       </Border>
 
-      <Button Content="Save profile" Command="{Binding SaveCommand}" HorizontalAlignment="Left" Padding="16,6"/>
+      <Button Command="{Binding SaveCommand}" HorizontalAlignment="Left" Padding="16,8">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <TextBlock Text="Save profile" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Button>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

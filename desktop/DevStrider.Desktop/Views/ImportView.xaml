@@ -8,9 +8,13 @@
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="Import peer snapshots" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="0" Text="Import peer snapshots" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0" Foreground="{StaticResource Muted}"/>
-      <Button Grid.Column="2" Content="Refresh repo" Command="{Binding LoadCommand}" Style="{StaticResource GhostButton}"/>
+      <Button Grid.Column="2"
+              Command="{Binding LoadCommand}"
+              Style="{StaticResource IconButton}"
+              ToolTip="Refresh repo"
+              Content="&#xE72C;"/>
     </Grid>
 
     <Grid>
@@ -38,12 +42,14 @@
             <DataGrid.Columns>
               <DataGridTextColumn Header="Owner" Binding="{Binding Owner}" Width="*"/>
               <DataGridTextColumn Header="Path"  Binding="{Binding Path}" Width="2*"/>
-              <DataGridTemplateColumn Header="Import" Width="80">
+              <DataGridTemplateColumn Header="Import" Width="56">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
-                    <Button Content="Import"
-                            Command="{Binding DataContext.ImportFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                    <Button Command="{Binding DataContext.ImportFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                            Style="{StaticResource IconButton}"
+                            ToolTip="Import snapshot"
+                            Content="&#xE896;"/>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
@@ -61,12 +67,14 @@
               <DataGridTextColumn Header="Owner"   Binding="{Binding Owner}" Width="*"/>
               <DataGridTextColumn Header="Day"     Binding="{Binding DayKey}" Width="100"/>
               <DataGridTextColumn Header="Imported" Binding="{Binding ImportedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}" Width="160"/>
-              <DataGridTemplateColumn Header="Remove" Width="80">
+              <DataGridTemplateColumn Header="Remove" Width="56">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
-                    <Button Content="Remove"
-                            Command="{Binding DataContext.DeleteSnapshotCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
+                    <Button Command="{Binding DataContext.DeleteSnapshotCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                            Style="{StaticResource DangerIconButton}"
+                            ToolTip="Remove local copy"
+                            Content="&#xE74D;"/>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>

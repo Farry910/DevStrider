@@ -3,10 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="700" HorizontalAlignment="Left">
-      <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-      <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource Muted}" Margin="0,4,0,12"/>
+      <TextBlock Text="Settings" Style="{StaticResource H1}"/>
+      <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,4,0,12"/>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="MongoDB connection" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Connection URI"/>
@@ -18,7 +18,7 @@
         </StackPanel>
       </Border>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Your username (used as your filename in the team repo)"/>
@@ -28,7 +28,7 @@
         </StackPanel>
       </Border>
 
-      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+      <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Shared GitHub repo (team data sync)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Repository URL (https://github.com/org/repo)"/>
@@ -40,8 +40,18 @@
           <TextBlock Foreground="{StaticResource Muted}"
                      Text="Token is encrypted with Windows DPAPI before it touches disk. Needs the 'repo' scope on the team repo."/>
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Content="Save settings" Command="{Binding SaveCommand}" Margin="0,0,8,0"/>
-            <Button Content="Push today's snapshot" Command="{Binding PushTodayCommand}" Style="{StaticResource GhostButton}"/>
+            <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Save settings" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding PushTodayCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE898;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Push today's snapshot" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
         </StackPanel>
       </Border>

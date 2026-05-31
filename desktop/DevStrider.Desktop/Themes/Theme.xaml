@@ -133,14 +133,14 @@
     </Setter>
   </Style>
 
-  <!-- Sidebar nav item: full-width, left-aligned, subtle hover. -->
+  <!-- Sidebar nav item: full-width, icon + label, subtle hover. -->
   <Style x:Key="NavButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
     <Setter Property="HorizontalAlignment" Value="Stretch"/>
     <Setter Property="HorizontalContentAlignment" Value="Left"/>
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="BorderThickness" Value="0"/>
-    <Setter Property="Padding" Value="14,8"/>
-    <Setter Property="Margin" Value="0,2"/>
+    <Setter Property="Padding" Value="12,8"/>
+    <Setter Property="Margin" Value="0,1"/>
     <Setter Property="FontWeight" Value="Normal"/>
     <Setter Property="Template">
       <Setter.Value>
@@ -163,6 +163,96 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <!-- ============================================================
+       Icon buttons — square, 32px, no border, hover background.
+       Use Content with a Segoe MDL2 / Fluent glyph, plus ToolTip.
+       Variants: IconButton (neutral), DangerIconButton (red hover),
+       PrimaryIconButton (filled blue).
+       ============================================================ -->
+  <Style x:Key="IconButton" TargetType="Button">
+    <Setter Property="Width" Value="30"/>
+    <Setter Property="Height" Value="30"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="6">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource SurfaceAlt}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource BorderSoft}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.4"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="DangerIconButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style x:Key="PrimaryIconButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+    <Setter Property="Background" Value="{StaticResource Primary}"/>
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="6">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryHv}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryPr}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Icon + label button used in page toolbars (Refresh / Add / Save / Push).
+       Content is supplied by the caller as a StackPanel; this style just
+       sizes/styles the wrapper. -->
+  <Style x:Key="IconLabelButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+    <Setter Property="Padding" Value="10,5"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+  </Style>
+
+  <Style x:Key="PrimaryIconLabelButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+    <Setter Property="Padding" Value="12,6"/>
   </Style>
 
   <!-- Title-bar caption button (minimize / maximize / close). Square, no corner radius
@@ -282,12 +372,17 @@
        ============================================================ -->
   <Style x:Key="Card" TargetType="Border">
     <Setter Property="Background" Value="{StaticResource Surface}"/>
-    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="CornerRadius" Value="10"/>
-    <Setter Property="Padding" Value="14"/>
+    <Setter Property="Padding" Value="16"/>
     <Setter Property="Margin" Value="0,0,0,12"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="Effect">
+      <Setter.Value>
+        <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Color="#10000000"/>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <!-- ============================================================

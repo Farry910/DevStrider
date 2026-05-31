@@ -76,7 +76,7 @@
         </DockPanel>
       </Border>
 
-      <!-- ===== Sidebar ===== -->
+      <!-- ===== Sidebar (icon + label rows) ===== -->
       <Border Grid.Row="1" Grid.Column="0"
               Background="{StaticResource Surface}"
               BorderBrush="{StaticResource BorderSoft}"
@@ -89,10 +89,30 @@
                        FontWeight="SemiBold"
                        FontSize="10"
                        Margin="14,4,0,8"/>
-            <Button Content="Bids"        Command="{Binding ShowBidsCommand}"       Style="{StaticResource NavButton}"/>
-            <Button Content="Interviews"  Command="{Binding ShowInterviewsCommand}" Style="{StaticResource NavButton}"/>
-            <Button Content="Overview"    Command="{Binding ShowOverviewCommand}"   Style="{StaticResource NavButton}"/>
-            <Button Content="Stats"       Command="{Binding ShowStatsCommand}"      Style="{StaticResource NavButton}"/>
+            <Button Command="{Binding ShowBidsCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7C3;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Bids" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowInterviewsCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE787;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Interviews" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowOverviewCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Overview" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowStatsCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE9F9;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Stats" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
 
           <!-- Secondary nav at the bottom -->
@@ -103,9 +123,24 @@
                        FontWeight="SemiBold"
                        FontSize="10"
                        Margin="14,4,0,8"/>
-            <Button Content="Profile"      Command="{Binding ShowProfileCommand}"  Style="{StaticResource NavButton}"/>
-            <Button Content="Import peers" Command="{Binding ShowImportCommand}"   Style="{StaticResource NavButton}"/>
-            <Button Content="Settings"     Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButton}"/>
+            <Button Command="{Binding ShowProfileCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Profile" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowImportCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Import peers" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowSettingsCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Settings" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
         </DockPanel>
       </Border>
