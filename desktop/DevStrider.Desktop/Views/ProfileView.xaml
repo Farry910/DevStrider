@@ -69,7 +69,7 @@
                   <TextBox Grid.Column="3" Margin="0,0,4,0" Text="{Binding EndYear, UpdateSourceTrigger=PropertyChanged}" Tag="To"/>
                   <Button Grid.Column="4" Content="Remove"
                           Command="{Binding DataContext.RemoveExperienceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -102,7 +102,7 @@
                   <TextBox Grid.Column="4" Margin="0,0,4,0" Text="{Binding EndYear, UpdateSourceTrigger=PropertyChanged}" Tag="To"/>
                   <Button Grid.Column="5" Content="Remove"
                           Command="{Binding DataContext.RemoveEducationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -131,7 +131,7 @@
                   <TextBox Grid.Column="2" Margin="0,0,4,0" Text="{Binding Year, UpdateSourceTrigger=PropertyChanged}" Tag="Year"/>
                   <Button Grid.Column="3" Content="Remove"
                           Command="{Binding DataContext.RemoveCertificationCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                          CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>

@@ -44,10 +44,10 @@
               <StackPanel Orientation="Horizontal">
                 <Button Content="Save"
                         Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
                 <Button Content="Delete"
                         Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

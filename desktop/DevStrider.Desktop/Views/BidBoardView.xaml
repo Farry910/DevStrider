@@ -61,13 +61,13 @@
               <StackPanel Orientation="Horizontal">
                 <Button Content="Save"
                         Command="{Binding DataContext.SaveBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
                 <Button Content="Useless"
                         Command="{Binding DataContext.ToggleUselessCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
                 <Button Content="Delete bid"
                         Command="{Binding DataContext.DeleteBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

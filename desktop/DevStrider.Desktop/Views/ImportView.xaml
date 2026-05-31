@@ -43,7 +43,7 @@
                   <DataTemplate>
                     <Button Content="Import"
                             Command="{Binding DataContext.ImportFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                            CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
@@ -66,7 +66,7 @@
                   <DataTemplate>
                     <Button Content="Remove"
                             Command="{Binding DataContext.DeleteSnapshotCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                            CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+                            CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}" Style="{StaticResource GhostButton}"/>
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
