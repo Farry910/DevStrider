@@ -1,60 +1,359 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- Neutral, light palette. Easy to swap later for a dark variant. -->
-  <SolidColorBrush x:Key="Bg"        Color="#FAFAFA"/>
-  <SolidColorBrush x:Key="Surface"   Color="#FFFFFF"/>
-  <SolidColorBrush x:Key="Border"    Color="#E5E7EB"/>
-  <SolidColorBrush x:Key="Text"      Color="#111827"/>
-  <SolidColorBrush x:Key="Muted"     Color="#6B7280"/>
-  <SolidColorBrush x:Key="Primary"   Color="#1976D2"/>
-  <SolidColorBrush x:Key="PrimaryHv" Color="#1565C0"/>
-  <SolidColorBrush x:Key="Warning"   Color="#FFC107"/>
-  <SolidColorBrush x:Key="Danger"    Color="#D32F2F"/>
+  <!-- ============================================================
+       Palette — light, modern, Win11-ish.
+       Edit these brushes to retheme the whole app.
+       ============================================================ -->
+  <SolidColorBrush x:Key="Bg"          Color="#F8FAFC"/>  <!-- window -->
+  <SolidColorBrush x:Key="Surface"     Color="#FFFFFF"/>  <!-- card -->
+  <SolidColorBrush x:Key="SurfaceAlt"  Color="#F1F5F9"/>  <!-- hover / subtle row -->
+  <SolidColorBrush x:Key="Border"      Color="#E5E7EB"/>
+  <SolidColorBrush x:Key="BorderSoft"  Color="#EEF2F6"/>
+  <SolidColorBrush x:Key="Text"        Color="#0F172A"/>
+  <SolidColorBrush x:Key="Muted"       Color="#64748B"/>
+  <SolidColorBrush x:Key="Primary"     Color="#2563EB"/>
+  <SolidColorBrush x:Key="PrimaryHv"   Color="#1D4ED8"/>
+  <SolidColorBrush x:Key="PrimaryPr"   Color="#1E40AF"/>
+  <SolidColorBrush x:Key="PrimarySoft" Color="#DBEAFE"/>  <!-- selected nav bg -->
+  <SolidColorBrush x:Key="Warning"     Color="#F59E0B"/>
+  <SolidColorBrush x:Key="Danger"      Color="#DC2626"/>
+  <SolidColorBrush x:Key="OK"          Color="#16A34A"/>
 
+  <!-- Title-bar control colour scheme (subtle, only colour on hover). -->
+  <SolidColorBrush x:Key="ChromeHv"     Color="#E5E7EB"/>
+  <SolidColorBrush x:Key="ChromeClose"  Color="#E81123"/>
+
+  <!-- ============================================================
+       Typography
+       ============================================================ -->
   <Style TargetType="TextBlock">
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
-    <Setter Property="FontFamily" Value="Segoe UI"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
   </Style>
 
+  <Style x:Key="H1" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="22"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+  </Style>
+
+  <Style x:Key="H2" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="15"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+  </Style>
+
+  <Style x:Key="MutedText" TargetType="TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="12"/>
+  </Style>
+
+  <!-- ============================================================
+       Buttons — primary (filled) + ghost (subtle).
+       Both have a rounded corner + smooth hover/pressed states.
+       ============================================================ -->
   <Style TargetType="Button">
     <Setter Property="Background" Value="{StaticResource Primary}"/>
     <Setter Property="Foreground" Value="White"/>
     <Setter Property="BorderThickness" Value="0"/>
-    <Setter Property="Padding" Value="10,4"/>
+    <Setter Property="Padding" Value="14,6"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="MinHeight" Value="28"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                              RecognizesAccessKey="True"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryHv}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryPr}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
-  <Style x:Key="GhostButton" TargetType="Button">
+  <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
     <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
     <Setter Property="BorderThickness" Value="1"/>
-    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="Padding" Value="12,5"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource SurfaceAlt}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource BorderSoft}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
+  <!-- Sidebar nav item: full-width, left-aligned, subtle hover. -->
+  <Style x:Key="NavButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="14,8"/>
+    <Setter Property="Margin" Value="0,2"/>
+    <Setter Property="FontWeight" Value="Normal"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="6"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource SurfaceAlt}"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource BorderSoft}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Title-bar caption button (minimize / maximize / close). Square, no corner radius
+       so they sit flush in the chrome strip. -->
+  <Style x:Key="CaptionButton" TargetType="Button">
+    <Setter Property="Width" Value="46"/>
+    <Setter Property="Height" Value="36"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol"/>
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource ChromeHv}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="CaptionCloseButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="Foreground" Value="White"/>
+      </Trigger>
+    </Style.Triggers>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd" Background="{TemplateBinding Background}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource ChromeClose}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ============================================================
+       Inputs
+       ============================================================ -->
   <Style TargetType="TextBox">
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
     <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding" Value="8,5"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6">
+            <ScrollViewer x:Name="PART_ContentHost"
+                          Padding="{TemplateBinding Padding}"
+                          VerticalAlignment="Center"
+                          Focusable="False"
+                          HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollBarVisibility="Hidden"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsFocused" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Primary}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType="DatePicker">
     <Setter Property="Padding" Value="6,3"/>
-    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
   </Style>
 
   <Style TargetType="ComboBox">
-    <Setter Property="Padding" Value="6,3"/>
-    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="Padding" Value="8,4"/>
+    <Setter Property="MinHeight" Value="30"/>
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
   </Style>
 
+  <Style TargetType="CheckBox">
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+  </Style>
+
+  <!-- ============================================================
+       Card — Border preset to give every section a soft surface.
+       Apply with Style="{StaticResource Card}".
+       ============================================================ -->
+  <Style x:Key="Card" TargetType="Border">
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="10"/>
+    <Setter Property="Padding" Value="14"/>
+    <Setter Property="Margin" Value="0,0,0,12"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+  </Style>
+
+  <!-- ============================================================
+       DataGrid — flatter, modern row look. The base WPF DataGrid is
+       only lightly retemplated to keep all its built-in features
+       (sorting, virtualization, cell editing) intact.
+       ============================================================ -->
   <Style TargetType="DataGrid">
     <Setter Property="HeadersVisibility" Value="Column"/>
     <Setter Property="RowHeaderWidth" Value="0"/>
     <Setter Property="GridLinesVisibility" Value="None"/>
-    <Setter Property="AlternatingRowBackground" Value="#FAFAFA"/>
+    <Setter Property="AlternatingRowBackground" Value="{StaticResource SurfaceAlt}"/>
     <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
     <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
     <Setter Property="AutoGenerateColumns" Value="False"/>
     <Setter Property="EnableRowVirtualization" Value="True"/>
     <Setter Property="EnableColumnVirtualization" Value="True"/>
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="RowHeight" Value="32"/>
+    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontSize" Value="13"/>
+    <Setter Property="SelectionUnit" Value="FullRow"/>
+  </Style>
+
+  <Style TargetType="DataGridColumnHeader">
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Padding" Value="10,8"/>
+    <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+  </Style>
+
+  <Style TargetType="DataGridCell">
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="10,6"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Style.Triggers>
+      <Trigger Property="IsSelected" Value="True">
+        <Setter Property="Background" Value="{StaticResource PrimarySoft}"/>
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <Style TargetType="DataGridRow">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+
+  <!-- ============================================================
+       ScrollBars — slim, modern.
+       ============================================================ -->
+  <Style TargetType="ScrollBar">
+    <Setter Property="Width" Value="10"/>
+    <Setter Property="MinWidth" Value="10"/>
+    <Style.Triggers>
+      <Trigger Property="Orientation" Value="Horizontal">
+        <Setter Property="Height" Value="10"/>
+        <Setter Property="MinHeight" Value="10"/>
+      </Trigger>
+    </Style.Triggers>
   </Style>
 
 </ResourceDictionary>
