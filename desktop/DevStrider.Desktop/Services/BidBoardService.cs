@@ -108,6 +108,18 @@ public class BidBoardService
         return rows;
     }
 
+    /// <summary>
+    /// Look up an existing <see cref="GroupLink"/> by the strict-normalized URL form
+    /// (query + hash preserved). Returns null on miss. Used by the Bid-Assistant listener
+    /// to decide whether a new POST should join an existing link or create one.
+    /// </summary>
+    public Task<GroupLink?> FindLinkByNormalizedUrlAsync(string urlRaw)
+    {
+        var norm = UrlNorm.Normalize(urlRaw);
+        if (string.IsNullOrEmpty(norm)) return Task.FromResult<GroupLink?>(null);
+        return _db.Links.Find(l => l.UrlNorm == norm).FirstOrDefaultAsync()!;
+    }
+
     /// <summary>Add a new link (rejects same-norm duplicates in the same day window).</summary>
     public async Task<GroupLink> AddLinkAsync(string urlRaw, string sharedJd = "")
     {

@@ -53,6 +53,7 @@ public partial class App : Application
             services.AddSingleton<ExportService>();
             services.AddSingleton<ResumeService>();
             services.AddSingleton<GitHubSyncService>();
+            services.AddSingleton<LocalApiServer>();
 
             services.AddSingleton<BidBoardViewModel>();
             services.AddSingleton<InterviewPanelViewModel>();
@@ -86,6 +87,26 @@ public partial class App : Application
                 }
             });
 
+            // Start the Bid-Assistant HTTP listener if the saved settings have it enabled.
+            // Loopback-only, no auth — the extension POSTs bids straight to /record-bid here.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var settingsService = Services.GetRequiredService<SettingsService>();
+                    var settings = await settingsService.GetAsync();
+                    if (settings.ListenerEnabled)
+                    {
+                        var server = Services.GetRequiredService<LocalApiServer>();
+                        Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("Listener boot failed: " + ex.Message);
+                }
+            });
+
             var window = new MainWindow
             {
                 DataContext = Services.GetRequiredService<MainWindowViewModel>()
@@ -116,6 +137,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        try
+        {
+            var server = Services?.GetService(typeof(LocalApiServer)) as LocalApiServer;
+            server?.StopAsync().GetAwaiter().GetResult();
+        }
+        catch { /* shutting down anyway */ }
         Tray?.Dispose();
         Tray = null;
         base.OnExit(e);

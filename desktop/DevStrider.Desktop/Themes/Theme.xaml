@@ -349,17 +349,37 @@
                   BorderBrush="{TemplateBinding BorderBrush}"
                   BorderThickness="{TemplateBinding BorderThickness}"
                   CornerRadius="6">
-            <ScrollViewer x:Name="PART_ContentHost"
-                          Padding="{TemplateBinding Padding}"
-                          VerticalAlignment="Center"
-                          Focusable="False"
-                          HorizontalScrollBarVisibility="Hidden"
-                          VerticalScrollBarVisibility="Hidden"/>
+            <Grid>
+              <ScrollViewer x:Name="PART_ContentHost"
+                            Padding="{TemplateBinding Padding}"
+                            VerticalAlignment="Center"
+                            Focusable="False"
+                            HorizontalScrollBarVisibility="Hidden"
+                            VerticalScrollBarVisibility="Hidden"/>
+              <!-- Placeholder: shown when Text is empty AND the field doesn't have focus.
+                   Source is the TextBox's Tag property — set Tag="…" anywhere in the views
+                   to give a field a hint. IsHitTestVisible="False" lets clicks pass through
+                   to the underlying ScrollViewer/TextBox so it focuses normally. -->
+              <TextBlock x:Name="Watermark"
+                         Text="{TemplateBinding Tag}"
+                         Foreground="{StaticResource Muted}"
+                         Padding="{TemplateBinding Padding}"
+                         VerticalAlignment="Center"
+                         IsHitTestVisible="False"
+                         Visibility="Collapsed"/>
+            </Grid>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsFocused" Value="True">
               <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Primary}"/>
             </Trigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="Text" Value=""/>
+                <Condition Property="IsKeyboardFocused" Value="False"/>
+              </MultiTrigger.Conditions>
+              <Setter TargetName="Watermark" Property="Visibility" Value="Visible"/>
+            </MultiTrigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>

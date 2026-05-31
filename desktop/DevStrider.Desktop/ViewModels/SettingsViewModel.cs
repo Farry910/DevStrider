@@ -9,12 +9,20 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly SettingsService _settings;
     private readonly ProfileService _profiles;
     private readonly GitHubSyncService _sync;
+    private readonly LocalApiServer _localApi;
 
-    public SettingsViewModel(SettingsService settings, ProfileService profiles, GitHubSyncService sync)
+    public LocalApiServer LocalApi => _localApi;
+
+    public SettingsViewModel(
+        SettingsService settings,
+        ProfileService profiles,
+        GitHubSyncService sync,
+        LocalApiServer localApi)
     {
         _settings = settings;
         _profiles = profiles;
         _sync = sync;
+        _localApi = localApi;
     }
 
     private AppSettings _model = new();
@@ -55,9 +63,31 @@ public partial class SettingsViewModel : ViewModelBase
             p.Username = string.IsNullOrWhiteSpace(Username) ? "me" : Username.Trim();
             await _profiles.SaveAsync(p);
 
+            // If the user changed the listener port, restart on the new one.
+            if (Model.ListenerEnabled && _localApi.BoundPort != Model.ListenerPort)
+            {
+                await _localApi.StopAsync();
+                _localApi.Start(Model.ListenerPort);
+            }
+            else if (!Model.ListenerEnabled && _localApi.IsRunning)
+            {
+                await _localApi.StopAsync();
+            }
+            else if (Model.ListenerEnabled && !_localApi.IsRunning)
+            {
+                _localApi.Start(Model.ListenerPort);
+            }
+
             StatusMessage = "Saved.";
         }
         finally { IsBusy = false; }
+    }
+
+    [RelayCommand]
+    public async Task RestartListenerAsync()
+    {
+        await _localApi.StopAsync();
+        if (Model.ListenerEnabled) _localApi.Start(Model.ListenerPort);
     }
 
     [RelayCommand]

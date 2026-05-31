@@ -23,5 +23,13 @@ public class AppSettings
     /// <summary>Encrypted PAT bytes (DPAPI, current-user scope). Base64 of the ciphertext.</summary>
     public string GitHubTokenProtected { get; set; } = "";
 
+    /// <summary>
+    /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
+    /// sync with the Chrome extension's configured base URL. Localhost binding means no
+    /// authentication is required.
+    /// </summary>
+    public int ListenerPort { get; set; } = 8765;
+    public bool ListenerEnabled { get; set; } = true;
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

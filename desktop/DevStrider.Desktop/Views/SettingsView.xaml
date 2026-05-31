@@ -10,9 +10,11 @@
         <StackPanel>
           <TextBlock Text="MongoDB connection" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Connection URI"/>
-          <TextBox Text="{Binding Model.MongoUri, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBox Text="{Binding Model.MongoUri, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
+                   Tag="mongodb://127.0.0.1:27017"/>
           <TextBlock Text="Database name"/>
-          <TextBox Text="{Binding Model.DatabaseName, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"/>
+          <TextBox Text="{Binding Model.DatabaseName, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
+                   Tag="devstrider"/>
           <TextBlock Foreground="{StaticResource Muted}"
                      Text="Restart DevStrider after changing these — the connection is created at startup."/>
         </StackPanel>
@@ -22,7 +24,8 @@
         <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Your username (used as your filename in the team repo)"/>
-          <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"/>
+          <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
+                   Tag="e.g. joshua"/>
           <TextBlock Foreground="{StaticResource Muted}"
                      Text="Snapshots upload to: YYYY-MM-DD/&lt;username&gt;.json. Lowercase, no spaces."/>
         </StackPanel>
@@ -32,11 +35,14 @@
         <StackPanel>
           <TextBlock Text="Shared GitHub repo (team data sync)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Repository URL (https://github.com/org/repo)"/>
-          <TextBox Text="{Binding Model.GitHubRepoUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBox Text="{Binding Model.GitHubRepoUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
+                   Tag="https://github.com/your-team/devstrider-sync"/>
           <TextBlock Text="Branch"/>
-          <TextBox Text="{Binding Model.GitHubBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBox Text="{Binding Model.GitHubBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
+                   Tag="main"/>
           <TextBlock Text="Personal access token (PAT)"/>
-          <TextBox Text="{Binding GitHubTokenPlain, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,2,0,4"/>
+          <TextBox Text="{Binding GitHubTokenPlain, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,2,0,4"
+                   Tag="ghp_… (repo scope)"/>
           <TextBlock Foreground="{StaticResource Muted}"
                      Text="Token is encrypted with Windows DPAPI before it touches disk. Needs the 'repo' scope on the team repo."/>
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
@@ -53,6 +59,50 @@
               </StackPanel>
             </Button>
           </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Bid-Assistant integration (local HTTP listener)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="DevStrider listens on http://127.0.0.1:&lt;port&gt; for POSTs from the Bid-Assistant Chrome extension. Loopback-only — no authentication. Point the extension at this URL and bids you record from ChatGPT land directly in the local Mongo."/>
+
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <Border Width="10" Height="10" CornerRadius="5" VerticalAlignment="Center" Margin="0,0,8,0">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="Background" Value="{StaticResource Muted}"/>
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding LocalApi.IsRunning}" Value="True">
+                      <Setter Property="Background" Value="{StaticResource OK}"/>
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+            </Border>
+            <TextBlock Text="{Binding LocalApi.Status}" VerticalAlignment="Center"/>
+          </StackPanel>
+
+          <CheckBox IsChecked="{Binding Model.ListenerEnabled, Mode=TwoWay}"
+                    Content="Enable listener"
+                    Margin="0,0,0,8"/>
+          <TextBlock Text="Port"/>
+          <TextBox Text="{Binding Model.ListenerPort, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8" MaxLength="5"
+                   Tag="8765"/>
+
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding RestartListenerCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Restart listener" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" TextWrapping="Wrap"
+                     Text="Extension contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, sharedJobDescription?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …' — same as the resume-filename convention."/>
         </StackPanel>
       </Border>
     </StackPanel>
