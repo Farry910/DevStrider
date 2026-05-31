@@ -180,7 +180,7 @@
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Padding" Value="0"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FontFamily" Value="Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol"/>
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
     <Setter Property="FontSize" Value="14"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -190,7 +190,11 @@
           <Border x:Name="Bd"
                   Background="{TemplateBinding Background}"
                   CornerRadius="6">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <!-- See CaptionButton: pin the icon font on the implicit text content. -->
+            <ContentPresenter HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              TextElement.FontFamily="Segoe MDL2 Assets"
+                              TextElement.FontSize="14"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -225,7 +229,10 @@
           <Border x:Name="Bd"
                   Background="{TemplateBinding Background}"
                   CornerRadius="6">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <ContentPresenter HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              TextElement.FontFamily="Segoe MDL2 Assets"
+                              TextElement.FontSize="14"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -264,13 +271,18 @@
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FontFamily" Value="Segoe MDL2 Assets, Segoe Fluent Icons, Segoe UI Symbol"/>
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
     <Setter Property="FontSize" Value="10"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="Bd" Background="{TemplateBinding Background}">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <!-- TextElement.FontFamily pins the glyph font on the implicit TextBlock
+                 the ContentPresenter creates for string Content. Without this WPF
+                 inherits the parent's FontFamily (Segoe UI) and Win10 renders tofu. -->
+            <ContentPresenter HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              TextElement.FontFamily="Segoe MDL2 Assets"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -292,7 +304,9 @@
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="Bd" Background="{TemplateBinding Background}">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <ContentPresenter HorizontalAlignment="Center"
+                              VerticalAlignment="Center"
+                              TextElement.FontFamily="Segoe MDL2 Assets"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -378,12 +392,10 @@
     <Setter Property="Padding" Value="16"/>
     <Setter Property="Margin" Value="0,0,0,12"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
-    <Setter Property="Effect">
-      <Setter.Value>
-        <DropShadowEffect BlurRadius="10" ShadowDepth="1" Direction="270" Color="#10000000"/>
-      </Setter.Value>
-    </Setter>
   </Style>
+
+  <!-- Kept as an alias so existing references compile. Identical to Card now. -->
+  <Style x:Key="FlatCard" TargetType="Border" BasedOn="{StaticResource Card}"/>
 
   <!-- ============================================================
        DataGrid — flatter, modern row look. The base WPF DataGrid is

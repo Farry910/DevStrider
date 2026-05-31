@@ -12,6 +12,9 @@ public partial class App : Application
 {
     public static IServiceProvider Services { get; private set; } = default!;
 
+    /// <summary>Lives for the whole process. Holds the tray icon and the Quit handler.</summary>
+    public static TrayService? Tray { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -85,6 +88,12 @@ public partial class App : Application
                 DataContext = Services.GetRequiredService<MainWindowViewModel>()
             };
             MainWindow = window;
+
+            // Tray service knows how to fetch the live MainWindow (it may be hidden when
+            // the user clicks the X). Created before Show() so the icon is present from
+            // the moment the user can interact with the app.
+            Tray = new TrayService(() => MainWindow);
+
             window.Show();
         }
         catch (Exception ex)
@@ -100,5 +109,12 @@ public partial class App : Application
             $"{ex.GetType().Name}: {ex.Message}\n\n{ex.StackTrace}",
             $"DevStrider · {title}",
             MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        Tray?.Dispose();
+        Tray = null;
+        base.OnExit(e);
     }
 }

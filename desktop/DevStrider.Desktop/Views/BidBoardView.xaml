@@ -22,7 +22,7 @@
     </Grid>
 
     <!-- Add link -->
-    <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
+    <Border DockPanel.Dock="Top" Style="{StaticResource FlatCard}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>

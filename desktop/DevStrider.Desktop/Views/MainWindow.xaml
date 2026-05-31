@@ -3,11 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="DevStrider"
+        Icon="pack://application:,,,/Assets/DevStrider.ico"
         Height="780"
         Width="1280"
         MinHeight="540"
         MinWidth="900"
-        Background="{StaticResource Bg}"
+        Background="Transparent"
+        AllowsTransparency="True"
         WindowStyle="None"
         ResizeMode="CanResize"
         TextOptions.TextFormattingMode="Display"
@@ -25,7 +27,11 @@
                         UseAeroCaptionButtons="False"/>
   </shell:WindowChrome.WindowChrome>
 
-  <Border BorderBrush="{StaticResource Border}" BorderThickness="1">
+  <Border x:Name="RootBorder"
+          Background="{StaticResource Bg}"
+          BorderBrush="{StaticResource Border}"
+          BorderThickness="1"
+          CornerRadius="5">
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="36"/>
@@ -37,10 +43,12 @@
       </Grid.ColumnDefinitions>
 
       <!-- ===== Title bar (spans both columns) ===== -->
-      <Border Grid.ColumnSpan="2"
+      <Border x:Name="TitleBarBorder"
+              Grid.ColumnSpan="2"
               Background="{StaticResource Surface}"
               BorderBrush="{StaticResource BorderSoft}"
-              BorderThickness="0,0,0,1">
+              BorderThickness="0,0,0,1"
+              CornerRadius="5,5,0,0">
         <DockPanel LastChildFill="True">
           <!-- Caption buttons (must opt out of WindowChrome hit-test) -->
           <StackPanel DockPanel.Dock="Right"
@@ -77,10 +85,12 @@
       </Border>
 
       <!-- ===== Sidebar (icon + label rows) ===== -->
-      <Border Grid.Row="1" Grid.Column="0"
+      <Border x:Name="SidebarBorder"
+              Grid.Row="1" Grid.Column="0"
               Background="{StaticResource Surface}"
               BorderBrush="{StaticResource BorderSoft}"
-              BorderThickness="0,0,1,0">
+              BorderThickness="0,0,1,0"
+              CornerRadius="0,0,0,5">
         <DockPanel LastChildFill="False" Margin="10,14">
           <!-- Primary nav -->
           <StackPanel DockPanel.Dock="Top">
@@ -146,7 +156,10 @@
       </Border>
 
       <!-- ===== Content area ===== -->
-      <Border Grid.Row="1" Grid.Column="1" Background="{StaticResource Bg}">
+      <Border x:Name="ContentBorder"
+              Grid.Row="1" Grid.Column="1"
+              Background="{StaticResource Bg}"
+              CornerRadius="0,0,5,0">
         <ContentControl Content="{Binding Current}" Margin="22"/>
       </Border>
     </Grid>

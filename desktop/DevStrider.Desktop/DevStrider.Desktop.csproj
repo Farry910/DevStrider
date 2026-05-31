@@ -4,6 +4,14 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!--
+      We compose WPF + WinForms in the same process so we can use
+      System.Windows.Forms.NotifyIcon for the system-tray icon. WPF doesn't have
+      a built-in tray API; rather than pull a NuGet (Hardcodet.NotifyIcon.Wpf)
+      we use the in-box WinForms one. The two stacks coexist fine — we don't
+      run a WinForms message loop, the existing WPF dispatcher handles events.
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <!--
       ImplicitUsings auto-imports System / System.Collections.Generic / System.Linq /
@@ -14,10 +22,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\DevStrider.ico</ApplicationIcon>
     <AssemblyName>DevStrider</AssemblyName>
     <Version>1.1.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
+
+  <!-- Bundle the .ico so Window.Icon can load it at runtime (and Explorer can pick it
+       up from the .exe via ApplicationIcon above). -->
+  <ItemGroup>
+    <Resource Include="Assets\DevStrider.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- MongoDB driver -->
