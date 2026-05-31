@@ -5,6 +5,13 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
+    <!--
+      ImplicitUsings auto-imports System / System.Collections.Generic / System.Linq /
+      System.Threading.Tasks / System.IO etc. on every .cs file. Without it the source-
+      generator can't see Task as a return type, so [RelayCommand] rejects every async
+      method with MVVMTK0007.
+    -->
+    <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>DevStrider</AssemblyName>
@@ -17,12 +24,8 @@
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
 
-    <!-- DI + logging + config -->
+    <!-- DI container only — Hosting/Config/Logging aren't used in the WPF process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
 
     <!-- GitHub API -->
     <PackageReference Include="Octokit" Version="13.0.1" />
