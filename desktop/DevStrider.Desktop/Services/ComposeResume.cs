@@ -19,7 +19,9 @@ public static class ComposeResume
         if (profile == null && trimmedBody.Length == 0) return null;
 
         var experiences = profile?.Experiences ?? new List<Experience>();
-        var processed = trimmedBody.Length > 0
+        // Both branches must name the tuple elements identically; otherwise C# falls back to an
+        // unnamed (List<string>, HashSet<string>) and .Lines / .Bold disappear.
+        (List<string> Lines, HashSet<string> Bold) processed = trimmedBody.Length > 0
             ? ApplyPlaceholders(trimmedBody, experiences, profile?.DisplayName ?? "")
             : (new List<string>(), new HashSet<string>());
 
