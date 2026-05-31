@@ -63,6 +63,94 @@ In `server/.env`:
 
 Open the matching port in Windows Firewall if remote machines should connect.
 
+### Linux + nginx (single host, static files served by Node)
+
+The Express server already serves the built SPA from `client/dist`, so the deployment artifact is just the repo + a `client/dist/` folder. No separate static bucket, no separate frontend host — one process, one port, fronted by nginx for TLS and the public port.
+
+```bash
+# on the deploy box (one-time)
+git clone <repo> /opt/devstrider
+cd /opt/devstrider
+
+# on every release
+git pull
+npm ci
+npm run build               # produces client/dist/
+NODE_ENV=production \
+  PORT=4000 \
+  HOST=127.0.0.1 \
+  MONGODB_URI=... \
+  JWT_SECRET=... \
+  CLIENT_ORIGIN=https://your.domain \
+  npm run start
+```
+
+- **`HOST=127.0.0.1`** so only nginx (same machine) can reach Node directly.
+- **`CLIENT_ORIGIN`** is the public URL users type in the browser. Used for CORS on legitimate cross-origin calls (e.g. the Bid Assistant extension); same-origin traffic from the served SPA doesn't need it.
+- **`NODE_ENV=production`** enables Apache-style (`combined`) request logs that line up with nginx's access log format.
+
+Minimal nginx server block (TLS terminator + reverse proxy, including Socket.IO):
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name your.domain;
+
+    ssl_certificate     /etc/letsencrypt/live/your.domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your.domain/privkey.pem;
+
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass         http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+
+        # Socket.IO needs the Upgrade headers
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_read_timeout 95s;
+    }
+}
+
+server {
+    listen 80;
+    server_name your.domain;
+    return 301 https://$host$request_uri;
+}
+```
+
+Optional systemd unit (`/etc/systemd/system/devstrider.service`) so Node survives reboots:
+
+```ini
+[Unit]
+Description=DevStrider API + SPA
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/devstrider
+EnvironmentFile=/opt/devstrider/server/.env
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+User=devstrider
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload + enable:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now devstrider
+```
+
+After this, your release flow is: `git pull && npm ci && npm run build && systemctl restart devstrider`.
+
 ## Bid Assistant integration (for group owners)
 
 The **Bid Assistant** Chrome extension + optional desktop proxy can create or update **job links and the logged-in member’s bid** by calling the same JWT-protected API the web app uses.

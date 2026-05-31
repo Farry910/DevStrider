@@ -1,0 +1,38 @@
+<Application x:Class="DevStrider.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:DevStrider.Desktop.ViewModels"
+             xmlns:views="clr-namespace:DevStrider.Desktop.Views"
+             ShutdownMode="OnMainWindowClose"
+             StartupUri="Views/MainWindow.xaml">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/Theme.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+
+      <!-- DataTemplates wire the right View to each ViewModel as Content of the shell ContentControl. -->
+      <DataTemplate DataType="{x:Type vm:BidBoardViewModel}">
+        <views:BidBoardView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:InterviewPanelViewModel}">
+        <views:InterviewPanelView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:OverviewViewModel}">
+        <views:OverviewView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:StatsViewModel}">
+        <views:StatsView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ProfileViewModel}">
+        <views:ProfileView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+        <views:SettingsView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ImportViewModel}">
+        <views:ImportView/>
+      </DataTemplate>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

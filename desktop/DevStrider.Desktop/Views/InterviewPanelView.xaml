@@ -1,0 +1,58 @@
+<UserControl x:Class="DevStrider.Desktop.Views.InterviewPanelView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <DockPanel>
+    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="Interviews" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <DatePicker Grid.Column="1" SelectedDate="{Binding From, Mode=TwoWay}" Margin="16,0,4,0" VerticalAlignment="Center"/>
+      <DatePicker Grid.Column="2" SelectedDate="{Binding To, Mode=TwoWay}" Margin="0,0,16,0" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="3" Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+      <Button Grid.Column="4" Content="Refresh" Command="{Binding ReloadCommand}" Style="{StaticResource GhostButton}"/>
+    </Grid>
+
+    <DataGrid ItemsSource="{Binding Items}" SelectionUnit="FullRow">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Date"      Binding="{Binding ScheduledDate, StringFormat='{}{0:MMM dd yyyy}'}" Width="120"/>
+        <DataGridTextColumn Header="Time"      Binding="{Binding ScheduledTime}" Width="80"/>
+        <DataGridTextColumn Header="Type"      Binding="{Binding InterviewType}" Width="140"/>
+        <DataGridTextColumn Header="Company"   Binding="{Binding Company}" Width="*"/>
+        <DataGridTextColumn Header="Role"      Binding="{Binding Role}" Width="*"/>
+        <DataGridTextColumn Header="Recruiter" Binding="{Binding Recruiter}" Width="*"/>
+        <DataGridComboBoxColumn Header="Status"
+                                SelectedItemBinding="{Binding Status}"
+                                Width="120">
+          <DataGridComboBoxColumn.ItemsSource>
+            <x:Array Type="{x:Type System:String}" xmlns:System="clr-namespace:System;assembly=mscorlib">
+              <System:String>scheduled</System:String>
+              <System:String>completed</System:String>
+              <System:String>passed</System:String>
+              <System:String>failed</System:String>
+              <System:String>cancelled</System:String>
+            </x:Array>
+          </DataGridComboBoxColumn.ItemsSource>
+        </DataGridComboBoxColumn>
+        <DataGridTemplateColumn Header="Actions" Width="160">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal">
+                <Button Content="Save"
+                        Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}" Margin="0,0,4,0"/>
+                <Button Content="Delete"
+                        Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding}" Style="{StaticResource GhostButton}"/>
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>

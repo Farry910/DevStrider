@@ -74,7 +74,11 @@ app.use(
   })
 );
 app.use(express.json({ limit: '5mb' }));
-app.use(morgan('dev'));
+/**
+ * Use `combined` (Apache-style) logs in production so they line up with nginx access logs;
+ * keep the colourful `dev` format for local development.
+ */
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.get('/api/health', (_req, res) => {
   const dbUp = mongoose.connection.readyState === 1;

@@ -1,0 +1,50 @@
+<UserControl x:Class="DevStrider.Desktop.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel MaxWidth="700" HorizontalAlignment="Left">
+      <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
+      <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource Muted}" Margin="0,4,0,12"/>
+
+      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+        <StackPanel>
+          <TextBlock Text="MongoDB connection" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Connection URI"/>
+          <TextBox Text="{Binding Model.MongoUri, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBlock Text="Database name"/>
+          <TextBox Text="{Binding Model.DatabaseName, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}"
+                     Text="Restart DevStrider after changing these — the connection is created at startup."/>
+        </StackPanel>
+      </Border>
+
+      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+        <StackPanel>
+          <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Your username (used as your filename in the team repo)"/>
+          <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}"
+                     Text="Snapshots upload to: YYYY-MM-DD/&lt;username&gt;.json. Lowercase, no spaces."/>
+        </StackPanel>
+      </Border>
+
+      <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="12" Margin="0,0,0,12">
+        <StackPanel>
+          <TextBlock Text="Shared GitHub repo (team data sync)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Repository URL (https://github.com/org/repo)"/>
+          <TextBox Text="{Binding Model.GitHubRepoUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBlock Text="Branch"/>
+          <TextBox Text="{Binding Model.GitHubBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"/>
+          <TextBlock Text="Personal access token (PAT)"/>
+          <TextBox Text="{Binding GitHubTokenPlain, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}"
+                     Text="Token is encrypted with Windows DPAPI before it touches disk. Needs the 'repo' scope on the team repo."/>
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="Save settings" Command="{Binding SaveCommand}" Margin="0,0,8,0"/>
+            <Button Content="Push today's snapshot" Command="{Binding PushTodayCommand}" Style="{StaticResource GhostButton}"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
