@@ -43,19 +43,22 @@ public partial class App : Application
                 "mongodb://127.0.0.1:27017", "devstrider"));
 
             services.AddSingleton<SettingsService>();
+            // ProfileService is kept (no longer surfaced in the UI but still used by
+            // GitHubSyncService for the local username + by older code paths).
             services.AddSingleton<ProfileService>();
             services.AddSingleton<BidBoardService>();
             services.AddSingleton<InterviewService>();
             services.AddSingleton<StatsService>();
             services.AddSingleton<AchievementService>();
             services.AddSingleton<ExportService>();
+            services.AddSingleton<ResumeService>();
             services.AddSingleton<GitHubSyncService>();
 
             services.AddSingleton<BidBoardViewModel>();
             services.AddSingleton<InterviewPanelViewModel>();
             services.AddSingleton<OverviewViewModel>();
             services.AddSingleton<StatsViewModel>();
-            services.AddSingleton<ProfileViewModel>();
+            services.AddSingleton<ResumesViewModel>();
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ImportViewModel>();
             services.AddSingleton<MainWindowViewModel>();

@@ -12,7 +12,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public InterviewPanelViewModel Interviews { get; }
     public OverviewViewModel Overview { get; }
     public StatsViewModel Stats { get; }
-    public ProfileViewModel Profile { get; }
+    public ResumesViewModel Resumes { get; }
     public SettingsViewModel Settings { get; }
     public ImportViewModel Import { get; }
 
@@ -28,7 +28,7 @@ public partial class MainWindowViewModel : ViewModelBase
         InterviewPanelViewModel interviews,
         OverviewViewModel overview,
         StatsViewModel stats,
-        ProfileViewModel profile,
+        ResumesViewModel resumes,
         SettingsViewModel settings,
         ImportViewModel import)
     {
@@ -36,7 +36,7 @@ public partial class MainWindowViewModel : ViewModelBase
         Interviews = interviews;
         Overview = overview;
         Stats = stats;
-        Profile = profile;
+        Resumes = resumes;
         Settings = settings;
         Import = import;
         Current = bids;
@@ -46,7 +46,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowInterviews() => Current = Interviews;
     [RelayCommand] private void ShowOverview() => Current = Overview;
     [RelayCommand] private void ShowStats() => Current = Stats;
-    [RelayCommand] private void ShowProfile() => Current = Profile;
+    [RelayCommand] private void ShowResumes() => Current = Resumes;
     [RelayCommand] private void ShowSettings() => Current = Settings;
     [RelayCommand] private void ShowImport() => Current = Import;
 }

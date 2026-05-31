@@ -180,7 +180,6 @@
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Padding" Value="0"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
     <Setter Property="FontSize" Value="14"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -190,11 +189,14 @@
           <Border x:Name="Bd"
                   Background="{TemplateBinding Background}"
                   CornerRadius="6">
-            <!-- See CaptionButton: pin the icon font on the implicit text content. -->
-            <ContentPresenter HorizontalAlignment="Center"
-                              VerticalAlignment="Center"
-                              TextElement.FontFamily="Segoe MDL2 Assets"
-                              TextElement.FontSize="14"/>
+            <!-- Render Content as TextBlock with FontFamily hard-coded — works on all Win10/11
+                 builds. See CaptionButton for the full rationale. -->
+            <TextBlock Text="{TemplateBinding Content}"
+                       FontFamily="Segoe MDL2 Assets"
+                       FontSize="{TemplateBinding FontSize}"
+                       Foreground="{TemplateBinding Foreground}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -229,10 +231,12 @@
           <Border x:Name="Bd"
                   Background="{TemplateBinding Background}"
                   CornerRadius="6">
-            <ContentPresenter HorizontalAlignment="Center"
-                              VerticalAlignment="Center"
-                              TextElement.FontFamily="Segoe MDL2 Assets"
-                              TextElement.FontSize="14"/>
+            <TextBlock Text="{TemplateBinding Content}"
+                       FontFamily="Segoe MDL2 Assets"
+                       FontSize="{TemplateBinding FontSize}"
+                       Foreground="{TemplateBinding Foreground}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -271,18 +275,21 @@
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
     <Setter Property="BorderThickness" Value="0"/>
     <Setter Property="Cursor" Value="Hand"/>
-    <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
     <Setter Property="FontSize" Value="10"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="Bd" Background="{TemplateBinding Background}">
-            <!-- TextElement.FontFamily pins the glyph font on the implicit TextBlock
-                 the ContentPresenter creates for string Content. Without this WPF
-                 inherits the parent's FontFamily (Segoe UI) and Win10 renders tofu. -->
-            <ContentPresenter HorizontalAlignment="Center"
-                              VerticalAlignment="Center"
-                              TextElement.FontFamily="Segoe MDL2 Assets"/>
+            <!-- Render Content via an explicit TextBlock with FontFamily set directly.
+                 ContentPresenter+TextElement.FontFamily isn't reliable for string Content
+                 (the implicit AccessText inherits Segoe UI and the Win10 system renders tofu).
+                 Hard-coding the font here is what actually works in practice. -->
+            <TextBlock Text="{TemplateBinding Content}"
+                       FontFamily="Segoe MDL2 Assets"
+                       FontSize="{TemplateBinding FontSize}"
+                       Foreground="{TemplateBinding Foreground}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -304,9 +311,12 @@
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="Bd" Background="{TemplateBinding Background}">
-            <ContentPresenter HorizontalAlignment="Center"
-                              VerticalAlignment="Center"
-                              TextElement.FontFamily="Segoe MDL2 Assets"/>
+            <TextBlock Text="{TemplateBinding Content}"
+                       FontFamily="Segoe MDL2 Assets"
+                       FontSize="{TemplateBinding FontSize}"
+                       Foreground="{TemplateBinding Foreground}"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">

@@ -44,7 +44,10 @@
     <DataGrid ItemsSource="{Binding Rows}" SelectionUnit="FullRow">
       <DataGrid.Columns>
         <DataGridTextColumn Header="URL"        Binding="{Binding Link.Url}" Width="2*"/>
-        <DataGridTextColumn Header="Resume"     Binding="{Binding Bid.ResumeId}" Width="100"/>
+        <!-- Bid.ResumeId is the resume's UID (e.g. "7mK92") — the filename prefix of the
+             resume file the user uploaded for this job. Lets the Interview row's download
+             button resolve back to a file via ResumeService.GetByUidAsync. -->
+        <DataGridTextColumn Header="UID"        Binding="{Binding Bid.ResumeId}" Width="80"/>
         <DataGridTextColumn Header="Company"    Binding="{Binding Bid.Company}" Width="*"/>
         <DataGridTextColumn Header="Role"       Binding="{Binding Bid.Role}" Width="*"/>
         <DataGridComboBoxColumn Header="Status"

@@ -18,12 +18,14 @@ public class GitHubSyncService
     private readonly MongoContext _db;
     private readonly SettingsService _settings;
     private readonly ExportService _export;
+    private readonly ResumeService _resumes;
 
-    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export)
+    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export, ResumeService resumes)
     {
         _db = db;
         _settings = settings;
         _export = export;
+        _resumes = resumes;
     }
 
     public class RepoFileMeta
@@ -72,34 +74,74 @@ public class GitHubSyncService
         return (parts[^2], parts[^1]);
     }
 
-    /// <summary>Upload today's snapshot at <c>YYYY-MM-DD/{username}.json</c>.</summary>
+    /// <summary>
+    /// End-of-day push. Uploads:
+    ///   <c>YYYY-MM-DD/{username}.json</c> — data snapshot (bids, interviews, …)
+    /// plus, for every resume the user uploaded between local-midnight today and now:
+    ///   <c>YYYY-MM-DD/{username}/{filename}</c> — raw resume bytes (PDF/DOCX/…).
+    /// Resumes are base64-encoded by Octokit; existing files are updated, new ones created.
+    /// </summary>
     public async Task PushTodayAsync(string username)
     {
         var (client, owner, name, branch) = await ClientAsync();
         var day = DateOnly.FromDateTime(DateTime.Now);
-        var path = ExportService.RepoFilePath(day, username);
+        var jsonPath = ExportService.RepoFilePath(day, username);
         var (json, _) = await _export.BuildAsync(username);
 
-        // Look for an existing file at that path to get its SHA (so we can update, not create-twice).
+        var message = $"DevStrider sync · {username} · {day:yyyy-MM-dd}";
+        await CreateOrUpdateAsync(client, owner, name, branch, jsonPath, json, message, asBase64: false);
+
+        var dayStart = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        var dayEnd = dayStart.AddDays(1);
+        var todayResumes = await _resumes.ListInRangeAsync(dayStart, dayEnd);
+        var folder = SlugForRepo(username);
+        foreach (var resume in todayResumes)
+        {
+            if (string.IsNullOrWhiteSpace(resume.FileName)) continue;
+            var resumePath = $"{day:yyyy-MM-dd}/{folder}/{resume.FileName}";
+            var base64 = Convert.ToBase64String(resume.Bytes);
+            await CreateOrUpdateAsync(
+                client, owner, name, branch, resumePath, base64,
+                $"Resume · {username} · {resume.FileName}",
+                asBase64: true);
+        }
+    }
+
+    /// <summary>
+    /// Create-or-update a single file in the repo. <paramref name="asBase64"/> tells Octokit
+    /// not to re-encode (binary payloads come pre-encoded); for text snapshots we pass false
+    /// and let Octokit do the UTF-8 → base64 conversion.
+    /// </summary>
+    private static async Task CreateOrUpdateAsync(
+        GitHubClient client, string owner, string name, string branch,
+        string path, string content, string message, bool asBase64)
+    {
         string? existingSha = null;
         try
         {
             var existing = await client.Repository.Content.GetAllContentsByRef(owner, name, path, branch);
             existingSha = existing.FirstOrDefault()?.Sha;
         }
-        catch (NotFoundException) { /* first push */ }
+        catch (NotFoundException) { /* first time */ }
 
-        var message = $"DevStrider sync · {username} · {day:yyyy-MM-dd}";
         if (existingSha == null)
         {
-            await client.Repository.Content.CreateFile(owner, name, path,
-                new CreateFileRequest(message, json, branch));
+            var req = new CreateFileRequest(message, content, branch, convertContentToBase64: !asBase64);
+            await client.Repository.Content.CreateFile(owner, name, path, req);
         }
         else
         {
-            await client.Repository.Content.UpdateFile(owner, name, path,
-                new UpdateFileRequest(message, json, existingSha, branch));
+            var req = new UpdateFileRequest(message, content, existingSha, branch, convertContentToBase64: !asBase64);
+            await client.Repository.Content.UpdateFile(owner, name, path, req);
         }
+    }
+
+    /// <summary>Mirror of <c>ExportService.RepoFilePath</c>'s slug rule — keep paths consistent.</summary>
+    private static string SlugForRepo(string username)
+    {
+        var clean = new string((username ?? "").Trim().Select(c =>
+            char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '-').ToArray());
+        return string.IsNullOrEmpty(clean) ? "me" : clean.ToLowerInvariant();
     }
 
     /// <summary>List all files at <c>YYYY-MM-DD/</c>, parsing the owner from each filename.</summary>

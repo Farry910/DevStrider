@@ -1,13 +1,18 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
+using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
+using Microsoft.Win32;
+using MongoDB.Driver;
 
 namespace DevStrider.Desktop.ViewModels;
 
 public partial class InterviewPanelViewModel : ViewModelBase
 {
     private readonly InterviewService _service;
+    private readonly ResumeService _resumes;
+    private readonly MongoContext _db;
 
     public ObservableCollection<Interview> Items { get; } = new();
 
@@ -17,9 +22,11 @@ public partial class InterviewPanelViewModel : ViewModelBase
     private DateTime _to = DateTime.Today.AddDays(14);
     public DateTime To { get => _to; set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); } }
 
-    public InterviewPanelViewModel(InterviewService service)
+    public InterviewPanelViewModel(InterviewService service, ResumeService resumes, MongoContext db)
     {
         _service = service;
+        _resumes = resumes;
+        _db = db;
     }
 
     [RelayCommand]
@@ -54,5 +61,44 @@ public partial class InterviewPanelViewModel : ViewModelBase
         if (param is not Interview iv) return;
         await _service.DeleteAsync(iv.Id);
         await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Find the resume the user submitted for this interview's bid and save it to disk.
+    /// Lookup path: Interview → BidId → UserBid.ResumeId (the resume's UID) → Resume bytes.
+    /// </summary>
+    [RelayCommand]
+    public async Task DownloadResumeAsync(object? param)
+    {
+        if (param is not Interview iv)
+        {
+            StatusMessage = "No interview selected.";
+            return;
+        }
+        var bid = await _db.Bids.Find(b => b.Id == iv.BidId).FirstOrDefaultAsync();
+        if (bid == null || string.IsNullOrWhiteSpace(bid.ResumeId))
+        {
+            StatusMessage = "This interview's bid has no UID set.";
+            return;
+        }
+        var resume = await _resumes.GetByUidAsync(bid.ResumeId);
+        if (resume == null)
+        {
+            StatusMessage = $"No resume uploaded with UID '{bid.ResumeId}'.";
+            return;
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            FileName = resume.FileName,
+            Filter = resume.ContentType == "application/pdf"
+                ? "PDF (*.pdf)|*.pdf|All files|*.*"
+                : "All files|*.*"
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            await _resumes.SaveToFileAsync(resume, dialog.FileName);
+            StatusMessage = $"Saved {resume.FileName}.";
+        }
     }
 }

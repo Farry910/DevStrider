@@ -23,8 +23,8 @@
       <DataTemplate DataType="{x:Type vm:StatsViewModel}">
         <views:StatsView/>
       </DataTemplate>
-      <DataTemplate DataType="{x:Type vm:ProfileViewModel}">
-        <views:ProfileView/>
+      <DataTemplate DataType="{x:Type vm:ResumesViewModel}">
+        <views:ResumesView/>
       </DataTemplate>
       <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
         <views:SettingsView/>

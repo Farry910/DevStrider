@@ -42,7 +42,7 @@
             </x:Array>
           </DataGridComboBoxColumn.ItemsSource>
         </DataGridComboBoxColumn>
-        <DataGridTemplateColumn Header="Actions" Width="90">
+        <DataGridTemplateColumn Header="Actions" Width="120">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">
@@ -51,6 +51,13 @@
                         Style="{StaticResource IconButton}"
                         ToolTip="Save"
                         Content="&#xE74E;"/>
+                <!-- Download the resume submitted with this interview's bid. Looks up the
+                     bid's UID (Bid.ResumeId) and resolves to a local Resume by that UID. -->
+                <Button Command="{Binding DataContext.DownloadResumeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Download resume"
+                        Content="&#xE896;"/>
                 <Button Command="{Binding DataContext.DeleteCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                         CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
                         Style="{StaticResource DangerIconButton}"

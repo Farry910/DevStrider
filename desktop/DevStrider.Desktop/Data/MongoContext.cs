@@ -49,6 +49,9 @@ public class MongoContext
     public IMongoCollection<ImportedSnapshot> ImportedSnapshots =>
         Database.GetCollection<ImportedSnapshot>("importedSnapshots");
 
+    public IMongoCollection<Resume> Resumes =>
+        Database.GetCollection<Resume>("resumes");
+
     /// <summary>
     /// Camel-case + ignore-unknown-fields so we can round-trip JSON payloads (export/import)
     /// without forcing the deserializer to know every property the producer might add later.
@@ -91,5 +94,10 @@ public class MongoContext
         await ImportedSnapshots.Indexes.CreateOneAsync(new CreateIndexModel<ImportedSnapshot>(
             Builders<ImportedSnapshot>.IndexKeys.Ascending(x => x.SourceSha),
             new CreateIndexOptions { Unique = true, Sparse = true }));
+
+        await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
+            Builders<Resume>.IndexKeys.Ascending(x => x.Uid)));
+        await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
+            Builders<Resume>.IndexKeys.Descending(x => x.UploadedAt)));
     }
 }

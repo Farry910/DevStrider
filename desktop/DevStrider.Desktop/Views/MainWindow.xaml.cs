@@ -91,7 +91,7 @@ public partial class MainWindow : Window
 
         // Each screen's load is independent — wrap individually so one broken page (e.g. mongo
         // down) doesn't take down the others.
-        await TryAsync("Profile",     () => vm.Profile.LoadAsync());
+        await TryAsync("Resumes",     () => vm.Resumes.ReloadAsync());
         await TryAsync("Settings",    () => vm.Settings.LoadAsync());
         await TryAsync("Bids",        () => vm.Bids.ReloadAsync());
         await TryAsync("Interviews",  () => vm.Interviews.ReloadAsync());
