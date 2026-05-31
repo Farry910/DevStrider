@@ -38,19 +38,20 @@ public partial class InterviewPanelViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
+    /// <summary>Parameter is <c>object?</c> to tolerate WPF passing <c>UnsetValue</c>; see BidBoardViewModel.</summary>
     [RelayCommand]
-    public async Task SaveAsync(Interview iv)
+    public async Task SaveAsync(object? param)
     {
-        if (iv == null) return;
+        if (param is not Interview iv) return;
         if (iv.Id == default) await _service.CreateAsync(iv);
         else await _service.UpdateAsync(iv);
         await ReloadAsync();
     }
 
     [RelayCommand]
-    public async Task DeleteAsync(Interview iv)
+    public async Task DeleteAsync(object? param)
     {
-        if (iv == null) return;
+        if (param is not Interview iv) return;
         await _service.DeleteAsync(iv.Id);
         await ReloadAsync();
     }

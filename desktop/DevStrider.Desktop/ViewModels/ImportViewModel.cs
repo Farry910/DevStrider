@@ -55,10 +55,11 @@ public partial class ImportViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
+    /// <summary>Parameter is <c>object?</c> to tolerate WPF passing <c>UnsetValue</c>; see BidBoardViewModel.</summary>
     [RelayCommand]
-    public async Task ImportFileAsync(GitHubSyncService.RepoFileMeta meta)
+    public async Task ImportFileAsync(object? param)
     {
-        if (meta == null) return;
+        if (param is not GitHubSyncService.RepoFileMeta meta) return;
         IsBusy = true;
         try
         {
@@ -71,9 +72,9 @@ public partial class ImportViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    public async Task DeleteSnapshotAsync(ImportedSnapshot snap)
+    public async Task DeleteSnapshotAsync(object? param)
     {
-        if (snap == null) return;
+        if (param is not ImportedSnapshot snap) return;
         await _sync.DeleteSnapshotAsync(snap.Id);
         LocalSnapshots.Remove(snap);
         StatusMessage = $"Removed local copy of {snap.Owner}.";

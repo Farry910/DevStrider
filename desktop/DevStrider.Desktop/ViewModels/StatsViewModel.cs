@@ -71,9 +71,11 @@ public partial class StatsViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Parameter is <c>object?</c> to tolerate WPF passing <c>UnsetValue</c>; see BidBoardViewModel.</summary>
     [RelayCommand]
-    public async Task ToggleOwnerAsync(OwnerFilterItem item)
+    public async Task ToggleOwnerAsync(object? param)
     {
+        if (param is not OwnerFilterItem item) return;
         item.IsSelected = !item.IsSelected;
         await ReloadAsync();
     }

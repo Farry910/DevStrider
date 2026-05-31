@@ -52,10 +52,26 @@ public partial class ProfileViewModel : ViewModelBase
         StatusMessage = "Saved.";
     }
 
+    /// <summary>
+    /// Remove-* parameters are <c>object?</c> to tolerate WPF passing <c>UnsetValue</c> during
+    /// early binding evaluation — see BidBoardViewModel for the same workaround.
+    /// </summary>
     [RelayCommand] public void AddEducation() => Education.Add(new Education());
-    [RelayCommand] public void RemoveEducation(Education e) => Education.Remove(e);
+    [RelayCommand]
+    public void RemoveEducation(object? param)
+    {
+        if (param is Education e) Education.Remove(e);
+    }
     [RelayCommand] public void AddCertification() => Certifications.Add(new Certification());
-    [RelayCommand] public void RemoveCertification(Certification c) => Certifications.Remove(c);
+    [RelayCommand]
+    public void RemoveCertification(object? param)
+    {
+        if (param is Certification c) Certifications.Remove(c);
+    }
     [RelayCommand] public void AddExperience() => Experiences.Add(new Experience());
-    [RelayCommand] public void RemoveExperience(Experience x) => Experiences.Remove(x);
+    [RelayCommand]
+    public void RemoveExperience(object? param)
+    {
+        if (param is Experience x) Experiences.Remove(x);
+    }
 }

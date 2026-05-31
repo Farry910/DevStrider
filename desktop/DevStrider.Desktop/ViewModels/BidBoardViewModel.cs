@@ -62,13 +62,18 @@ public partial class BidBoardViewModel : ViewModelBase
         await ReloadAsync();
     }
 
+    /// <summary>
+    /// Parameters arrive as <c>object?</c> on purpose: WPF passes <c>DependencyProperty.UnsetValue</c>
+    /// (a <c>MS.Internal.NamedObject</c>) during early binding evaluation, and a strongly-typed
+    /// <c>RelayCommand&lt;BoardRow&gt;</c> would throw <c>ArgumentException</c> in <c>CanExecute</c>.
+    /// Casting inside the body sidesteps that.
+    /// </summary>
     [RelayCommand]
-    public async Task SaveBidAsync(BoardRow row)
+    public async Task SaveBidAsync(object? param)
     {
-        if (row?.Link == null) return;
+        if (param is not BoardRow row || row.Link == null) return;
         await _service.UpsertBidAsync(row.Link.Id, b =>
         {
-            // The view-side bid object is mutated in-place by the form. Persist as-is.
             if (row.Bid != null)
             {
                 b.ResumeId = row.Bid.ResumeId;
@@ -86,17 +91,17 @@ public partial class BidBoardViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    public async Task DeleteBidAsync(BoardRow row)
+    public async Task DeleteBidAsync(object? param)
     {
-        if (row?.Bid == null) return;
+        if (param is not BoardRow row || row.Bid == null) return;
         await _service.DeleteBidAsync(row.Bid.Id);
         await ReloadAsync();
     }
 
     [RelayCommand]
-    public async Task ToggleUselessAsync(BoardRow row)
+    public async Task ToggleUselessAsync(object? param)
     {
-        if (row?.Link == null) return;
+        if (param is not BoardRow row || row.Link == null) return;
         await _service.SetUselessAsync(row.Link.Id, row.Link.MarkedUselessAt == null);
         await ReloadAsync();
     }
