@@ -180,7 +180,7 @@ public sealed class ScheduleInterviewDialog : Window
 
     public DateTime? ScheduledDate => _date.SelectedDate;
     public string ScheduledTime => _time.Text?.Trim() ?? "";
-    public string InterviewType => (_type.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? InterviewTypes.Interview;
+    public string InterviewType => (_type.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? InterviewTypes.HR;
     public string Recruiter => _recruiter.Text?.Trim() ?? "";
     public string MeetingLink => _meetingLink.Text?.Trim() ?? "";
 
@@ -193,13 +193,9 @@ public sealed class ScheduleInterviewDialog : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
 
-        foreach (var t in new[] {
-                     InterviewTypes.PhoneScreening,
-                     InterviewTypes.Interview,
-                     InterviewTypes.Assessment,
-                     InterviewTypes.Offer })
+        foreach (var t in InterviewTypes.All)
             _type.Items.Add(new ComboBoxItem { Content = t });
-        _type.SelectedIndex = 1; // default 'interview'
+        _type.SelectedIndex = 0; // default to first stage (HR)
 
         var header = new TextBlock { FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) };
         header.Inlines.Add(new Run("Scheduling from bid:") { Foreground = Brushes.Gray });

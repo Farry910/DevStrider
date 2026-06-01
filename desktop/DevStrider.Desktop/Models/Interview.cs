@@ -12,12 +12,33 @@ public static class InterviewStatuses
     public const string Cancelled = "cancelled";
 }
 
+/// <summary>
+/// Interview-funnel stages, listed in the rough order they happen. Stored verbatim — these
+/// strings ARE the persisted value. Legacy values (<c>phone_screening</c>, <c>interview</c>,
+/// lower-case <c>assessment</c>/<c>offer</c>) are preserved as constants so old records
+/// keep rendering, but new scheduling uses the friendly-cased forms below.
+/// </summary>
 public static class InterviewTypes
 {
-    public const string PhoneScreening = "phone_screening";
-    public const string Interview = "interview";
-    public const string Assessment = "assessment";
-    public const string Offer = "offer";
+    public const string HR              = "HR";
+    public const string Assessment      = "Assessment";
+    public const string PhoneCall       = "Phone Call";
+    public const string Tech1           = "Tech 1";
+    public const string Tech2           = "Tech 2";
+    public const string Tech3           = "Tech 3";
+    public const string ClientInterview = "Client Interview";
+    public const string FinalInterview  = "Final Interview";
+    public const string Offer           = "Offer";
+
+    // Legacy values still present in older docs — keep so they don't render blank.
+    public const string PhoneScreening  = "phone_screening";
+    public const string Interview       = "interview";
+
+    /// <summary>Order shown in dropdowns. Legacy values intentionally omitted from the UI.</summary>
+    public static readonly string[] All =
+    {
+        HR, Assessment, PhoneCall, Tech1, Tech2, Tech3, ClientInterview, FinalInterview, Offer
+    };
 }
 
 public class Interview
@@ -34,6 +55,13 @@ public class Interview
     public string Company { get; set; } = "";
     public string Role { get; set; } = "";
     public string Recruiter { get; set; } = "";
+
+    /// <summary>
+    /// Some legacy docs persisted this field as a single comma-separated string instead of
+    /// a BSON array. <see cref="FlexibleStringListSerializer"/> accepts either form on read
+    /// and always writes back the array form.
+    /// </summary>
+    [BsonSerializer(typeof(FlexibleStringListSerializer))]
     public List<string> AdditionalAttendees { get; set; } = new();
 
     /// <summary>

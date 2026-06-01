@@ -25,7 +25,23 @@
       <DataGrid.Columns>
         <DataGridTextColumn Header="Date"      Binding="{Binding ScheduledDate, StringFormat='{}{0:MMM dd yyyy}'}" Width="120"/>
         <DataGridTextColumn Header="Time"      Binding="{Binding ScheduledTime}" Width="80"/>
-        <DataGridTextColumn Header="Type"      Binding="{Binding InterviewType}" Width="140"/>
+        <DataGridComboBoxColumn Header="Type"
+                                SelectedItemBinding="{Binding InterviewType}"
+                                Width="150">
+          <DataGridComboBoxColumn.ItemsSource>
+            <x:Array Type="{x:Type System:String}" xmlns:System="clr-namespace:System;assembly=mscorlib">
+              <System:String>HR</System:String>
+              <System:String>Assessment</System:String>
+              <System:String>Phone Call</System:String>
+              <System:String>Tech 1</System:String>
+              <System:String>Tech 2</System:String>
+              <System:String>Tech 3</System:String>
+              <System:String>Client Interview</System:String>
+              <System:String>Final Interview</System:String>
+              <System:String>Offer</System:String>
+            </x:Array>
+          </DataGridComboBoxColumn.ItemsSource>
+        </DataGridComboBoxColumn>
         <DataGridTextColumn Header="Company"   Binding="{Binding Company}" Width="*"/>
         <DataGridTextColumn Header="Role"      Binding="{Binding Role}" Width="*"/>
         <DataGridTextColumn Header="Recruiter" Binding="{Binding Recruiter}" Width="*"/>
