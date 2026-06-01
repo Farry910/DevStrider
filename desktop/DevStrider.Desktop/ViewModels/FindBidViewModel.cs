@@ -28,10 +28,16 @@ public partial class FindBidViewModel : ViewModelBase
         set { if (SetProperty(ref _query, value)) _ = SearchAsync(); }
     }
 
-    public FindBidViewModel(MongoContext db, InterviewService interviews)
+    private readonly ProfileContext _profileContext;
+
+    public FindBidViewModel(MongoContext db, InterviewService interviews, ProfileContext profileContext)
     {
         _db = db;
         _interviews = interviews;
+        _profileContext = profileContext;
+        profileContext.ProfileChanged += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await SearchAsync(); } catch { /* ignore */ } }));
     }
 
     [RelayCommand]
@@ -44,11 +50,18 @@ public partial class FindBidViewModel : ViewModelBase
         try
         {
             var q = (Query ?? "").Trim();
-            var bids = await _db.Bids.Find(FilterDefinition<UserBid>.Empty)
+            var profileId = _profileContext.Current?.Id ?? MongoDB.Bson.ObjectId.Empty;
+            if (profileId == MongoDB.Bson.ObjectId.Empty)
+            {
+                Results.Clear();
+                StatusMessage = "No active profile.";
+                return;
+            }
+            var bids = await _db.Bids.Find(b => b.ProfileId == profileId)
                                      .SortByDescending(b => b.UpdatedAt)
                                      .Limit(500)
                                      .ToListAsync();
-            var links = await _db.Links.Find(FilterDefinition<GroupLink>.Empty).ToListAsync();
+            var links = await _db.Links.Find(l => l.ProfileId == profileId).ToListAsync();
             var linksById = links.ToDictionary(l => l.Id);
 
             Results.Clear();

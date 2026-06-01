@@ -17,10 +17,13 @@ public partial class OverviewViewModel : ViewModelBase
     private DateTime _to = DateTime.Today;
     public DateTime To { get => _to; set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); } }
 
-    public OverviewViewModel(StatsService stats, ProfileService profiles)
+    public OverviewViewModel(StatsService stats, ProfileService profiles, ProfileContext profileContext)
     {
         _stats = stats;
         _profiles = profiles;
+        profileContext.ProfileChanged += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
     }
 
     [RelayCommand]

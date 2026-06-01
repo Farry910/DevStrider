@@ -1,0 +1,116 @@
+<UserControl x:Class="DevStrider.Desktop.Views.ProfilesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <DockPanel>
+    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="Profiles" Style="{StaticResource H1}" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="1"
+                 Text="Each profile is a separate bidding identity. All workspace data (links, bids, interviews) sticks to the profile it was created under."
+                 Foreground="{StaticResource Muted}"
+                 TextWrapping="Wrap"
+                 Margin="16,0,0,0"
+                 VerticalAlignment="Center"/>
+    </Grid>
+    <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,0,0,12"/>
+
+    <!-- Create row -->
+    <Border DockPanel.Dock="Top" Style="{StaticResource FlatCard}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBox Grid.Column="0"
+                 Text="{Binding NewProfileName, UpdateSourceTrigger=PropertyChanged}"
+                 Tag="Real name for the new profile (e.g. Fernando Garcia)"
+                 Margin="0,0,8,0"/>
+        <Button Grid.Column="1" Command="{Binding CreateProfileCommand}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Create profile" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Border>
+
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="240"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Profile list -->
+      <Border Grid.Column="0" Style="{StaticResource FlatCard}" Margin="0,0,8,0">
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Top" Text="Existing profiles" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <ListBox ItemsSource="{Binding Profiles}"
+                   SelectedItem="{Binding Selected, Mode=TwoWay}"
+                   BorderThickness="0"
+                   Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Name}" Margin="0,4"/>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+
+      <!-- Editor -->
+      <Border Grid.Column="1" Style="{StaticResource Card}">
+        <StackPanel IsEnabled="{Binding Selected, Converter={x:Null}}">
+          <TextBlock Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+          <TextBlock Text="Real name (shown in the title bar)"/>
+          <TextBox Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}"
+                   Tag="e.g. Fernando Garcia"
+                   Margin="0,2,0,12"/>
+
+          <TextBlock Text="Word document path (.docm with the macro)"/>
+          <Grid Margin="0,2,0,4">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox Grid.Column="0"
+                     Text="{Binding Selected.WordDocPath, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Consolas"
+                     Tag="C:\Users\you\Documents\Resume Generator.docm"/>
+            <Button Grid.Column="1" Margin="6,0,0,0"
+                    Command="{Binding BrowseWordPathCommand}"
+                    Style="{StaticResource IconButton}"
+                    ToolTip="Browse for Word document"
+                    Content="&#xE8E5;"/>
+          </Grid>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+                     Text="When this profile is active, /refresh-word from the extension targets this .docm. The active profile's path is mirrored to HKCU\Software\DevStrider\WordDocPath on save."/>
+
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding SaveProfileCommand}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Save" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding SetActiveCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE7B7;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Set active" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding DeleteProfileCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Danger}"/>
+                <TextBlock Text="Delete" VerticalAlignment="Center" Foreground="{StaticResource Danger}"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</UserControl>

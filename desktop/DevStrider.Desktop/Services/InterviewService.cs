@@ -8,18 +8,34 @@ namespace DevStrider.Desktop.Services;
 public class InterviewService
 {
     private readonly MongoContext _db;
-    public InterviewService(MongoContext db) => _db = db;
+    private readonly ProfileContext _profileContext;
 
-    public Task<List<Interview>> ListAsync(DateTime fromUtc, DateTime toUtc) =>
-        _db.Interviews
+    public InterviewService(MongoContext db, ProfileContext profileContext)
+    {
+        _db = db;
+        _profileContext = profileContext;
+    }
+
+    private ObjectId ActiveProfileId => _profileContext.Current?.Id ?? ObjectId.Empty;
+
+    public Task<List<Interview>> ListAsync(DateTime fromUtc, DateTime toUtc)
+    {
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty) return Task.FromResult(new List<Interview>());
+        return _db.Interviews
             .Find(Builders<Interview>.Filter.And(
+                Builders<Interview>.Filter.Eq(i => i.ProfileId, profileId),
                 Builders<Interview>.Filter.Gte(i => i.ScheduledDate, fromUtc),
                 Builders<Interview>.Filter.Lt(i => i.ScheduledDate, toUtc)))
             .SortBy(i => i.ScheduledDate)
             .ToListAsync();
+    }
 
     public async Task<Interview> CreateAsync(Interview iv)
     {
+        if (iv.ProfileId == ObjectId.Empty) iv.ProfileId = ActiveProfileId;
+        if (iv.ProfileId == ObjectId.Empty)
+            throw new InvalidOperationException("No active profile — create one in the Profiles tab first.");
         iv.CreatedAt = DateTime.UtcNow;
         iv.UpdatedAt = iv.CreatedAt;
         await _db.Interviews.InsertOneAsync(iv);

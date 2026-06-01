@@ -67,7 +67,7 @@ public partial class BidBoardViewModel : ViewModelBase
     private string _newLinkSharedJd = "";
     public string NewLinkSharedJd { get => _newLinkSharedJd; set => SetProperty(ref _newLinkSharedJd, value); }
 
-    public BidBoardViewModel(BidBoardService service, ProfileService profiles, InterviewService interviews, LocalApiServer localApi)
+    public BidBoardViewModel(BidBoardService service, ProfileService profiles, InterviewService interviews, LocalApiServer localApi, ProfileContext profileContext)
     {
         _service = service;
         _profiles = profiles;
@@ -77,6 +77,11 @@ public partial class BidBoardViewModel : ViewModelBase
         // user sees the Activity balloon but the Bid board stays stale until they click refresh.
         // Event fires on a thread-pool thread, so marshal back to the UI thread.
         localApi.OnExtensionBidRecorded += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
+
+        // Reload when active profile changes — workspace data is profile-scoped.
+        profileContext.ProfileChanged += () =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
     }

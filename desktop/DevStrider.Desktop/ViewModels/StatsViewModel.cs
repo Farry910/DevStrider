@@ -27,11 +27,14 @@ public partial class StatsViewModel : ViewModelBase
         set { if (SetProperty(ref _selectedDay, value)) _ = ReloadAsync(); }
     }
 
-    public StatsViewModel(StatsService stats, ProfileService profiles, MongoContext db)
+    public StatsViewModel(StatsService stats, ProfileService profiles, MongoContext db, ProfileContext profileContext)
     {
         _stats = stats;
         _profiles = profiles;
         _db = db;
+        profileContext.ProfileChanged += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
     }
 
     [RelayCommand]

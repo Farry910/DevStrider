@@ -39,7 +39,20 @@ public partial class BoardRow : ObservableObject
 public class BidBoardService
 {
     private readonly MongoContext _db;
-    public BidBoardService(MongoContext db) => _db = db;
+    private readonly ProfileContext _profileContext;
+
+    public BidBoardService(MongoContext db, ProfileContext profileContext)
+    {
+        _db = db;
+        _profileContext = profileContext;
+    }
+
+    /// <summary>
+    /// Active profile id used to scope queries. <see cref="ObjectId.Empty"/> when no profile
+    /// is loaded yet (very early startup); in that case all profile-filtered queries return
+    /// nothing rather than risking cross-profile data leakage.
+    /// </summary>
+    private ObjectId ActiveProfileId => _profileContext.Current?.Id ?? ObjectId.Empty;
 
     /// <summary>
     /// Build the day's bid board: every link created today, plus every link whose bid was
@@ -48,10 +61,13 @@ public class BidBoardService
     /// </summary>
     public async Task<List<BoardRow>> BuildAsync(DateTime localFromUtc, DateTime localToUtc)
     {
-        var allLinks = await _db.Links.Find(FilterDefinition<GroupLink>.Empty)
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty) return new List<BoardRow>();
+
+        var allLinks = await _db.Links.Find(l => l.ProfileId == profileId)
             .SortByDescending(l => l.CreatedAt)
             .ToListAsync();
-        var allBids = await _db.Bids.Find(FilterDefinition<UserBid>.Empty).ToListAsync();
+        var allBids = await _db.Bids.Find(b => b.ProfileId == profileId).ToListAsync();
         var bidByLink = allBids.ToDictionary(b => b.GroupLinkId);
 
         // Day window: link created in range OR bid updated in range.
@@ -81,10 +97,12 @@ public class BidBoardService
             bucket.Add(l);
         }
 
-        // Interviews for company-warning detection
+        // Interviews for company-warning detection — scoped to this profile.
         var interviewCompanies = await _db.Interviews
-            .Find(Builders<Interview>.Filter.In(i => i.Status,
-                new[] { InterviewStatuses.Scheduled, InterviewStatuses.Completed, InterviewStatuses.Passed }))
+            .Find(Builders<Interview>.Filter.And(
+                Builders<Interview>.Filter.Eq(i => i.ProfileId, profileId),
+                Builders<Interview>.Filter.In(i => i.Status,
+                    new[] { InterviewStatuses.Scheduled, InterviewStatuses.Completed, InterviewStatuses.Passed })))
             .Project(i => i.Company)
             .ToListAsync();
         var interviewCompanySet = new HashSet<string>(
@@ -123,22 +141,31 @@ public class BidBoardService
 
     /// <summary>
     /// Look up an existing <see cref="GroupLink"/> by the strict-normalized URL form
-    /// (query + hash preserved). Returns null on miss. Used by the Bid-Assistant listener
-    /// to decide whether a new POST should join an existing link or create one.
+    /// (query + hash preserved), scoped to the active profile so a peer with the same URL
+    /// on a different profile doesn't collide. Returns null on miss.
     /// </summary>
     public Task<GroupLink?> FindLinkByNormalizedUrlAsync(string urlRaw)
     {
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty) return Task.FromResult<GroupLink?>(null);
         var norm = UrlNorm.Normalize(urlRaw);
         if (string.IsNullOrEmpty(norm)) return Task.FromResult<GroupLink?>(null);
-        return _db.Links.Find(l => l.UrlNorm == norm).FirstOrDefaultAsync()!;
+        return _db.Links
+            .Find(l => l.ProfileId == profileId && l.UrlNorm == norm)
+            .FirstOrDefaultAsync()!;
     }
 
-    /// <summary>Add a new link (rejects same-norm duplicates in the same day window).</summary>
+    /// <summary>Add a new link under the active profile.</summary>
     public async Task<GroupLink> AddLinkAsync(string urlRaw, string sharedJd = "")
     {
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty)
+            throw new InvalidOperationException("No active profile — create one in the Profiles tab first.");
+
         var urlNorm = UrlNorm.Normalize(urlRaw);
         var link = new GroupLink
         {
+            ProfileId = profileId,
             Url = urlRaw.Trim(),
             UrlNorm = urlNorm,
             SharedJobDescription = sharedJd ?? ""
@@ -149,10 +176,14 @@ public class BidBoardService
 
     public async Task<UserBid> UpsertBidAsync(ObjectId linkId, Action<UserBid> patch)
     {
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty)
+            throw new InvalidOperationException("No active profile — create one in the Profiles tab first.");
+
         var bid = await _db.Bids.Find(b => b.GroupLinkId == linkId).FirstOrDefaultAsync();
         if (bid == null)
         {
-            bid = new UserBid { GroupLinkId = linkId };
+            bid = new UserBid { GroupLinkId = linkId, ProfileId = profileId };
             patch(bid);
             StampLifecycle(bid, isNew: true);
             await _db.Bids.InsertOneAsync(bid);
@@ -160,6 +191,8 @@ public class BidBoardService
         }
         var was = bid.Status;
         patch(bid);
+        // Don't allow re-stamping ProfileId from a patch — bids stay under their original profile.
+        if (bid.ProfileId == ObjectId.Empty) bid.ProfileId = profileId;
         StampLifecycle(bid, isNew: false, wasStatus: was);
         await _db.Bids.ReplaceOneAsync(b => b.Id == bid.Id, bid);
         return bid;

@@ -18,9 +18,12 @@ public partial class InterviewPanelViewModel : ViewModelBase
     private DateTime _to = DateTime.Today.AddDays(14);
     public DateTime To { get => _to; set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); } }
 
-    public InterviewPanelViewModel(InterviewService service)
+    public InterviewPanelViewModel(InterviewService service, ProfileContext profileContext)
     {
         _service = service;
+        profileContext.ProfileChanged += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
     }
 
     [RelayCommand]

@@ -1,4 +1,7 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
+using DevStrider.Desktop.Models;
+using DevStrider.Desktop.Services;
 
 namespace DevStrider.Desktop.ViewModels;
 
@@ -18,6 +21,22 @@ public partial class MainWindowViewModel : ViewModelBase
     public ImportViewModel Import { get; }
     public AboutViewModel About { get; }
     public ActivityViewModel Activity { get; }
+    public ProfilesViewModel ProfilesPage { get; }
+
+    public ProfileContext ProfileContext { get; }
+
+    /// <summary>Bound to the title-bar ComboBox. Changing it switches profile and reloads everything.</summary>
+    public Profile? ActiveProfile
+    {
+        get => ProfileContext.Current;
+        set
+        {
+            if (value == null || value.Id == ProfileContext.Current?.Id) return;
+            _ = ProfileContext.SwitchAsync(value.Id);
+        }
+    }
+
+    public ObservableCollection<Profile> Profiles => ProfileContext.All;
 
     /// <summary>
     /// Built from <c>&lt;Version&gt;</c> in the csproj at compile time. Rendered as "v1.x.y"
@@ -44,7 +63,9 @@ public partial class MainWindowViewModel : ViewModelBase
         SettingsViewModel settings,
         ImportViewModel import,
         AboutViewModel about,
-        ActivityViewModel activity)
+        ActivityViewModel activity,
+        ProfilesViewModel profilesPage,
+        ProfileContext profileContext)
     {
         Bids = bids;
         Interviews = interviews;
@@ -56,7 +77,13 @@ public partial class MainWindowViewModel : ViewModelBase
         Import = import;
         About = about;
         Activity = activity;
+        ProfilesPage = profilesPage;
+        ProfileContext = profileContext;
         Current = bids;
+
+        // Forward profile-context changes so the title-bar ComboBox + nav bindings refresh.
+        ProfileContext.ProfileChanged += () => OnPropertyChanged(nameof(ActiveProfile));
+        ProfileContext.ProfileListChanged += () => OnPropertyChanged(nameof(Profiles));
     }
 
     [RelayCommand] private void ShowBids() => Current = Bids;
@@ -69,4 +96,5 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowImport() => Current = Import;
     [RelayCommand] private void ShowAbout() => Current = About;
     [RelayCommand] private void ShowActivity() => Current = Activity;
+    [RelayCommand] private void ShowProfiles() => Current = ProfilesPage;
 }

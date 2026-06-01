@@ -51,6 +51,9 @@ public partial class App : Application
             // ProfileService is kept (no longer surfaced in the UI but still used by
             // GitHubSyncService for the local username + by older code paths).
             services.AddSingleton<ProfileService>();
+            services.AddSingleton<ProfilesService>();
+            services.AddSingleton<ProfileContext>();
+            services.AddSingleton<ProfileMigrationService>();
             services.AddSingleton<BidBoardService>();
             services.AddSingleton<InterviewService>();
             services.AddSingleton<StatsService>();
@@ -74,6 +77,7 @@ public partial class App : Application
             services.AddSingleton<ImportViewModel>();
             services.AddSingleton<AboutViewModel>();
             services.AddSingleton<ActivityViewModel>();
+            services.AddSingleton<ProfilesViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();
@@ -111,8 +115,15 @@ public partial class App : Application
                     var profileService = Services.GetRequiredService<ProfileService>();
                     await SettingsBootstrap.ApplyAsync(settingsService, profileService);
 
-                    // Registry sync runs AFTER env-var bootstrap: if env vars seeded a value
-                    // but registry already has a different one, registry wins (long-lived).
+                    // Multi-profile migration: seeds a Default profile + backfills ProfileId
+                    // on legacy data. Idempotent — no-op once the seed exists.
+                    var migration = Services.GetRequiredService<ProfileMigrationService>();
+                    await migration.RunAsync();
+                    var profileContext = Services.GetRequiredService<ProfileContext>();
+                    await profileContext.InitAsync();
+
+                    // Registry sync runs AFTER bootstrap + profile init: if env vars seeded a
+                    // value but registry already has a different one, registry wins (long-lived).
                     var registrySync = Services.GetRequiredService<RegistrySyncService>();
                     await registrySync.InitialSyncAsync();
 

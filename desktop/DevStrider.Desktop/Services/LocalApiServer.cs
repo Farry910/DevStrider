@@ -26,6 +26,7 @@ public sealed partial class LocalApiServer : ObservableObject
     private readonly BidBoardService _bids;
     private readonly SettingsService _settingsService;
     private readonly ActivityLogService _activity;
+    private readonly ProfileContext _profileContext;
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -41,11 +42,12 @@ public sealed partial class LocalApiServer : ObservableObject
     /// </summary>
     public event Action? OnExtensionBidRecorded;
 
-    public LocalApiServer(BidBoardService bids, SettingsService settingsService, ActivityLogService activity)
+    public LocalApiServer(BidBoardService bids, SettingsService settingsService, ActivityLogService activity, ProfileContext profileContext)
     {
         _bids = bids;
         _settingsService = settingsService;
         _activity = activity;
+        _profileContext = profileContext;
     }
 
     public void Start(int port)
@@ -301,13 +303,17 @@ public sealed partial class LocalApiServer : ObservableObject
             await reader.ReadToEndAsync();
 
         var s = await _settingsService.GetAsync();
-        var wordPath = (s.WordDocPath ?? "").Trim();
+        var profile = _profileContext.Current;
+        var wordPath = (profile?.WordDocPath ?? "").Trim();
         var wordHotkey = string.IsNullOrWhiteSpace(s.WordHotkey) ? "F9" : s.WordHotkey.Trim();
 
         if (string.IsNullOrWhiteSpace(wordPath))
         {
-            _activity.Warning(ExtensionSource, "Refresh Word failed", "Set the Word document path in Settings first.");
-            await WriteJsonAsync(ctx, 400, new { success = false, error = "Set the Word document path in DevStrider · Settings first." });
+            var detail = profile == null
+                ? "No active profile — create one in the Profiles tab first."
+                : $"Set the Word document path for profile '{profile.Name}' in the Profiles tab first.";
+            _activity.Warning(ExtensionSource, "Refresh Word failed", detail);
+            await WriteJsonAsync(ctx, 400, new { success = false, error = detail });
             return;
         }
 

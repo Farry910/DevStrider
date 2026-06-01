@@ -41,6 +41,9 @@
       <DataTemplate DataType="{x:Type vm:ActivityViewModel}">
         <views:ActivityView/>
       </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ProfilesViewModel}">
+        <views:ProfilesView/>
+      </DataTemplate>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

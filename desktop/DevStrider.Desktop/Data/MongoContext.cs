@@ -31,6 +31,13 @@ public class MongoContext
     public IMongoCollection<UserProfile> Profiles =>
         Database.GetCollection<UserProfile>("profiles");
 
+    /// <summary>
+    /// Bidding identities (new multi-profile system, 2026-06+). Distinct from the legacy
+    /// <see cref="Profiles"/> collection which is a singleton holding the team-repo nickname.
+    /// </summary>
+    public IMongoCollection<Profile> BidProfiles =>
+        Database.GetCollection<Profile>("bidProfiles");
+
     public IMongoCollection<GroupLink> Links =>
         Database.GetCollection<GroupLink>("links");
 
@@ -105,5 +112,13 @@ public class MongoContext
 
         await UploadLogs.Indexes.CreateOneAsync(new CreateIndexModel<UploadLog>(
             Builders<UploadLog>.IndexKeys.Descending(x => x.PushedAt)));
+
+        // Per-profile filtering hits these indexes for every Bid board / Interview load.
+        await Links.Indexes.CreateOneAsync(new CreateIndexModel<GroupLink>(
+            Builders<GroupLink>.IndexKeys.Ascending(x => x.ProfileId)));
+        await Bids.Indexes.CreateOneAsync(new CreateIndexModel<UserBid>(
+            Builders<UserBid>.IndexKeys.Ascending(x => x.ProfileId)));
+        await Interviews.Indexes.CreateOneAsync(new CreateIndexModel<Interview>(
+            Builders<Interview>.IndexKeys.Ascending(x => x.ProfileId)));
     }
 }

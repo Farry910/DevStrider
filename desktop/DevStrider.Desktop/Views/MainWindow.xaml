@@ -102,6 +102,24 @@
                          Foreground="{StaticResource Muted}"
                          FontSize="11"/>
             </Border>
+
+            <!-- Profile switcher — bound to ActiveProfile. Setting it triggers SwitchAsync,
+                 which fires ProfileChanged and the workspace VMs reload themselves. -->
+            <Border Background="{StaticResource SurfaceAlt}"
+                    CornerRadius="3"
+                    Margin="10,0,0,0"
+                    VerticalAlignment="Center"
+                    Padding="2,0"
+                    shell:WindowChrome.IsHitTestVisibleInChrome="True">
+              <ComboBox ItemsSource="{Binding Profiles}"
+                        SelectedItem="{Binding ActiveProfile, Mode=TwoWay}"
+                        DisplayMemberPath="Name"
+                        BorderThickness="0"
+                        Background="Transparent"
+                        MinWidth="120"
+                        FontSize="12"
+                        ToolTip="Active profile — switch to view another identity's bids / interviews"/>
+            </Border>
           </StackPanel>
         </DockPanel>
       </Border>
@@ -167,6 +185,12 @@
                        FontWeight="SemiBold"
                        FontSize="10"
                        Margin="14,4,0,8"/>
+            <Button Command="{Binding ShowProfilesCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Profiles" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
             <Button Command="{Binding ShowSharingCommand}" Style="{StaticResource NavButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE898;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>

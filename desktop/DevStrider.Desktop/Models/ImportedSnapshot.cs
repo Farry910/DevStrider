@@ -12,6 +12,9 @@ public class ImportedSnapshot
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
+    /// <summary>Local profile this peer file was imported into. Empty on legacy rows.</summary>
+    public ObjectId ProfileId { get; set; }
+
     /// <summary>The peer's username, taken from the GitHub file prefix.</summary>
     public string Owner { get; set; } = "";
     /// <summary>UTC date the snapshot was exported by the peer.</summary>

@@ -27,6 +27,9 @@ public class UserBid
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
+    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> on legacy rows until the migration backfills them.</summary>
+    public ObjectId ProfileId { get; set; }
+
     public ObjectId GroupLinkId { get; set; }
 
     public string ResumeId { get; set; } = "";

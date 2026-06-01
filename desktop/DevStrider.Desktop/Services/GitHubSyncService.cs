@@ -18,12 +18,14 @@ public class GitHubSyncService
     private readonly MongoContext _db;
     private readonly SettingsService _settings;
     private readonly ExportService _export;
+    private readonly ProfileContext _profileContext;
 
-    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export)
+    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export, ProfileContext profileContext)
     {
         _db = db;
         _settings = settings;
         _export = export;
+        _profileContext = profileContext;
     }
 
     public class RepoFileMeta
@@ -85,8 +87,12 @@ public class GitHubSyncService
     /// </summary>
     public async Task<string> PushTodayAsync(string username)
     {
+        var active = _profileContext.Current
+            ?? throw new InvalidOperationException("No active profile — pick one before pushing.");
         var day = DateOnly.FromDateTime(DateTime.Now);
-        var jsonPath = ExportService.RepoFilePath(day, username);
+        // Include profile slug so multiple profiles per username land side-by-side in the
+        // day folder instead of overwriting each other.
+        var jsonPath = ExportService.RepoFilePath(day, username, active.Slug());
         var settings = await _settings.GetAsync();
         bool encrypted = !string.IsNullOrEmpty(settings.SharingKey);
 
@@ -245,6 +251,7 @@ public class GitHubSyncService
 
         var snap = new ImportedSnapshot
         {
+            ProfileId = _profileContext.Current?.Id ?? MongoDB.Bson.ObjectId.Empty,
             Owner = meta.Owner,
             DayKey = $"{meta.Day:yyyy-MM-dd}",
             ExportedAt = DateTime.UtcNow,

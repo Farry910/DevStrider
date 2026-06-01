@@ -32,8 +32,16 @@ public class AppSettings
     public int ListenerPort { get; set; } = 8765;
 
     /// <summary>
-    /// Path to the user's Word document containing the macro that generates resumes. Triggered
-    /// by the extension's "Update Word" purple button → POST /refresh-word.
+    /// Active <see cref="Profile"/> id. Set by the title-bar switcher; persisted so the next
+    /// launch opens the same identity. <see cref="ObjectId.Empty"/> on a fresh install — the
+    /// migration creates a "Default" profile and stamps it here.
+    /// </summary>
+    public ObjectId ActiveProfileId { get; set; }
+
+    /// <summary>
+    /// Legacy single-profile Word path. Kept so the first-launch migration can copy it into
+    /// the seed <see cref="Profile.WordDocPath"/>; no longer read at runtime once a profile
+    /// exists. Safe to remove a release or two after every install has run the migration.
     /// </summary>
     public string WordDocPath { get; set; } = "";
 

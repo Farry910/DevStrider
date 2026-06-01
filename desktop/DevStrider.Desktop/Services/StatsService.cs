@@ -30,7 +30,14 @@ public class OverviewRow
 public class StatsService
 {
     private readonly MongoContext _db;
-    public StatsService(MongoContext db) => _db = db;
+    private readonly ProfileContext _profileContext;
+    public StatsService(MongoContext db, ProfileContext profileContext)
+    {
+        _db = db;
+        _profileContext = profileContext;
+    }
+
+    private MongoDB.Bson.ObjectId ActiveProfileId => _profileContext.Current?.Id ?? MongoDB.Bson.ObjectId.Empty;
 
     /// <summary>
     /// Bids per 10-minute slot for one local date across the current user and any imported
@@ -66,9 +73,12 @@ public class StatsService
             slot.CountsByOwner[owner] = slot.CountsByOwner.GetValueOrDefault(owner) + 1;
         }
 
-        if (includeOwners.Contains(selfOwner))
+        var profileId = ActiveProfileId;
+        if (includeOwners.Contains(selfOwner) && profileId != MongoDB.Bson.ObjectId.Empty)
         {
-            var bids = await _db.Bids.Find(b => b.Status != BidStatuses.Draft).ToListAsync();
+            var bids = await _db.Bids
+                .Find(b => b.ProfileId == profileId && b.Status != BidStatuses.Draft)
+                .ToListAsync();
             foreach (var b in bids)
             {
                 var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
@@ -77,9 +87,11 @@ public class StatsService
             }
         }
 
-        // Each imported snapshot contributes its own bids in the same date window.
+        // Each imported snapshot contributes its own bids in the same date window — but
+        // only snapshots attached to the active profile (others belong to peers viewed
+        // under different profiles).
         var snapshots = await _db.ImportedSnapshots
-            .Find(s => includeOwners.Contains(s.Owner))
+            .Find(s => s.ProfileId == profileId && includeOwners.Contains(s.Owner))
             .ToListAsync();
         foreach (var snap in snapshots)
         {
@@ -104,7 +116,10 @@ public class StatsService
     {
         var rows = new List<OverviewRow> { await BuildSelfAsync(fromUtc, toUtc, selfOwner) };
 
-        var snaps = await _db.ImportedSnapshots.Find(FilterDefinition<ImportedSnapshot>.Empty).ToListAsync();
+        var profileId = ActiveProfileId;
+        var snaps = profileId == MongoDB.Bson.ObjectId.Empty
+            ? new List<ImportedSnapshot>()
+            : await _db.ImportedSnapshots.Find(s => s.ProfileId == profileId).ToListAsync();
         foreach (var snap in snaps)
         {
             try
@@ -120,14 +135,18 @@ public class StatsService
 
     private async Task<OverviewRow> BuildSelfAsync(DateTime from, DateTime to, string selfOwner)
     {
+        var profileId = ActiveProfileId;
+        if (profileId == MongoDB.Bson.ObjectId.Empty)
+            return new OverviewRow { Owner = selfOwner };
+
         var bids = await _db.Bids
-            .Find(b => b.UpdatedAt >= from && b.UpdatedAt < to)
+            .Find(b => b.ProfileId == profileId && b.UpdatedAt >= from && b.UpdatedAt < to)
             .ToListAsync();
         var links = await _db.Links
-            .Find(l => l.CreatedAt >= from && l.CreatedAt < to)
+            .Find(l => l.ProfileId == profileId && l.CreatedAt >= from && l.CreatedAt < to)
             .CountDocumentsAsync();
         var iv = await _db.Interviews
-            .Find(i => i.ScheduledDate >= from && i.ScheduledDate < to)
+            .Find(i => i.ProfileId == profileId && i.ScheduledDate >= from && i.ScheduledDate < to)
             .ToListAsync();
         return Build(selfOwner, bids, (int)links, iv);
     }

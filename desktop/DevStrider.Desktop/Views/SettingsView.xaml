@@ -121,33 +121,16 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Word macro (resume generator)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Word macro hotkey" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="The extension's purple ChatGPT button calls DevStrider, which opens this Word document and sends the configured hotkey to trigger the macro that emits the named PDF/DOCX resume."/>
-
-          <TextBlock Text="Word document path (.docm with the macro)"/>
-          <Grid Margin="0,2,0,8">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Grid.Column="0"
-                     Text="{Binding Model.WordDocPath, UpdateSourceTrigger=PropertyChanged}"
-                     Tag="C:\Users\you\Documents\Resume Generator.docm"
-                     FontFamily="Consolas"/>
-            <Button Grid.Column="1" Margin="6,0,0,0"
-                    Command="{Binding BrowseWordPathCommand}"
-                    Style="{StaticResource IconButton}"
-                    ToolTip="Browse for Word document"
-                    Content="&#xE8E5;"/>
-          </Grid>
+                     Text="Shared by every profile. The .docm path itself lives per-profile under Profiles (each identity can point at its own macro file)."/>
 
           <TextBlock Text="Hotkey that triggers the macro"/>
           <TextBox Text="{Binding Model.WordHotkey, UpdateSourceTrigger=PropertyChanged}"
                    Tag="F9   (or Ctrl+Shift+R, etc.)"
                    Margin="0,2,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,0" TextWrapping="Wrap"
-                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted. Both fields mirror to HKCU\Software\DevStrider so they survive a Mongo wipe."/>
+                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted. Mirrors to HKCU\Software\DevStrider so it survives a Mongo wipe."/>
         </StackPanel>
       </Border>
 

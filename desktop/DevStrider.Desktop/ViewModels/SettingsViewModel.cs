@@ -123,20 +123,7 @@ public partial class SettingsViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    /// <summary>WPF file-picker for the Word .docm path.</summary>
-    [RelayCommand]
-    public void BrowseWordPath()
-    {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Select Word document (with the resume macro)",
-            Filter = "Word macro-enabled (*.docm)|*.docm|Word documents (*.docx)|*.docx|All files (*.*)|*.*",
-            FilterIndex = 1,
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
-        };
-        if (dlg.ShowDialog() == true) Model.WordDocPath = dlg.FileName;
-        OnPropertyChanged(nameof(Model));
-    }
+    // BrowseWordPath moved to ProfilesViewModel — the field is per-profile now.
 
 
     [RelayCommand]

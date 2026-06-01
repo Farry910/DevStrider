@@ -12,6 +12,9 @@ public class GroupLink
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
+    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> on legacy rows until the migration backfills them.</summary>
+    public ObjectId ProfileId { get; set; }
+
     public string Url { get; set; } = "";
     /// <summary>Canonical form for dedup: lowercased href with trailing slash trimmed; query + hash preserved.</summary>
     public string UrlNorm { get; set; } = "";

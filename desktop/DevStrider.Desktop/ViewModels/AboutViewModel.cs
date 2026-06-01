@@ -52,7 +52,7 @@ public class AboutViewModel : ViewModelBase
         Add("DEVSTRIDER_GITHUB_BRANCH",    "AppSettings.GitHubBranch",     "Branch to push/pull. Default 'main'.");
         Add("DEVSTRIDER_GITHUB_PAT",       "AppSettings.GitHubToken",      "Personal access token (repo scope). DPAPI-encrypted after first seed.", isSecret: true);
         Add("DEVSTRIDER_LISTENER_PORT",    "AppSettings.ListenerPort",     "Local HTTP listener port. Default 8765.");
-        Add("DEVSTRIDER_WORD_DOC_PATH",    "AppSettings.WordDocPath",      "Full path to the .docm containing the resume macro.");
+        Add("DEVSTRIDER_WORD_DOC_PATH",    "Default profile's WordDocPath", "Full path to the .docm with the resume macro. Seeded into the default profile on first launch; edit per-profile under Profiles afterwards.");
         Add("DEVSTRIDER_WORD_HOTKEY",      "AppSettings.WordHotkey",       "Keyboard shortcut that triggers the macro. Default F9.");
         Add("DEVSTRIDER_SHARING_KEY",      "AppSettings.SharingKey",       "Group passphrase. AES-GCM key for snapshot encryption.", isSecret: true);
     }
