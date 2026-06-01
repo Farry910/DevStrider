@@ -303,7 +303,7 @@ public sealed partial class LocalApiServer : ObservableObject
         var (valid, pathError) = PathValidator.ValidateWordPath(wordPath);
         if (!valid)
         {
-            _activity.Error(ExtensionSource, "Refresh Word failed", pathError);
+            _activity.Error(ExtensionSource, "Refresh Word failed", pathError ?? "Invalid Word document path.");
             await WriteJsonAsync(ctx, 400, new { success = false, error = pathError });
             return;
         }
