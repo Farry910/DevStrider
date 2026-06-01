@@ -16,6 +16,14 @@ public partial class MainWindowViewModel : ViewModelBase
     public SettingsViewModel Settings { get; }
     public ImportViewModel Import { get; }
 
+    /// <summary>
+    /// Built from <c>&lt;Version&gt;</c> in the csproj at compile time. Rendered as "v1.2.0"
+    /// next to the brand mark in the title bar so you can spot at a glance whether the
+    /// build actually picked up the latest source (vs. a stale dotnet-run cache).
+    /// </summary>
+    public string Version =>
+        "v" + (typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3) ?? "?");
+
     private ViewModelBase _current = default!;
     public ViewModelBase Current
     {

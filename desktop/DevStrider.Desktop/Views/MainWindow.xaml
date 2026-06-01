@@ -80,6 +80,16 @@
                        FontSize="12"
                        VerticalAlignment="Center"
                        Margin="4,0,0,0"/>
+            <!-- Version pill — eyeball whether the build is up to date. -->
+            <Border Background="{StaticResource SurfaceAlt}"
+                    CornerRadius="3"
+                    Padding="6,1"
+                    Margin="10,0,0,0"
+                    VerticalAlignment="Center">
+              <TextBlock Text="{Binding Version}"
+                         Foreground="{StaticResource Muted}"
+                         FontSize="11"/>
+            </Border>
           </StackPanel>
         </DockPanel>
       </Border>

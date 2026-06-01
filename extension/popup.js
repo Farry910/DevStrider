@@ -1,6 +1,13 @@
 (function () {
   'use strict';
 
+  // Version pill at the top — verifies which extension build the user is running.
+  try {
+    var v = chrome.runtime.getManifest().version;
+    var el = document.getElementById('version');
+    if (el) el.textContent = 'v' + v;
+  } catch (e) { /* ignore */ }
+
   chrome.storage.local.get(
     ['wordDocPath', 'wordHotkey'],
     function (r) {

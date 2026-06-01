@@ -24,7 +24,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\DevStrider.ico</ApplicationIcon>
     <AssemblyName>DevStrider</AssemblyName>
-    <Version>1.1.0</Version>
+    <!-- Bump this string on every release. The MainWindow title bar reads it at runtime
+         so you can eyeball whether the build picked up the latest source. -->
+    <Version>1.2.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
