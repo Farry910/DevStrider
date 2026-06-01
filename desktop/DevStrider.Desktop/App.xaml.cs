@@ -59,6 +59,8 @@ public partial class App : Application
             services.AddSingleton<ResumeService>();
             services.AddSingleton<GitHubSyncService>();
             services.AddSingleton<ActivityLogService>();
+            services.AddSingleton<RegistryStore>();
+            services.AddSingleton<RegistrySyncService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -108,6 +110,11 @@ public partial class App : Application
                     var settingsService = Services.GetRequiredService<SettingsService>();
                     var profileService = Services.GetRequiredService<ProfileService>();
                     await SettingsBootstrap.ApplyAsync(settingsService, profileService);
+
+                    // Registry sync runs AFTER env-var bootstrap: if env vars seeded a value
+                    // but registry already has a different one, registry wins (long-lived).
+                    var registrySync = Services.GetRequiredService<RegistrySyncService>();
+                    await registrySync.InitialSyncAsync();
 
                     var settings = await settingsService.GetAsync();
                     var server = Services.GetRequiredService<LocalApiServer>();

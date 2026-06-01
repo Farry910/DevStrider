@@ -11,6 +11,7 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly GitHubSyncService _sync;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
+    private readonly RegistrySyncService _registrySync;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -19,13 +20,15 @@ public partial class SettingsViewModel : ViewModelBase
         ProfileService profiles,
         GitHubSyncService sync,
         LocalApiServer localApi,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        RegistrySyncService registrySync)
     {
         _settings = settings;
         _profiles = profiles;
         _sync = sync;
         _localApi = localApi;
         _activity = activity;
+        _registrySync = registrySync;
     }
 
     private AppSettings _model = new();
@@ -62,6 +65,9 @@ public partial class SettingsViewModel : ViewModelBase
             Model.GitHubTokenProtected = SecretStore.Protect(GitHubTokenPlain ?? "");
             await _settings.SaveAsync(Model);
 
+            // Mirror Sharing key + Word macro into the registry so they outlive Mongo.
+            await _registrySync.PushAsync();
+
             var p = await _profiles.GetAsync();
             p.Username = string.IsNullOrWhiteSpace(Username) ? "me" : Username.Trim();
             await _profiles.SaveAsync(p);
@@ -87,6 +93,34 @@ public partial class SettingsViewModel : ViewModelBase
     {
         await _localApi.StopAsync();
         _localApi.Start(Model.ListenerPort);
+    }
+
+    /// <summary>
+    /// Pull Sharing key + Word macro from the registry into the form (discards unsaved edits
+    /// to those three fields). Use after editing the registry from outside DevStrider, or to
+    /// restore values after wiping Mongo.
+    /// </summary>
+    [RelayCommand]
+    public async Task SyncFromRegistryAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            var changed = await _registrySync.PullAsync();
+            Model = await _settings.GetAsync();
+            GitHubTokenPlain = SecretStore.Unprotect(Model.GitHubTokenProtected);
+            StatusMessage = changed
+                ? "Pulled Sharing key + Word macro from registry."
+                : "Already in sync with registry.";
+            _activity.Success("Registry", "Synced from registry",
+                changed ? "Sharing key / Word macro updated from HKCU\\Software\\DevStrider." : "Already in sync.");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Registry sync failed: {ex.Message}";
+            _activity.Error("Registry", "Sync from registry failed", ex.Message);
+        }
+        finally { IsBusy = false; }
     }
 
     /// <summary>WPF file-picker for the Word .docm path.</summary>

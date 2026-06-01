@@ -3,7 +3,23 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="700" HorizontalAlignment="Left">
-      <TextBlock Text="Settings" Style="{StaticResource H1}"/>
+      <Grid Margin="0,0,0,4">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0" Text="Settings" Style="{StaticResource H1}"/>
+        <Button Grid.Column="1"
+                Command="{Binding SyncFromRegistryCommand}"
+                Style="{StaticResource GhostButton}"
+                VerticalAlignment="Center"
+                ToolTip="Pull Sharing key + Word macro from HKCU\Software\DevStrider into the form (discards unsaved edits to those three fields)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Sync from registry" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </Grid>
       <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,4,0,12"/>
 
       <Border Style="{StaticResource Card}">
@@ -131,7 +147,7 @@
                    Tag="F9   (or Ctrl+Shift+R, etc.)"
                    Margin="0,2,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,0" TextWrapping="Wrap"
-                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted."/>
+                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted. Both fields mirror to HKCU\Software\DevStrider so they survive a Mongo wipe."/>
         </StackPanel>
       </Border>
 
@@ -143,7 +159,9 @@
           <TextBox Text="{Binding Model.SharingKey, UpdateSourceTrigger=PropertyChanged}"
                    FontFamily="Consolas"
                    Tag="A long, hard-to-guess passphrase your group agrees on"
-                   Margin="0,2,0,0"/>
+                   Margin="0,2,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="DPAPI-encrypted into HKCU\Software\DevStrider on Save so it survives a Mongo wipe. Pull a registry-edited value back into the form via the Sync button at the top."/>
         </StackPanel>
       </Border>
     </StackPanel>

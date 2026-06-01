@@ -27,11 +27,14 @@
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Data store" Foreground="{StaticResource Muted}" Margin="0,0,12,4"/>
             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DataLocation}" Margin="0,0,0,4"/>
-            <TextBlock Grid.Row="1" Grid.Column="0" Text="Local listener" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
-            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ListenerHint}"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Local listener" Foreground="{StaticResource Muted}" Margin="0,0,12,4"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ListenerHint}" Margin="0,0,0,4"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Registry" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding RegistryLocation}" TextWrapping="Wrap"/>
           </Grid>
         </StackPanel>
       </Border>

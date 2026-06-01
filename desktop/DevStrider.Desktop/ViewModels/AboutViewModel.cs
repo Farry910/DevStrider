@@ -32,6 +32,8 @@ public class AboutViewModel : ViewModelBase
 
     public string DataLocation => "MongoDB (local) · 127.0.0.1:27017/devstrider";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
+    public string RegistryLocation =>
+        @"HKCU\Software\DevStrider · SharingKey (DPAPI), WordDocPath, WordHotkey · mirrored on Save, pulled by Sync button";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
