@@ -2,8 +2,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
 using DevStrider.Desktop.Models;
+// Resolve the WinForms↔WPF name clash: the project uses both stacks (System.Windows.Forms is
+// loaded for the tray icon), so unqualified Brushes/FontFamily are ambiguous.
+using Brushes = System.Windows.Media.Brushes;
+using FontFamily = System.Windows.Media.FontFamily;
 
 namespace DevStrider.Desktop.Views;
 
