@@ -106,8 +106,10 @@ public sealed class ResumeAutoIngestService : IDisposable
                 }
                 lastLen = len;
             }
-            catch (IOException) { /* still being written */ }
+            // Catch the more specific subtype first — FileNotFoundException IS an IOException,
+            // so the IOException clause would otherwise swallow the "file gone" case.
             catch (FileNotFoundException) { return false; }
+            catch (IOException) { /* still being written, retry */ }
             await Task.Delay(300);
         }
         return false;
