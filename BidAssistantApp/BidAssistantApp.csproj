@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BidAssistantApp</RootNamespace>
+    <AssemblyName>BidAssistantApp</AssemblyName>
+    
+    <!-- Version Info -->
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <Company>Bid Assistant</Company>
+    <Product>Bid Assistant</Product>
+    <Copyright>Copyright © 2024</Copyright>
+    <Description>Automates job application resume generation workflow</Description>
+    
+    <!-- Single-file publish -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    
+    <!-- Application icon (exe icon in Explorer) -->
+    <ApplicationIcon>..\icon.ico</ApplicationIcon>
+
+    <!-- Debug symbols -->
+    <DebugType Condition="'$(Configuration)' == 'Debug'">portable</DebugType>
+    <DebugType Condition="'$(Configuration)' == 'Release'">embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <EmbeddedResource Include="..\icon.ico" Link="icon.ico" />
+    <EmbeddedResource Include="..\extension\icon.png" Link="icon.png" />
+  </ItemGroup>
+
+</Project>
