@@ -1,0 +1,67 @@
+<UserControl x:Class="DevStrider.Desktop.Views.ActivityView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:models="clr-namespace:DevStrider.Desktop.Models">
+  <UserControl.Resources>
+    <!-- Color the Level cell by ActivityLevel without writing a converter. -->
+    <Style x:Key="LevelCell" TargetType="TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Level}" Value="{x:Static models:ActivityLevel.Success}">
+          <Setter Property="Foreground" Value="{StaticResource OK}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Level}" Value="{x:Static models:ActivityLevel.Warning}">
+          <Setter Property="Foreground" Value="{StaticResource Warning}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Level}" Value="{x:Static models:ActivityLevel.Error}">
+          <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel>
+    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <TextBlock Grid.Column="0" Text="Activity" Style="{StaticResource H1}" VerticalAlignment="Center"/>
+      <TextBlock Grid.Column="1"
+                 Text="Every extension request, sync push, and listener event the app handles."
+                 Foreground="{StaticResource Muted}"
+                 VerticalAlignment="Center"
+                 Margin="16,0,0,0"/>
+      <Button Grid.Column="2"
+              Command="{Binding ClearCommand}"
+              Style="{StaticResource GhostButton}">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+          <TextBlock Text="Clear" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Button>
+    </Grid>
+
+    <DataGrid ItemsSource="{Binding Entries}"
+              IsReadOnly="True"
+              CanUserAddRows="False"
+              CanUserDeleteRows="False"
+              HeadersVisibility="Column">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Time"    Binding="{Binding At, StringFormat='{}{0:HH:mm:ss}'}" Width="80" SortMemberPath="At"/>
+        <DataGridTemplateColumn Header="Level" Width="80" SortMemberPath="Level">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding Level}" Style="{StaticResource LevelCell}" VerticalAlignment="Center" Margin="8,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="Source"  Binding="{Binding Source}" Width="100"/>
+        <DataGridTextColumn Header="Event"   Binding="{Binding Title}"  Width="240"/>
+        <DataGridTextColumn Header="Detail"  Binding="{Binding Detail}" Width="*"/>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>

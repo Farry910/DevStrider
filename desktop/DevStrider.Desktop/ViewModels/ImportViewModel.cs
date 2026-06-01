@@ -8,6 +8,7 @@ namespace DevStrider.Desktop.ViewModels;
 public partial class ImportViewModel : ViewModelBase
 {
     private readonly GitHubSyncService _sync;
+    private readonly ActivityLogService _activity;
 
     public ObservableCollection<DateOnly> AvailableDays { get; } = new();
     public ObservableCollection<GitHubSyncService.RepoFileMeta> AvailableFiles { get; } = new();
@@ -20,9 +21,10 @@ public partial class ImportViewModel : ViewModelBase
         set { if (SetProperty(ref _selectedDay, value)) _ = LoadDayFilesAsync(); }
     }
 
-    public ImportViewModel(GitHubSyncService sync)
+    public ImportViewModel(GitHubSyncService sync, ActivityLogService activity)
     {
         _sync = sync;
+        _activity = activity;
     }
 
     [RelayCommand]
@@ -66,8 +68,13 @@ public partial class ImportViewModel : ViewModelBase
             var snap = await _sync.ImportFileAsync(meta);
             if (snap != null) LocalSnapshots.Insert(0, snap);
             StatusMessage = $"Imported {meta.Owner} ({meta.Day:yyyy-MM-dd}).";
+            _activity.Success("GitHub", "Peer snapshot imported", $"{meta.Owner} · {meta.Day:yyyy-MM-dd}");
         }
-        catch (Exception ex) { StatusMessage = $"Import failed: {ex.Message}"; }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Import failed: {ex.Message}";
+            _activity.Error("GitHub", "Peer snapshot import failed", $"{meta.Owner} · {meta.Day:yyyy-MM-dd}: {ex.Message}");
+        }
         finally { IsBusy = false; }
     }
 

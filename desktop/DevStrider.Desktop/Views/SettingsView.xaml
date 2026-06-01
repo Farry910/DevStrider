@@ -27,7 +27,7 @@
           <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
                    Tag="e.g. joshua"/>
           <TextBlock Foreground="{StaticResource Muted}"
-                     Text="Snapshots upload to: YYYY-MM-DD/&lt;username&gt;.json. Lowercase, no spaces."/>
+                     Text="Defaults to your Windows account name (lowercased). Snapshots upload to YYYY-MM-DD/&lt;username&gt;.json. Keep it lowercase, no spaces."/>
         </StackPanel>
       </Border>
 

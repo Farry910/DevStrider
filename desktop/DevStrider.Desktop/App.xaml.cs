@@ -58,6 +58,7 @@ public partial class App : Application
             services.AddSingleton<ExportService>();
             services.AddSingleton<ResumeService>();
             services.AddSingleton<GitHubSyncService>();
+            services.AddSingleton<ActivityLogService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -70,6 +71,7 @@ public partial class App : Application
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ImportViewModel>();
             services.AddSingleton<AboutViewModel>();
+            services.AddSingleton<ActivityViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();
@@ -100,6 +102,7 @@ public partial class App : Application
             // so a seeded port takes effect immediately. Loopback-only, no auth.
             _ = Task.Run(async () =>
             {
+                var activity = Services.GetRequiredService<ActivityLogService>();
                 try
                 {
                     var settingsService = Services.GetRequiredService<SettingsService>();
@@ -109,10 +112,15 @@ public partial class App : Application
                     var settings = await settingsService.GetAsync();
                     var server = Services.GetRequiredService<LocalApiServer>();
                     Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
+                    if (server.IsRunning)
+                        activity.Success("Listener", "Listener started", $"Listening on http://127.0.0.1:{server.BoundPort}");
+                    else
+                        activity.Error("Listener", "Listener failed to start", server.Status);
                 }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine("Listener boot failed: " + ex.Message);
+                    activity.Error("Listener", "Listener boot crashed", ex.Message);
                 }
             });
 
@@ -127,9 +135,15 @@ public partial class App : Application
             // the moment the user can interact with the app.
             Tray = new TrayService(() => MainWindow);
 
-            // Bridge the LocalApiServer's "bid recorded" event to a tray balloon.
-            var localApi = Services.GetRequiredService<LocalApiServer>();
-            localApi.OnBidRecorded = (title, body) => Tray?.ShowBalloon(title, body);
+            // Fan out every Activity entry to the tray as a balloon. Silent entries are
+            // logged in the Activity tab but suppressed from notifications (e.g. paste-submit,
+            // which fires on every Ctrl+V and would spam the user).
+            var activityLog = Services.GetRequiredService<ActivityLogService>();
+            activityLog.OnEntry += entry =>
+            {
+                if (entry.Silent) return;
+                Tray?.ShowBalloon(entry.Title, entry.Detail, entry.Level);
+            };
 
             window.Show();
         }

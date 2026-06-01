@@ -21,6 +21,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Make Maximize respect the taskbar — chromeless WPF windows otherwise stretch
+        // over it and the bottom of the UI disappears behind the system tray.
+        MaximizeHelper.Attach(this);
         Loaded += MainWindow_Loaded;
         StateChanged += (_, __) =>
         {

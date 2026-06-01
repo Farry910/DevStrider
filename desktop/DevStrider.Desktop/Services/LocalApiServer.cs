@@ -21,8 +21,11 @@ namespace DevStrider.Desktop.Services;
 /// </summary>
 public sealed partial class LocalApiServer : ObservableObject
 {
+    private const string ExtensionSource = "Extension";
+
     private readonly BidBoardService _bids;
     private readonly SettingsService _settingsService;
+    private readonly ActivityLogService _activity;
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -31,16 +34,11 @@ public sealed partial class LocalApiServer : ObservableObject
     [ObservableProperty] private int _boundPort;
     [ObservableProperty] private string _status = "Stopped";
 
-    /// <summary>
-    /// Optional callback so the listener can post a tray balloon when a bid is recorded.
-    /// Wired by App.OnStartup after the TrayService is constructed; null-safe.
-    /// </summary>
-    public Action<string, string>? OnBidRecorded { get; set; }
-
-    public LocalApiServer(BidBoardService bids, SettingsService settingsService)
+    public LocalApiServer(BidBoardService bids, SettingsService settingsService, ActivityLogService activity)
     {
         _bids = bids;
         _settingsService = settingsService;
+        _activity = activity;
     }
 
     public void Start(int port)
@@ -138,6 +136,7 @@ public sealed partial class LocalApiServer : ObservableObject
             if (ctx.Request.HttpMethod == "POST" && path == "/trigger-paste-submit")
             {
                 HandleTriggerPasteSubmit(ctx);
+                _activity.Info(ExtensionSource, "JD pasted into ChatGPT", silent: true);
                 await WriteJsonAsync(ctx, 200, new { success = true });
                 return;
             }
@@ -152,9 +151,14 @@ public sealed partial class LocalApiServer : ObservableObject
             {
                 var picked = ShowWordPickerOnUiThread();
                 if (!string.IsNullOrEmpty(picked))
+                {
+                    _activity.Info(ExtensionSource, "Word document selected", picked, silent: true);
                     await WriteJsonAsync(ctx, 200, new { success = true, path = picked });
+                }
                 else
+                {
                     await WriteJsonAsync(ctx, 200, new { success = false, path = (string?)null });
+                }
                 return;
             }
 
@@ -169,10 +173,12 @@ public sealed partial class LocalApiServer : ObservableObject
                 return;
             }
 
+            _activity.Warning(ExtensionSource, "Unknown endpoint", $"{ctx.Request.HttpMethod} {path}", silent: true);
             await WriteJsonAsync(ctx, 404, new { error = "Not found" });
         }
         catch (Exception ex)
         {
+            _activity.Error(ExtensionSource, "Server error", ex.Message);
             try { await WriteJsonAsync(ctx, 500, new { error = ex.Message }); }
             catch { /* response may already be closed */ }
         }
@@ -192,12 +198,14 @@ public sealed partial class LocalApiServer : ObservableObject
         }
         catch (JsonException ex)
         {
+            _activity.Error(ExtensionSource, "Bid record failed", $"Malformed JSON: {ex.Message}");
             await WriteJsonAsync(ctx, 400, new { error = $"Invalid JSON: {ex.Message}" });
             return;
         }
 
         if (req == null || string.IsNullOrWhiteSpace(req.Url))
         {
+            _activity.Error(ExtensionSource, "Bid record failed", "Missing url in request body.");
             await WriteJsonAsync(ctx, 400, new { error = "url is required" });
             return;
         }
@@ -243,16 +251,12 @@ public sealed partial class LocalApiServer : ObservableObject
             }
         });
 
-        // Tray balloon — best-effort, never throws into the response path.
-        try
-        {
-            var label = parsed != null
-                ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·')
-                : (bid.Company?.Trim() ?? "");
-            OnBidRecorded?.Invoke("Bid recorded ✓",
-                string.IsNullOrEmpty(label) ? "DevStrider recorded the bid." : label);
-        }
-        catch { /* ignore */ }
+        var label = parsed != null
+            ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·')
+            : (bid.Company?.Trim() ?? "");
+        _activity.Success(ExtensionSource,
+            joinedExistingLink ? "Bid updated" : "Bid recorded",
+            string.IsNullOrEmpty(label) ? req.Url : label);
 
         await WriteJsonAsync(ctx, joinedExistingLink ? 200 : 201, new
         {
@@ -291,6 +295,7 @@ public sealed partial class LocalApiServer : ObservableObject
 
         if (string.IsNullOrWhiteSpace(wordPath))
         {
+            _activity.Warning(ExtensionSource, "Refresh Word failed", "Set the Word document path in Settings first.");
             await WriteJsonAsync(ctx, 400, new { success = false, error = "Set the Word document path in DevStrider · Settings first." });
             return;
         }
@@ -298,12 +303,14 @@ public sealed partial class LocalApiServer : ObservableObject
         var (valid, pathError) = PathValidator.ValidateWordPath(wordPath);
         if (!valid)
         {
+            _activity.Error(ExtensionSource, "Refresh Word failed", pathError);
             await WriteJsonAsync(ctx, 400, new { success = false, error = pathError });
             return;
         }
         var parsed = KeyboardHelper.ParseHotkey(wordHotkey);
         if (parsed == null)
         {
+            _activity.Error(ExtensionSource, "Refresh Word failed", $"Invalid hotkey: {wordHotkey}");
             await WriteJsonAsync(ctx, 400, new { success = false, error = $"Invalid hotkey: {wordHotkey}" });
             return;
         }
@@ -315,6 +322,7 @@ public sealed partial class LocalApiServer : ObservableObject
             var wordHwnd = KeyboardHelper.OpenWordDocument(wordPath);
             if (wordHwnd == IntPtr.Zero)
             {
+                _activity.Error(ExtensionSource, "Refresh Word failed", "Couldn't open the Word document. Check the path and that Word is installed.");
                 await WriteJsonAsync(ctx, 500, new { success = false, error = "Failed to open Word. Ensure Microsoft Word is installed and the path is correct." });
                 return;
             }
@@ -326,6 +334,7 @@ public sealed partial class LocalApiServer : ObservableObject
                 if (KeyboardHelper.WaitForWordClose(5))
                 {
                     KeyboardHelper.ReturnToChrome(chromeHwnd);
+                    _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
                     await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
                     return;
                 }
@@ -336,6 +345,7 @@ public sealed partial class LocalApiServer : ObservableObject
             if (wordHwnd == IntPtr.Zero)
             {
                 KeyboardHelper.ReturnToChrome(chromeHwnd);
+                _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
                 await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
                 return;
             }
@@ -346,15 +356,18 @@ public sealed partial class LocalApiServer : ObservableObject
                 if (KeyboardHelper.WaitForWordClose(KeyboardHelper.WORD_CLOSE_TIMEOUT_SECONDS))
                 {
                     KeyboardHelper.ReturnToChrome(chromeHwnd);
+                    _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
                     await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
                     return;
                 }
             }
             KeyboardHelper.ReturnToChrome(chromeHwnd);
+            _activity.Warning(ExtensionSource, "Word didn't close", "Hotkey was sent but Word stayed open — the macro may not have run.");
             await WriteJsonAsync(ctx, 200, new { success = false, error = "Hotkey sent, but Word didn't close. The macro may not have executed." });
         }
         catch (Exception ex)
         {
+            _activity.Error(ExtensionSource, "Refresh Word crashed", ex.Message);
             await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
         }
     }

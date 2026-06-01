@@ -17,6 +17,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public SettingsViewModel Settings { get; }
     public ImportViewModel Import { get; }
     public AboutViewModel About { get; }
+    public ActivityViewModel Activity { get; }
 
     /// <summary>
     /// Built from <c>&lt;Version&gt;</c> in the csproj at compile time. Rendered as "v1.x.y"
@@ -42,7 +43,8 @@ public partial class MainWindowViewModel : ViewModelBase
         SharingViewModel sharing,
         SettingsViewModel settings,
         ImportViewModel import,
-        AboutViewModel about)
+        AboutViewModel about,
+        ActivityViewModel activity)
     {
         Bids = bids;
         Interviews = interviews;
@@ -53,6 +55,7 @@ public partial class MainWindowViewModel : ViewModelBase
         Settings = settings;
         Import = import;
         About = about;
+        Activity = activity;
         Current = bids;
     }
 
@@ -65,4 +68,5 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowSettings() => Current = Settings;
     [RelayCommand] private void ShowImport() => Current = Import;
     [RelayCommand] private void ShowAbout() => Current = About;
+    [RelayCommand] private void ShowActivity() => Current = Activity;
 }

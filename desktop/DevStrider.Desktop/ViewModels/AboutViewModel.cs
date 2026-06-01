@@ -45,7 +45,7 @@ public class AboutViewModel : ViewModelBase
     {
         Add("DEVSTRIDER_MONGO_URI",        "AppSettings.MongoUri",         "MongoDB connection string. Default mongodb://127.0.0.1:27017.");
         Add("DEVSTRIDER_DATABASE_NAME",    "AppSettings.DatabaseName",     "MongoDB database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_USERNAME",         "UserProfile.Username",         "Your username in the team repo (filename of your daily snapshot).");
+        Add("DEVSTRIDER_USERNAME",         "UserProfile.Username",         "Your username in the team repo (filename of your daily snapshot). Defaults to your Windows account name.");
         Add("DEVSTRIDER_GITHUB_REPO_URL",  "AppSettings.GitHubRepoUrl",    "https://github.com/your-team/repo for shared daily snapshots.");
         Add("DEVSTRIDER_GITHUB_BRANCH",    "AppSettings.GitHubBranch",     "Branch to push/pull. Default 'main'.");
         Add("DEVSTRIDER_GITHUB_PAT",       "AppSettings.GitHubToken",      "Personal access token (repo scope). DPAPI-encrypted after first seed.", isSecret: true);

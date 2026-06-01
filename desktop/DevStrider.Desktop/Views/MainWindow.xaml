@@ -151,6 +151,12 @@
                 <TextBlock Text="Stats" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
+            <Button Command="{Binding ShowActivityCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE9D5;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Activity" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
 
           <!-- Secondary nav at the bottom -->

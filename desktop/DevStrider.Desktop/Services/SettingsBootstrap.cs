@@ -64,7 +64,12 @@ public static class SettingsBootstrap
             }
         }
 
-        if (string.Equals(profile.Username, "me", StringComparison.OrdinalIgnoreCase))
+        // Treat the OS-derived default (and the legacy "me") as still-defaulted so an env
+        // var can override either. Anything custom the user typed is left alone.
+        var currentUser = (profile.Username ?? "").Trim();
+        var osDefault = ProfileService.DefaultUsername();
+        if (string.Equals(currentUser, "me", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentUser, osDefault, StringComparison.OrdinalIgnoreCase))
         {
             var u = ReadEnv("DEVSTRIDER_USERNAME");
             if (u != null) { profile.Username = u; profileDirty = true; }

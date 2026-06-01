@@ -10,6 +10,7 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ProfileService _profiles;
     private readonly GitHubSyncService _sync;
     private readonly LocalApiServer _localApi;
+    private readonly ActivityLogService _activity;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -17,12 +18,14 @@ public partial class SettingsViewModel : ViewModelBase
         SettingsService settings,
         ProfileService profiles,
         GitHubSyncService sync,
-        LocalApiServer localApi)
+        LocalApiServer localApi,
+        ActivityLogService activity)
     {
         _settings = settings;
         _profiles = profiles;
         _sync = sync;
         _localApi = localApi;
+        _activity = activity;
     }
 
     private AppSettings _model = new();
@@ -111,10 +114,12 @@ public partial class SettingsViewModel : ViewModelBase
             var profile = await _profiles.GetAsync();
             await _sync.PushTodayAsync(profile.Username);
             StatusMessage = $"Pushed snapshot to GitHub ({profile.Username}.json under today).";
+            _activity.Success("GitHub", "Snapshot pushed", $"{profile.Username}.json · today");
         }
         catch (Exception ex)
         {
             StatusMessage = $"Push failed: {ex.Message}";
+            _activity.Error("GitHub", "Snapshot push failed", ex.Message);
         }
         finally { IsBusy = false; }
     }

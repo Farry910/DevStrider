@@ -2,6 +2,7 @@ using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Forms;
+using DevStrider.Desktop.Models;
 using Application = System.Windows.Application;
 using ContextMenuStrip = System.Windows.Forms.ContextMenuStrip;
 using MouseEventArgs = System.Windows.Forms.MouseEventArgs;
@@ -72,17 +73,24 @@ public sealed class TrayService : IDisposable
 
     /// <summary>
     /// Show a Windows balloon tip from the tray icon. Safe to call from any thread —
-    /// marshals onto the WinForms UI synchronisation context if needed.
+    /// marshals onto the WinForms UI synchronisation context if needed. Level maps to the
+    /// platform icon shown next to the balloon title (success/info/warning/error).
     /// </summary>
-    public void ShowBalloon(string title, string body, int timeoutMs = 4000)
+    public void ShowBalloon(string title, string body, ActivityLevel level = ActivityLevel.Info, int timeoutMs = 4000)
     {
         try
         {
             void Show()
             {
                 _notifyIcon.BalloonTipTitle = title;
-                _notifyIcon.BalloonTipText = body;
-                _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                _notifyIcon.BalloonTipText = string.IsNullOrEmpty(body) ? " " : body;
+                _notifyIcon.BalloonTipIcon = level switch
+                {
+                    ActivityLevel.Success => ToolTipIcon.Info,
+                    ActivityLevel.Warning => ToolTipIcon.Warning,
+                    ActivityLevel.Error   => ToolTipIcon.Error,
+                    _                     => ToolTipIcon.Info,
+                };
                 _notifyIcon.ShowBalloonTip(timeoutMs);
             }
             // NotifyIcon must be touched on the app's UI thread. WPF's Dispatcher works fine.
