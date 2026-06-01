@@ -340,11 +340,6 @@
       if (r.lastStatus) updateBlueStatus(r.lastStatus);
     });
 
-    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, function (response) {
-      if (response && response.ok && response.word_hotkey) {
-        purpleBtn.title = 'Update Word & DevStrider (' + response.word_hotkey + ')';
-      }
-    });
   }
 
   function onBlueClick(e) {
@@ -451,14 +446,11 @@
           );
         }
         setTimeout(function () {
-          chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, function (r) {
-            var hotkey = r && r.ok && r.word_hotkey ? r.word_hotkey : null;
-            updatePurpleStatus(
-              hotkey ? 'Update Word & DevStrider (' + hotkey + ')' : 'Update Word & record bid in DevStrider',
-              'fileWord',
-              'rgba(255,255,255,0.9)'
-            );
-          });
+          updatePurpleStatus(
+            'Update Word & record bid in DevStrider',
+            'fileWord',
+            'rgba(255,255,255,0.9)'
+          );
         }, 3500);
       }
     );

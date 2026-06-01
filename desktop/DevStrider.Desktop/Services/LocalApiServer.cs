@@ -275,33 +275,24 @@ public sealed partial class LocalApiServer : ObservableObject
 
     /// <summary>
     /// Open the user's Word doc, send the configured hotkey to trigger its macro, wait for
-    /// Word to close (the macro's last action), restore focus to Chrome.
+    /// Word to close (the macro's last action), restore focus to Chrome. Path + hotkey are
+    /// read from <see cref="AppSettings"/> — the extension just POSTs an empty trigger.
     /// </summary>
     private async Task HandleRefreshWordAsync(HttpListenerContext ctx)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var body = await reader.ReadToEndAsync();
-        string wordPath = "";
-        string wordHotkey = "F9";
-        try
-        {
-            var doc = JsonSerializer.Deserialize<JsonElement>(body);
-            wordPath = doc.TryGetProperty("word_doc_path", out var p) ? p.GetString()?.Trim() ?? "" : "";
-            wordHotkey = doc.TryGetProperty("word_hotkey", out var h) ? h.GetString()?.Trim() ?? "F9" : "F9";
-        }
-        catch (JsonException ex)
-        {
-            await WriteJsonAsync(ctx, 400, new { success = false, error = $"Invalid JSON: {ex.Message}" });
-            return;
-        }
+        // Drain the request body even though we don't read it — leaving it unread can wedge
+        // some HttpListener clients waiting for the response.
+        using (var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding))
+            await reader.ReadToEndAsync();
 
-        // Fall back to the saved Settings path/hotkey if the extension didn't send any. This
-        // lets the user configure once in DevStrider and have it work from any extension build.
-        if (string.IsNullOrWhiteSpace(wordPath) || string.IsNullOrWhiteSpace(wordHotkey))
+        var s = await _settingsService.GetAsync();
+        var wordPath = (s.WordDocPath ?? "").Trim();
+        var wordHotkey = string.IsNullOrWhiteSpace(s.WordHotkey) ? "F9" : s.WordHotkey.Trim();
+
+        if (string.IsNullOrWhiteSpace(wordPath))
         {
-            var s = await _settingsService.GetAsync();
-            if (string.IsNullOrWhiteSpace(wordPath)) wordPath = s.WordDocPath;
-            if (string.IsNullOrWhiteSpace(wordHotkey)) wordHotkey = s.WordHotkey;
+            await WriteJsonAsync(ctx, 400, new { success = false, error = "Set the Word document path in DevStrider · Settings first." });
+            return;
         }
 
         var (valid, pathError) = PathValidator.ValidateWordPath(wordPath);

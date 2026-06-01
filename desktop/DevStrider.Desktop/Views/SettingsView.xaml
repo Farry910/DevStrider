@@ -84,9 +84,6 @@
             <TextBlock Text="{Binding LocalApi.Status}" VerticalAlignment="Center"/>
           </StackPanel>
 
-          <CheckBox IsChecked="{Binding Model.ListenerEnabled, Mode=TwoWay}"
-                    Content="Enable listener"
-                    Margin="0,0,0,8"/>
           <TextBlock Text="Port"/>
           <TextBox Text="{Binding Model.ListenerPort, UpdateSourceTrigger=PropertyChanged}"
                    Margin="0,2,0,8" MaxLength="5"

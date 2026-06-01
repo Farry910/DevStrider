@@ -1,0 +1,82 @@
+<UserControl x:Class="DevStrider.Desktop.Views.AboutView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel MaxWidth="760" HorizontalAlignment="Left">
+      <TextBlock Text="About" Style="{StaticResource H1}"/>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="DevStrider" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Border Background="{StaticResource SurfaceAlt}"
+                    CornerRadius="3"
+                    Padding="6,1"
+                    Margin="10,0,0,0"
+                    VerticalAlignment="Center">
+              <TextBlock Text="{Binding Version}" Foreground="{StaticResource Muted}" FontSize="11"/>
+            </Border>
+          </StackPanel>
+          <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Foreground="{StaticResource Muted}"/>
+
+          <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="140"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Data store" Foreground="{StaticResource Muted}" Margin="0,0,12,4"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DataLocation}" Margin="0,0,0,4"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Local listener" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ListenerHint}"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Environment variables" FontWeight="SemiBold" Margin="0,0,0,4"/>
+          <TextBlock Text="{Binding EnvVarTip}" Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+          <DataGrid ItemsSource="{Binding EnvVars}"
+                    AutoGenerateColumns="False"
+                    IsReadOnly="True"
+                    CanUserAddRows="False"
+                    CanUserDeleteRows="False"
+                    HeadersVisibility="Column"
+                    HorizontalScrollBarVisibility="Auto">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Variable"     Binding="{Binding Name}"         Width="220"/>
+              <DataGridTextColumn Header="Seeds"        Binding="{Binding SeedsField}"   Width="200"/>
+              <DataGridTextColumn Header="Status"       Binding="{Binding Status}"       Width="80"/>
+              <DataGridTextColumn Header="Current value" Binding="{Binding DisplayValue}" Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,12,0,0" TextWrapping="Wrap">
+            <Run Text="Hover any row above for what it seeds. Each variable feeds its field "/>
+            <Run Text="only when the field is empty or at its default — once you've set the "/>
+            <Run Text="value in Settings, the env var is ignored on subsequent launches."/>
+          </TextBlock>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Setting env vars on Windows" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,6" TextWrapping="Wrap"
+                     Text="Persistent (survives reboot, user scope) — run in PowerShell or cmd:"/>
+          <Border Background="{StaticResource SurfaceAlt}" CornerRadius="3" Padding="10,8" Margin="0,0,0,8">
+            <TextBlock FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                       Text="setx DEVSTRIDER_GITHUB_PAT &quot;ghp_xxxxxxxxxxxxxxxx&quot;&#x0A;setx DEVSTRIDER_GITHUB_REPO_URL &quot;https://github.com/your-team/repo&quot;&#x0A;setx DEVSTRIDER_USERNAME &quot;joshua&quot;"/>
+          </Border>
+          <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,6" TextWrapping="Wrap"
+                     Text="Then close and re-open DevStrider. After it picks them up, you can clear them again — the PAT is DPAPI-encrypted in Mongo and the rest is plaintext in Mongo."/>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

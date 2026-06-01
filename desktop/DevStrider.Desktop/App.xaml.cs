@@ -39,8 +39,13 @@ public partial class App : Application
         try
         {
             var services = new ServiceCollection();
-            services.AddSingleton(_ => new MongoContext(
-                "mongodb://127.0.0.1:27017", "devstrider"));
+            // MongoContext is constructed before SettingsService can read anything from Mongo,
+            // so env-var overrides for the connection itself have to be consulted here directly.
+            // SettingsBootstrap below mirrors the same values into AppSettings so the Settings
+            // UI shows what's actually in use.
+            var mongoUri = SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017";
+            var mongoDb  = SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider";
+            services.AddSingleton(_ => new MongoContext(mongoUri, mongoDb));
 
             services.AddSingleton<SettingsService>();
             // ProfileService is kept (no longer surfaced in the UI but still used by
@@ -64,6 +69,7 @@ public partial class App : Application
             services.AddSingleton<SharingViewModel>();
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ImportViewModel>();
+            services.AddSingleton<AboutViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();
@@ -89,22 +95,20 @@ public partial class App : Application
                 }
             });
 
-            // Start the Bid-Assistant HTTP listener if the saved settings have it enabled.
-            // Loopback-only, no auth — the extension POSTs bids straight to /record-bid here.
+            // Seed empty/default settings from DEVSTRIDER_* env vars on first launch, then
+            // start the Bid-Assistant HTTP listener. Bootstrap runs before the listener boots
+            // so a seeded port takes effect immediately. Loopback-only, no auth.
             _ = Task.Run(async () =>
             {
                 try
                 {
                     var settingsService = Services.GetRequiredService<SettingsService>();
+                    var profileService = Services.GetRequiredService<ProfileService>();
+                    await SettingsBootstrap.ApplyAsync(settingsService, profileService);
+
                     var settings = await settingsService.GetAsync();
-                    if (settings.ListenerEnabled)
-                    {
-                        var server = Services.GetRequiredService<LocalApiServer>();
-                        Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
-                    }
-                    // Resume auto-ingest is gone — only data snapshots are shared with the
-                    // group, never resume bytes. ResumeAutoIngestService stays in DI for
-                    // compatibility but is no longer started.
+                    var server = Services.GetRequiredService<LocalApiServer>();
+                    Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
                 }
                 catch (Exception ex)
                 {

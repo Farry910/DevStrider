@@ -156,13 +156,6 @@ function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
 }
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-  if (message.type === "GET_CONFIG") {
-    chrome.storage.local.get(["wordHotkey"], function (r) {
-      sendResponse({ ok: true, word_hotkey: r.wordHotkey || "F9" });
-    });
-    return true;
-  }
-
   if (message.type === "REFRESH_WORD") {
     setStatus("Switching to job tab...");
     var gptFromPage =
@@ -174,22 +167,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         ? String(message.fastFeedInput)
         : "";
     chrome.storage.local.get(
-      [
-        "lastJobTabId",
-        "wordDocPath",
-        "wordHotkey",
-        "devstriderPending",
-      ],
+      ["lastJobTabId", "devstriderPending"],
       function (st) {
         var jobTabId = st && st.lastJobTabId;
-        var wordPath = (st && st.wordDocPath) || "";
-        wordPath = String(wordPath).trim();
-        var wordHotkey = (st && st.wordHotkey) || "F9";
-        if (!wordPath) {
-          setStatus("Error: Set Word path in extension popup");
-          sendResponse({ ok: false, error: "Set Word document path in extension popup first." });
-          return;
-        }
         function afterWordSuccess() {
           setStatus("Word updated — syncing DevStrider…");
           submitDevStriderRecord(st, gptFromPage, fastFeedInput, function (ds) {
@@ -219,10 +199,11 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         }
         function doRefreshWord() {
           setStatus("Refreshing Word document...");
+          // Word path + hotkey live in DevStrider · Settings; the extension just triggers.
           fetchWithTimeout(APP_URL + "/refresh-word", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ word_doc_path: wordPath, word_hotkey: wordHotkey }),
+            body: "{}",
           })
             .then(function (r) {
               return r.text();

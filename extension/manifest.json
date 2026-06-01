@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bid Assistant",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Extract JD from job page, paste into ChatGPT, and record the bid in the local DevStrider desktop app.",
   "icons": { "16": "icon.png", "48": "icon.png", "128": "icon.png" },
   "permissions": ["activeTab", "scripting", "storage", "tabs", "windows"],

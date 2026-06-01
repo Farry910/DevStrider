@@ -179,6 +179,12 @@
                 <TextBlock Text="Settings" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
+            <Button Command="{Binding ShowAboutCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="About" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
         </DockPanel>
       </Border>

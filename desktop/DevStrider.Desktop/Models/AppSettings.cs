@@ -26,10 +26,10 @@ public class AppSettings
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
     /// sync with the Chrome extension's configured base URL. Localhost binding means no
-    /// authentication is required.
+    /// authentication is required. The listener always starts at app launch; only the port
+    /// is configurable (collision recovery).
     /// </summary>
     public int ListenerPort { get; set; } = 8765;
-    public bool ListenerEnabled { get; set; } = true;
 
     /// <summary>
     /// Path to the user's Word document containing the macro that generates resumes. Triggered

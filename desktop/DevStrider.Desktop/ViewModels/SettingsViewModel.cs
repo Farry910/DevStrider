@@ -63,17 +63,13 @@ public partial class SettingsViewModel : ViewModelBase
             p.Username = string.IsNullOrWhiteSpace(Username) ? "me" : Username.Trim();
             await _profiles.SaveAsync(p);
 
-            // If the user changed the listener port, restart on the new one.
-            if (Model.ListenerEnabled && _localApi.BoundPort != Model.ListenerPort)
+            // Always ensure the listener is running on the (possibly new) saved port.
+            if (_localApi.IsRunning && _localApi.BoundPort != Model.ListenerPort)
             {
                 await _localApi.StopAsync();
                 _localApi.Start(Model.ListenerPort);
             }
-            else if (!Model.ListenerEnabled && _localApi.IsRunning)
-            {
-                await _localApi.StopAsync();
-            }
-            else if (Model.ListenerEnabled && !_localApi.IsRunning)
+            else if (!_localApi.IsRunning)
             {
                 _localApi.Start(Model.ListenerPort);
             }
@@ -87,7 +83,7 @@ public partial class SettingsViewModel : ViewModelBase
     public async Task RestartListenerAsync()
     {
         await _localApi.StopAsync();
-        if (Model.ListenerEnabled) _localApi.Start(Model.ListenerPort);
+        _localApi.Start(Model.ListenerPort);
     }
 
     /// <summary>WPF file-picker for the Word .docm path.</summary>
