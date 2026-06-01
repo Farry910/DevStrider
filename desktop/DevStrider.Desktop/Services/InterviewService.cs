@@ -34,4 +34,8 @@ public class InterviewService
 
     public Task DeleteAsync(ObjectId id) =>
         _db.Interviews.DeleteOneAsync(i => i.Id == id);
+
+    /// <summary>True when at least one interview is attached to the given bid.</summary>
+    public Task<bool> HasForBidAsync(ObjectId bidId) =>
+        _db.Interviews.Find(i => i.BidId == bidId).AnyAsync();
 }

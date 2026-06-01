@@ -34,6 +34,13 @@ public sealed partial class LocalApiServer : ObservableObject
     [ObservableProperty] private int _boundPort;
     [ObservableProperty] private string _status = "Stopped";
 
+    /// <summary>
+    /// Fires after a successful <c>/record-bid</c> request. The Bid Board VM subscribes so
+    /// the new row appears without the user having to hit refresh. Raised on a thread-pool
+    /// thread — subscribers must marshal back to the UI thread themselves.
+    /// </summary>
+    public event Action? OnExtensionBidRecorded;
+
     public LocalApiServer(BidBoardService bids, SettingsService settingsService, ActivityLogService activity)
     {
         _bids = bids;
@@ -257,6 +264,10 @@ public sealed partial class LocalApiServer : ObservableObject
         _activity.Success(ExtensionSource,
             joinedExistingLink ? "Bid updated" : "Bid recorded",
             string.IsNullOrEmpty(label) ? req.Url : label);
+
+        // Nudge the Bid Board to reload so the new/updated row appears without manual refresh.
+        try { OnExtensionBidRecorded?.Invoke(); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[LocalApi] subscriber threw: " + ex.Message); }
 
         await WriteJsonAsync(ctx, joinedExistingLink ? 200 : 201, new
         {

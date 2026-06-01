@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
+using DevStrider.Desktop.Views;
 
 namespace DevStrider.Desktop.ViewModels;
 
@@ -52,8 +53,20 @@ public partial class InterviewPanelViewModel : ViewModelBase
     public async Task DeleteAsync(object? param)
     {
         if (param is not Interview iv) return;
+
+        var label = $"{iv.Company} · {iv.Role} · {iv.InterviewType}".Trim(' ', '·');
+        if (string.IsNullOrWhiteSpace(label)) label = "this interview";
+        var when = iv.ScheduledDate?.ToString("MMM dd yyyy") ?? "(no date)";
+
+        var ok = ConfirmDialog.Ask(
+            System.Windows.Application.Current?.MainWindow,
+            "Delete interview?",
+            $"{label}\nScheduled: {when}\n\nThis can't be undone.");
+        if (!ok) return;
+
         await _service.DeleteAsync(iv.Id);
         await ReloadAsync();
+        StatusMessage = $"Deleted: {label}";
     }
 
     /// <summary>Open a modal with the interview's attached JD text.</summary>

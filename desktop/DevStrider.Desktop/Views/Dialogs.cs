@@ -11,9 +11,64 @@ using FontFamily = System.Windows.Media.FontFamily;
 namespace DevStrider.Desktop.Views;
 
 /// <summary>
-/// Three small modal dialogs used off the Bid board. Built in C# (no separate .xaml) so we
-/// don't litter the project with one-control views.
+/// Small modal dialogs used off the Bid board / Interview panel. Built in C# (no separate
+/// .xaml) so we don't litter the project with one-control views.
 /// </summary>
+
+/// <summary>
+/// Yes/No confirmation for destructive actions. Returns true when the user confirms,
+/// false when they cancel (Esc / close / Cancel button). Owner-centred, no resize.
+/// </summary>
+public sealed class ConfirmDialog : Window
+{
+    /// <summary>Convenience: builds and shows the dialog; returns true when the user clicks the primary button.</summary>
+    public static bool Ask(Window? owner, string title, string message, string okText = "Delete", string cancelText = "Cancel", bool danger = true)
+    {
+        var dlg = new ConfirmDialog(title, message, okText, cancelText, danger)
+        {
+            Owner = owner ?? System.Windows.Application.Current?.MainWindow
+        };
+        return dlg.ShowDialog() == true;
+    }
+
+    private ConfirmDialog(string title, string message, string okText, string cancelText, bool danger)
+    {
+        Title = title;
+        Width = 460;
+        SizeToContent = SizeToContent.Height;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
+        ShowInTaskbar = false;
+
+        var body = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 16),
+            FontSize = 13
+        };
+
+        var ok = new Button { Content = okText, IsDefault = true, MinWidth = 96, Margin = new Thickness(0, 0, 8, 0) };
+        if (danger && System.Windows.Application.Current?.TryFindResource("DangerButton") is Style dangerStyle)
+            ok.Style = dangerStyle;
+        ok.Click += (_, _) => { DialogResult = true; Close(); };
+
+        var cancel = new Button { Content = cancelText, IsCancel = true, MinWidth = 88 };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(body);
+        panel.Children.Add(buttons);
+        Content = panel;
+    }
+}
 
 /// <summary>Single-line text prompt for the fast-feed string.</summary>
 public sealed class FastFeedDialog : Window

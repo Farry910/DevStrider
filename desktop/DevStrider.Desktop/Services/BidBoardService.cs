@@ -180,4 +180,8 @@ public class BidBoardService
 
     public Task DeleteBidAsync(ObjectId bidId) =>
         _db.Bids.DeleteOneAsync(b => b.Id == bidId);
+
+    /// <summary>Hard-delete a link (use after the bid is gone — interviews must be removed first).</summary>
+    public Task DeleteLinkAsync(ObjectId linkId) =>
+        _db.Links.DeleteOneAsync(l => l.Id == linkId);
 }

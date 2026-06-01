@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
+using DevStrider.Desktop.Views;
 using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
@@ -66,11 +67,18 @@ public partial class BidBoardViewModel : ViewModelBase
     private string _newLinkSharedJd = "";
     public string NewLinkSharedJd { get => _newLinkSharedJd; set => SetProperty(ref _newLinkSharedJd, value); }
 
-    public BidBoardViewModel(BidBoardService service, ProfileService profiles, InterviewService interviews)
+    public BidBoardViewModel(BidBoardService service, ProfileService profiles, InterviewService interviews, LocalApiServer localApi)
     {
         _service = service;
         _profiles = profiles;
         _interviews = interviews;
+
+        // Auto-refresh when the extension records a bid via the listener — otherwise the
+        // user sees the Activity balloon but the Bid board stays stale until they click refresh.
+        // Event fires on a thread-pool thread, so marshal back to the UI thread.
+        localApi.OnExtensionBidRecorded += () =>
+            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
     }
 
     /// <summary>
@@ -163,12 +171,49 @@ public partial class BidBoardViewModel : ViewModelBase
         await ReloadAsync();
     }
 
+    /// <summary>
+    /// "Delete" on a bid row removes the whole row (bid + link). Refuses if interviews are
+    /// attached to the bid — those have to be cleared first so we don't leave orphans.
+    /// Always shows a confirmation dialog before touching Mongo.
+    /// </summary>
     [RelayCommand]
     public async Task DeleteBidAsync(object? param)
     {
-        if (param is not BoardRow row || row.Bid == null) return;
-        await _service.DeleteBidAsync(row.Bid.Id);
+        if (param is not BoardRow row || row.Link == null) return;
+
+        // Block when interviews would be orphaned. The user has to delete those first —
+        // we don't cascade because losing interview history quietly is the kind of bug
+        // people only notice weeks later.
+        if (row.Bid != null && _interviews != null &&
+            await _interviews.HasForBidAsync(row.Bid.Id))
+        {
+            ConfirmDialog.Ask(
+                System.Windows.Application.Current?.MainWindow,
+                "Can't delete this bid",
+                $"Interviews are scheduled against {row.Bid.Company ?? row.Link.Url}. " +
+                "Delete the interviews first, then try again.",
+                okText: "OK",
+                cancelText: "Close",
+                danger: false);
+            return;
+        }
+
+        var label = row.Bid != null
+            ? ($"{row.Bid.Company} · {row.Bid.Role}".Trim(' ', '·'))
+            : row.Link.Url;
+        if (string.IsNullOrWhiteSpace(label)) label = row.Link.Url;
+
+        var ok = ConfirmDialog.Ask(
+            System.Windows.Application.Current?.MainWindow,
+            "Delete bid?",
+            $"{label}\n\nThis removes the link and the bid from your local database. " +
+            "It can't be undone.");
+        if (!ok) return;
+
+        if (row.Bid != null) await _service.DeleteBidAsync(row.Bid.Id);
+        await _service.DeleteLinkAsync(row.Link.Id);
         await ReloadAsync();
+        StatusMessage = $"Deleted: {label}";
     }
 
     /// <summary>
