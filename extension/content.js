@@ -434,9 +434,7 @@
           updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
         } else if (response && response.ok) {
           var ds = response.devStrider;
-          if (ds && ds.skipped) {
-            updatePurpleStatus('Word OK (DevStrider not configured)', 'check', 'rgba(255,255,255,0.9)');
-          } else if (ds && ds.ok === false) {
+          if (ds && ds.ok === false) {
             updatePurpleStatus(
               ('Word OK · DevStrider: ' + (ds.error || 'failed')).slice(0, 44),
               'xmark',

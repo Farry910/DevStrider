@@ -70,6 +70,30 @@ public sealed class TrayService : IDisposable
         });
     }
 
+    /// <summary>
+    /// Show a Windows balloon tip from the tray icon. Safe to call from any thread —
+    /// marshals onto the WinForms UI synchronisation context if needed.
+    /// </summary>
+    public void ShowBalloon(string title, string body, int timeoutMs = 4000)
+    {
+        try
+        {
+            void Show()
+            {
+                _notifyIcon.BalloonTipTitle = title;
+                _notifyIcon.BalloonTipText = body;
+                _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+                _notifyIcon.ShowBalloonTip(timeoutMs);
+            }
+            // NotifyIcon must be touched on the app's UI thread. WPF's Dispatcher works fine.
+            Application.Current?.Dispatcher.BeginInvoke(new Action(Show));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[TrayService] Balloon failed: {ex.Message}");
+        }
+    }
+
     /// <summary>Real shutdown — disposes the icon and tears the process down.</summary>
     public void Quit()
     {

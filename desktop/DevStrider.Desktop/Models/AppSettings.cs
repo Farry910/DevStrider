@@ -31,5 +31,21 @@ public class AppSettings
     public int ListenerPort { get; set; } = 8765;
     public bool ListenerEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Path to the user's Word document containing the macro that generates resumes. Triggered
+    /// by the extension's "Update Word" purple button → POST /refresh-word.
+    /// </summary>
+    public string WordDocPath { get; set; } = "";
+
+    /// <summary>Hotkey assigned to the Word macro. Default F9 triggers field updates.</summary>
+    public string WordHotkey { get; set; } = "F9";
+
+    /// <summary>
+    /// Folder the Word macro saves generated resume files into (filenames follow
+    /// "UID, Company, Role, Stacks…"). A FileSystemWatcher on this folder auto-imports new
+    /// files into the local Resumes collection.
+    /// </summary>
+    public string ResumeOutputFolder { get; set; } = "";
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -54,6 +54,7 @@ public partial class App : Application
             services.AddSingleton<ResumeService>();
             services.AddSingleton<GitHubSyncService>();
             services.AddSingleton<LocalApiServer>();
+            services.AddSingleton<ResumeAutoIngestService>();
 
             services.AddSingleton<BidBoardViewModel>();
             services.AddSingleton<InterviewPanelViewModel>();
@@ -100,6 +101,9 @@ public partial class App : Application
                         var server = Services.GetRequiredService<LocalApiServer>();
                         Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
                     }
+                    // Start the auto-ingest folder watcher (no-op if folder not set).
+                    var ingest = Services.GetRequiredService<ResumeAutoIngestService>();
+                    await ingest.StartAsync();
                 }
                 catch (Exception ex)
                 {
@@ -117,6 +121,10 @@ public partial class App : Application
             // the user clicks the X). Created before Show() so the icon is present from
             // the moment the user can interact with the app.
             Tray = new TrayService(() => MainWindow);
+
+            // Bridge the LocalApiServer's "bid recorded" event to a tray balloon.
+            var localApi = Services.GetRequiredService<LocalApiServer>();
+            localApi.OnBidRecorded = (title, body) => Tray?.ShowBalloon(title, body);
 
             window.Show();
         }
@@ -143,6 +151,11 @@ public partial class App : Application
             server?.StopAsync().GetAwaiter().GetResult();
         }
         catch { /* shutting down anyway */ }
+        try
+        {
+            (Services?.GetService(typeof(ResumeAutoIngestService)) as ResumeAutoIngestService)?.Dispose();
+        }
+        catch { /* ignore */ }
         Tray?.Dispose();
         Tray = null;
         base.OnExit(e);

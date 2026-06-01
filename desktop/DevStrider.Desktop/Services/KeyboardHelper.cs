@@ -1,9 +1,37 @@
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
 
-namespace BidAssistantApp;
+namespace DevStrider.Desktop.Services;
 
-static class KeyboardHelper
+/// <summary>
+/// Port of <c>BidAssistantApp/KeyboardHelper.cs</c>. Pure Win32 P/Invoke; no WPF/WinForms
+/// dependencies. Used by the LocalApiServer to:
+///   - Send <c>Ctrl+V</c> + <c>Enter</c> on whatever has OS focus (the ChatGPT tab).
+///   - Open a Word .docm, focus it, send the user-configured hotkey to trigger its macro,
+///     wait for Word to close, return focus to Chrome.
+/// All timings/aliases were merged in from the BAA <c>Constants.cs</c> so we don't drag a
+/// constants file across.
+/// </summary>
+internal static class KeyboardHelper
 {
+    // ─── Timings (in ms) — copied from BidAssistantApp/Constants.cs ───────────
+    private const int KEY_PRESS_DELAY_MS = 50;
+    private const int MODIFIER_DELAY_MS = 100;
+    private const int WINDOW_SWITCH_DELAY_MS = 150;
+    private const int ALT_TAB_DELAY_MS = 100;
+    private const int WORD_OPEN_DELAY_MS = 500;
+    public const int HOTKEY_DELAY_MS = 150;
+    private const int WINDOW_RESTORE_TIMEOUT_MS = 1000;
+    private const int FOREGROUND_TIMEOUT_MS = 2000;
+    private const int WORD_OPEN_TIMEOUT_MS = 15000;
+    public const int WORD_CLOSE_TIMEOUT_SECONDS = 10;
+    private const int POLL_INTERVAL_MS = 50;
+    private const int WORD_CLOSE_CHECK_INTERVAL_MS = 100;
+
+    // ─── Win32 constants ─────────────────────────────────────────────────────
     private const int KEYEVENTF_KEYUP = 0x0002;
     private const int INPUT_KEYBOARD = 1;
     private const int VK_RETURN = 0x0D;
@@ -67,35 +95,20 @@ static class KeyboardHelper
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr PostMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk;
-        public ushort wScan;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MOUSEINPUT
-    {
-        public int dx;
-        public int dy;
-        public uint mouseData;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct HARDWAREINPUT
-    {
-        public uint uMsg;
-        public ushort wParamL;
-        public ushort wParamH;
-    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] private struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
     [StructLayout(LayoutKind.Explicit)]
     private struct INPUT_UNION
     {
@@ -103,29 +116,18 @@ static class KeyboardHelper
         [FieldOffset(0)] public KEYBDINPUT ki;
         [FieldOffset(0)] public HARDWAREINPUT hi;
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public uint type;
-        public INPUT_UNION u;
-    }
+    [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public INPUT_UNION u; }
 
     public static (List<int> modifiers, int keyVk)? ParseHotkey(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        
-        // Normalize: trim, handle multiple separators
-        raw = raw.Trim();
-        raw = System.Text.RegularExpressions.Regex.Replace(raw, @"\s*[\+\-_]\s*", "+");
-        
+        raw = Regex.Replace(raw.Trim(), @"\s*[\+\-_]\s*", "+");
         var parts = raw.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return null;
 
         var modifiers = new List<int>();
         var keyName = parts[^1];
 
-        // Modifier aliases for better parsing
         var modifierAliases = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
         {
             ["ctrl"] = 0x11, ["control"] = 0x11, ["ctl"] = 0x11,
@@ -136,54 +138,44 @@ static class KeyboardHelper
 
         for (int i = 0; i < parts.Length - 1; i++)
         {
-            if (modifierAliases.TryGetValue(parts[i], out var mod))
-                modifiers.Add(mod);
-            else if (VkNames.TryGetValue(parts[i], out mod))
-                modifiers.Add(mod);
-            else
-                return null; // Invalid modifier
+            if (modifierAliases.TryGetValue(parts[i], out var mod)) modifiers.Add(mod);
+            else if (VkNames.TryGetValue(parts[i], out mod)) modifiers.Add(mod);
+            else return null;
         }
 
-        // Try VK names first (case-insensitive)
-        if (VkNames.TryGetValue(keyName, out var keyVk))
-            return (modifiers, keyVk);
-
-        // Handle single character keys
+        if (VkNames.TryGetValue(keyName, out var keyVk)) return (modifiers, keyVk);
         if (keyName.Length == 1)
         {
             var c = char.ToUpperInvariant(keyName[0]);
             if (c >= 'A' && c <= 'Z') return (modifiers, c);
             if (c >= '0' && c <= '9') return (modifiers, c);
         }
-        
-        // Handle numpad keys
         if (keyName.StartsWith("numpad", StringComparison.OrdinalIgnoreCase) && keyName.Length == 7)
         {
-            var digit = keyName[6];
-            if (digit >= '0' && digit <= '9')
-                return (modifiers, 0x60 + (digit - '0')); // VK_NUMPAD0-9
+            var d = keyName[6];
+            if (d >= '0' && d <= '9') return (modifiers, 0x60 + (d - '0'));
         }
-        
         return null;
     }
 
+    /// <summary>Send <c>Ctrl+V</c> then <c>Enter</c> to whatever has OS focus right now.</summary>
     public static void PasteSubmit()
     {
         SendKey(VK_CONTROL, false);
         SendKey(VK_V, false);
         SendKey(VK_V, true);
         SendKey(VK_CONTROL, true);
-        Thread.Sleep(Constants.KEY_PRESS_DELAY_MS);
+        Thread.Sleep(KEY_PRESS_DELAY_MS);
         SendKey(VK_RETURN, false);
         SendKey(VK_RETURN, true);
     }
 
     public static IntPtr GetForegroundWindow() => NativeGetForegroundWindow();
 
-    public static bool WaitForCondition(Func<bool> condition, int timeoutMs = 5000, int pollMs = Constants.POLL_INTERVAL_MS)
+    private static bool WaitForCondition(Func<bool> condition, int timeoutMs, int pollMs = POLL_INTERVAL_MS)
     {
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
         {
             if (condition()) return true;
             Thread.Sleep(pollMs);
@@ -193,45 +185,31 @@ static class KeyboardHelper
 
     public static IntPtr FindWordWindow()
     {
-        // Try Word's window class first (most reliable)
         var hwnd = FindWindowW("OpusApp", null);
         if (hwnd != IntPtr.Zero) return hwnd;
-
-        // Fallback: find by full window title (avoids matching "WordPad", etc.)
         return FindWindowByTitleContains("Microsoft Word");
     }
 
     private static IntPtr FindWindowByTitleContains(string titleContains)
     {
         IntPtr found = IntPtr.Zero;
-        EnumWindows((hwnd, lParam) =>
+        EnumWindows((hwnd, _) =>
         {
             var length = GetWindowTextLength(hwnd);
             if (length > 0)
             {
-                var sb = new System.Text.StringBuilder(length + 1);
+                var sb = new StringBuilder(length + 1);
                 GetWindowText(hwnd, sb, sb.Capacity);
                 if (sb.ToString().Contains(titleContains, StringComparison.OrdinalIgnoreCase))
                 {
                     found = hwnd;
-                    return false; // Stop enumeration
+                    return false;
                 }
             }
             return true;
         }, IntPtr.Zero);
         return found;
     }
-
-    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowTextLength(IntPtr hWnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 
     public static bool SetForegroundWindow(IntPtr hwnd)
     {
@@ -241,13 +219,13 @@ static class KeyboardHelper
             if (IsIconic(hwnd))
             {
                 ShowWindow(hwnd, SW_RESTORE);
-                if (!WaitForCondition(() => !IsIconic(hwnd), Constants.WINDOW_RESTORE_TIMEOUT_MS, Constants.POLL_INTERVAL_MS))
-                    Thread.Sleep(Constants.WINDOW_SWITCH_DELAY_MS); // Fallback
+                if (!WaitForCondition(() => !IsIconic(hwnd), WINDOW_RESTORE_TIMEOUT_MS))
+                    Thread.Sleep(WINDOW_SWITCH_DELAY_MS);
             }
             else
             {
                 ShowWindow(hwnd, SW_SHOW);
-                Thread.Sleep(Constants.KEY_PRESS_DELAY_MS);
+                Thread.Sleep(KEY_PRESS_DELAY_MS);
             }
 
             var currentThread = GetWindowThreadProcessId(currentFg, IntPtr.Zero);
@@ -265,31 +243,22 @@ static class KeyboardHelper
                 ShowWindow(hwnd, SW_SHOW);
                 NativeSetForegroundWindow(hwnd);
 
-                // Wait for window to become foreground with early exit
-                var success = WaitForCondition(() => NativeGetForegroundWindow() == hwnd, Constants.FOREGROUND_TIMEOUT_MS, Constants.POLL_INTERVAL_MS);
-
-                if (!success)
-                    Logger.Warning("SetForegroundWindow: Window did not become foreground");
-
-                return success;
+                return WaitForCondition(() => NativeGetForegroundWindow() == hwnd, FOREGROUND_TIMEOUT_MS);
             }
             finally
             {
-                if (attached)
-                    AttachThreadInput(currentThread, targetThread, false);
+                if (attached) AttachThreadInput(currentThread, targetThread, false);
             }
         }
         catch (Exception ex)
         {
-            Logger.Error("SetForegroundWindow failed", ex);
+            Debug.WriteLine($"[KeyboardHelper] SetForegroundWindow failed: {ex.Message}");
             return false;
         }
     }
 
-    /// <summary>
-    /// Sends a single key (no modifiers) to a window via PostMessage.
-    /// Returns false if modifiers are present — use PressHotkey with SetForegroundWindow instead.
-    /// </summary>
+    /// <summary>Sends a single un-modified key to a window via <c>PostMessage</c>. Faster than
+    /// foreground-switch + SendInput when no modifiers are needed.</summary>
     public static bool PostSingleKeyToWindow(IntPtr hwnd, List<int> modifiers, int keyVk)
     {
         if (modifiers.Count > 0) return false;
@@ -297,52 +266,45 @@ static class KeyboardHelper
         var lparamDown = (IntPtr)((scan << 16) | 1);
         var lparamUp = (IntPtr)((scan << 16) | 1 | (1 << 30) | (1 << 31));
         PostMessageW(hwnd, WM_KEYDOWN, (IntPtr)keyVk, lparamDown);
-        Thread.Sleep(Constants.KEY_PRESS_DELAY_MS);
+        Thread.Sleep(KEY_PRESS_DELAY_MS);
         PostMessageW(hwnd, WM_KEYUP, (IntPtr)keyVk, lparamUp);
         return true;
     }
 
     public static void PressHotkey(List<int> modifiers, int keyVk)
     {
-        foreach (var vk in modifiers)
-            SendKey(vk, false);
+        foreach (var vk in modifiers) SendKey(vk, false);
         SendKey(keyVk, false);
-        Thread.Sleep(Constants.MODIFIER_DELAY_MS);
+        Thread.Sleep(MODIFIER_DELAY_MS);
         SendKey(keyVk, true);
-        foreach (var vk in modifiers.AsEnumerable().Reverse())
-            SendKey(vk, true);
+        foreach (var vk in modifiers.AsEnumerable().Reverse()) SendKey(vk, true);
     }
 
     public static bool AltTabToWindow(IntPtr targetHwnd, int maxAttempts = 10)
     {
         SendKey(VK_MENU, false);
-        Thread.Sleep(Constants.ALT_TAB_DELAY_MS);
-
+        Thread.Sleep(ALT_TAB_DELAY_MS);
         for (int i = 0; i < maxAttempts; i++)
         {
             SendKey(VK_TAB, false);
-            Thread.Sleep(Constants.KEY_PRESS_DELAY_MS);
+            Thread.Sleep(KEY_PRESS_DELAY_MS);
             SendKey(VK_TAB, true);
-            Thread.Sleep(Constants.WINDOW_SWITCH_DELAY_MS);
-            if (NativeGetForegroundWindow() == targetHwnd)
-                break;
+            Thread.Sleep(WINDOW_SWITCH_DELAY_MS);
+            if (NativeGetForegroundWindow() == targetHwnd) break;
         }
-
         SendKey(VK_MENU, true);
-        Thread.Sleep(Constants.WINDOW_SWITCH_DELAY_MS);
+        Thread.Sleep(WINDOW_SWITCH_DELAY_MS);
         return NativeGetForegroundWindow() == targetHwnd;
     }
 
-    public static bool WaitForWordClose(int timeoutSeconds = Constants.WORD_CLOSE_TIMEOUT_SECONDS)
+    public static bool WaitForWordClose(int timeoutSeconds = WORD_CLOSE_TIMEOUT_SECONDS)
     {
         var checks = timeoutSeconds * 10;
         for (int i = 0; i < checks; i++)
         {
-            Thread.Sleep(Constants.WORD_CLOSE_CHECK_INTERVAL_MS);
-            if (FindWordWindow() == IntPtr.Zero)  // Use FindWordWindow for consistency
-                return true;
+            Thread.Sleep(WORD_CLOSE_CHECK_INTERVAL_MS);
+            if (FindWordWindow() == IntPtr.Zero) return true;
         }
-        Logger.Warning($"Word did not close within {timeoutSeconds} seconds");
         return false;
     }
 
@@ -350,29 +312,19 @@ static class KeyboardHelper
     {
         try
         {
-            Logger.Info($"Opening Word document: {path}");
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = path,
-                UseShellExecute = true
-            };
-            System.Diagnostics.Process.Start(psi);
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
         }
         catch (Exception ex)
         {
-            Logger.Error($"Failed to start Word process: {ex.Message}");
+            Debug.WriteLine($"[KeyboardHelper] Failed to start Word: {ex.Message}");
             return IntPtr.Zero;
         }
-
-        // Wait for Word window with early exit (up to 15 seconds)
         IntPtr foundHwnd = IntPtr.Zero;
-        if (WaitForCondition(() => { foundHwnd = FindWordWindow(); return foundHwnd != IntPtr.Zero; }, Constants.WORD_OPEN_TIMEOUT_MS, Constants.WINDOW_SWITCH_DELAY_MS))
+        if (WaitForCondition(() => { foundHwnd = FindWordWindow(); return foundHwnd != IntPtr.Zero; },
+                             WORD_OPEN_TIMEOUT_MS, WINDOW_SWITCH_DELAY_MS))
         {
-            Logger.Info($"Word window found: {foundHwnd}");
             return foundHwnd;
         }
-        
-        Logger.Error("Word window not found after timeout");
         return IntPtr.Zero;
     }
 
@@ -401,6 +353,9 @@ static class KeyboardHelper
                 }
             }
         };
-        SendInput(1, [inp], Marshal.SizeOf<INPUT>());
+        SendInput(1, new[] { inp }, Marshal.SizeOf<INPUT>());
     }
+
+    /// <summary>Constants needed by the LocalApiServer's refresh-word handler.</summary>
+    public const int RefreshWordOpenDelayMs = WORD_OPEN_DELAY_MS;
 }

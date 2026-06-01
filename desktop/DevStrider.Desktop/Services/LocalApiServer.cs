@@ -22,6 +22,7 @@ namespace DevStrider.Desktop.Services;
 public sealed partial class LocalApiServer : ObservableObject
 {
     private readonly BidBoardService _bids;
+    private readonly SettingsService _settingsService;
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -30,9 +31,16 @@ public sealed partial class LocalApiServer : ObservableObject
     [ObservableProperty] private int _boundPort;
     [ObservableProperty] private string _status = "Stopped";
 
-    public LocalApiServer(BidBoardService bids)
+    /// <summary>
+    /// Optional callback so the listener can post a tray balloon when a bid is recorded.
+    /// Wired by App.OnStartup after the TrayService is constructed; null-safe.
+    /// </summary>
+    public Action<string, string>? OnBidRecorded { get; set; }
+
+    public LocalApiServer(BidBoardService bids, SettingsService settingsService)
     {
         _bids = bids;
+        _settingsService = settingsService;
     }
 
     public void Start(int port)
@@ -127,6 +135,40 @@ public sealed partial class LocalApiServer : ObservableObject
                 return;
             }
 
+            if (ctx.Request.HttpMethod == "POST" && path == "/trigger-paste-submit")
+            {
+                HandleTriggerPasteSubmit(ctx);
+                await WriteJsonAsync(ctx, 200, new { success = true });
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "POST" && path == "/refresh-word")
+            {
+                await HandleRefreshWordAsync(ctx);
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "GET" && path == "/browse-word")
+            {
+                var picked = ShowWordPickerOnUiThread();
+                if (!string.IsNullOrEmpty(picked))
+                    await WriteJsonAsync(ctx, 200, new { success = true, path = picked });
+                else
+                    await WriteJsonAsync(ctx, 200, new { success = false, path = (string?)null });
+                return;
+            }
+
+            if (ctx.Request.HttpMethod == "POST" && path == "/client/devstrider-outcome")
+            {
+                // Telemetry sink — just consume and ack. The extension's purple-button flow
+                // fires this regardless of success/failure; we don't store it (the WPF UI is
+                // the dashboard now).
+                using var sink = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
+                _ = await sink.ReadToEndAsync();
+                await WriteJsonAsync(ctx, 200, new { ok = true });
+                return;
+            }
+
             await WriteJsonAsync(ctx, 404, new { error = "Not found" });
         }
         catch (Exception ex)
@@ -201,6 +243,17 @@ public sealed partial class LocalApiServer : ObservableObject
             }
         });
 
+        // Tray balloon — best-effort, never throws into the response path.
+        try
+        {
+            var label = parsed != null
+                ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·')
+                : (bid.Company?.Trim() ?? "");
+            OnBidRecorded?.Invoke("Bid recorded ✓",
+                string.IsNullOrEmpty(label) ? "DevStrider recorded the bid." : label);
+        }
+        catch { /* ignore */ }
+
         await WriteJsonAsync(ctx, joinedExistingLink ? 200 : 201, new
         {
             link = new { id = link.Id.ToString(), link.Url },
@@ -208,6 +261,138 @@ public sealed partial class LocalApiServer : ObservableObject
             joinedExistingLink,
             fastFeedApplied = parsed != null
         });
+    }
+
+    /// <summary>
+    /// Sends Ctrl+V then Enter to whatever the OS has focused right now. The extension calls
+    /// this AFTER setting focus to the ChatGPT input — we don't touch focus ourselves.
+    /// </summary>
+    private static void HandleTriggerPasteSubmit(HttpListenerContext _)
+    {
+        try { KeyboardHelper.PasteSubmit(); }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[paste-submit] {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Open the user's Word doc, send the configured hotkey to trigger its macro, wait for
+    /// Word to close (the macro's last action), restore focus to Chrome.
+    /// </summary>
+    private async Task HandleRefreshWordAsync(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
+        var body = await reader.ReadToEndAsync();
+        string wordPath = "";
+        string wordHotkey = "F9";
+        try
+        {
+            var doc = JsonSerializer.Deserialize<JsonElement>(body);
+            wordPath = doc.TryGetProperty("word_doc_path", out var p) ? p.GetString()?.Trim() ?? "" : "";
+            wordHotkey = doc.TryGetProperty("word_hotkey", out var h) ? h.GetString()?.Trim() ?? "F9" : "F9";
+        }
+        catch (JsonException ex)
+        {
+            await WriteJsonAsync(ctx, 400, new { success = false, error = $"Invalid JSON: {ex.Message}" });
+            return;
+        }
+
+        // Fall back to the saved Settings path/hotkey if the extension didn't send any. This
+        // lets the user configure once in DevStrider and have it work from any extension build.
+        if (string.IsNullOrWhiteSpace(wordPath) || string.IsNullOrWhiteSpace(wordHotkey))
+        {
+            var s = await _settingsService.GetAsync();
+            if (string.IsNullOrWhiteSpace(wordPath)) wordPath = s.WordDocPath;
+            if (string.IsNullOrWhiteSpace(wordHotkey)) wordHotkey = s.WordHotkey;
+        }
+
+        var (valid, pathError) = PathValidator.ValidateWordPath(wordPath);
+        if (!valid)
+        {
+            await WriteJsonAsync(ctx, 400, new { success = false, error = pathError });
+            return;
+        }
+        var parsed = KeyboardHelper.ParseHotkey(wordHotkey);
+        if (parsed == null)
+        {
+            await WriteJsonAsync(ctx, 400, new { success = false, error = $"Invalid hotkey: {wordHotkey}" });
+            return;
+        }
+
+        try
+        {
+            var (mods, keyVk) = parsed.Value;
+            var chromeHwnd = KeyboardHelper.GetForegroundWindow();
+            var wordHwnd = KeyboardHelper.OpenWordDocument(wordPath);
+            if (wordHwnd == IntPtr.Zero)
+            {
+                await WriteJsonAsync(ctx, 500, new { success = false, error = "Failed to open Word. Ensure Microsoft Word is installed and the path is correct." });
+                return;
+            }
+            Thread.Sleep(KeyboardHelper.RefreshWordOpenDelayMs);
+
+            // Fast path: no modifiers → PostMessage straight to the window without focus juggling.
+            if (mods.Count == 0 && KeyboardHelper.PostSingleKeyToWindow(wordHwnd, mods, keyVk))
+            {
+                if (KeyboardHelper.WaitForWordClose(5))
+                {
+                    KeyboardHelper.ReturnToChrome(chromeHwnd);
+                    await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
+                    return;
+                }
+            }
+
+            // Slow path: bring Word to foreground, send the hotkey (with modifiers) via SendInput.
+            wordHwnd = KeyboardHelper.FindWordWindow();
+            if (wordHwnd == IntPtr.Zero)
+            {
+                KeyboardHelper.ReturnToChrome(chromeHwnd);
+                await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
+                return;
+            }
+            if (KeyboardHelper.SetForegroundWindow(wordHwnd) || KeyboardHelper.AltTabToWindow(wordHwnd))
+            {
+                Thread.Sleep(KeyboardHelper.HOTKEY_DELAY_MS);
+                KeyboardHelper.PressHotkey(mods, keyVk);
+                if (KeyboardHelper.WaitForWordClose(KeyboardHelper.WORD_CLOSE_TIMEOUT_SECONDS))
+                {
+                    KeyboardHelper.ReturnToChrome(chromeHwnd);
+                    await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
+                    return;
+                }
+            }
+            KeyboardHelper.ReturnToChrome(chromeHwnd);
+            await WriteJsonAsync(ctx, 200, new { success = false, error = "Hotkey sent, but Word didn't close. The macro may not have executed." });
+        }
+        catch (Exception ex)
+        {
+            await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
+        }
+    }
+
+    /// <summary>
+    /// Marshal to the WPF UI thread and show <see cref="Microsoft.Win32.OpenFileDialog"/>. The
+    /// dialog's owner is the main window if available, which keeps it above Chrome — no need
+    /// for BAA's hidden-topmost-form trick.
+    /// </summary>
+    private static string? ShowWordPickerOnUiThread()
+    {
+        string? selected = null;
+        System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Word document",
+                Filter = "Word macro-enabled (*.docm)|*.docm|Word documents (*.docx)|*.docx|Word 97-2003 (*.doc)|*.doc|All files (*.*)|*.*",
+                FilterIndex = 1,
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            };
+            var owner = System.Windows.Application.Current.MainWindow;
+            if (dlg.ShowDialog(owner) == true)
+            {
+                var (ok, _) = PathValidator.ValidateWordPath(dlg.FileName);
+                if (ok) selected = dlg.FileName;
+            }
+        });
+        return selected;
     }
 
     private static async Task WriteJsonAsync(HttpListenerContext ctx, int statusCode, object payload)

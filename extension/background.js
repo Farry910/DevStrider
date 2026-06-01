@@ -1,8 +1,9 @@
 "use strict";
 
+// DevStrider is now a local desktop app — no web service, no JWT, no groupId.
+// The extension talks directly to the WPF listener at 127.0.0.1:8765, which absorbs
+// what BidAssistantApp used to do (paste-submit, refresh-word, browse-word, record-bid).
 const APP_URL = "http://127.0.0.1:8765";
-const DEVSTRIDER_BASE_URL = "https://devstrider.onrender.com";
-const DEVSTRIDER_FRONTEND_URL = "https://frabjous-heliotrope-31deb0.netlify.app";
 const FETCH_TIMEOUT_MS = 10000;
 
 function fetchWithTimeout(url, options, timeoutMs) {
@@ -84,88 +85,13 @@ function findChatGPTTab(cb) {
   );
 }
 
-var DEVSTRIDER_TOKEN_KEY = "devstrider_token";
-
-function fetchDevStriderJwtFromTab(baseUrl, callback) {
-  var base = (baseUrl || "").replace(/\/$/, "");
-  if (!base) {
-    callback(null, "DevStrider base URL is not configured.");
-    return;
-  }
-  chrome.tabs.query({}, function (tabs) {
-    // Try exact prefix match first, then hostname-only match as fallback
-    var tab = (tabs || []).find(function (t) {
-      return t.url && t.url.indexOf(base) === 0;
-    });
-    if (!tab) {
-      try {
-        var targetHost = new URL(base).hostname;
-        tab = (tabs || []).find(function (t) {
-          try { return new URL(t.url).hostname === targetHost; } catch (e) { return false; }
-        });
-      } catch (e) {}
-    }
-    if (!tab || tab.id == null) {
-      var openUrls = (tabs || [])
-        .map(function (t) { return t.url || ""; })
-        .filter(function (u) { return u.startsWith("http"); })
-        .slice(0, 5)
-        .join(", ");
-      callback(
-        null,
-        "No tab found matching " + base + ". Open DevStrider and log in. Open tabs: " + (openUrls || "(none)"),
-      );
-      return;
-    }
-    chrome.scripting.executeScript(
-      {
-        target: { tabId: tab.id },
-        func: function (key) {
-          try {
-            return localStorage.getItem(key) || "";
-          } catch (e) {
-            return "";
-          }
-        },
-        args: [DEVSTRIDER_TOKEN_KEY],
-      },
-      function (results) {
-        if (chrome.runtime.lastError) {
-          callback(null, chrome.runtime.lastError.message);
-          return;
-        }
-        var tok =
-          results && results[0] && results[0].result ? String(results[0].result).trim() : "";
-        if (!tok) {
-          callback(null, "No DevStrider session on that tab — log in again.");
-          return;
-        }
-        chrome.storage.local.set({ devstrider_token: tok });
-        callback(tok, null);
-      },
-    );
-  });
-}
-
-function withDevStriderJwt(callback) {
-  chrome.storage.local.get(["devstrider_token"], function (r) {
-    var cached = (r && r.devstrider_token && String(r.devstrider_token).trim()) || "";
-    if (cached.length > 40) {
-      callback(cached, null);
-      return;
-    }
-    fetchDevStriderJwtFromTab(DEVSTRIDER_FRONTEND_URL, callback);
-  });
-}
-
-/** After Word refresh: record URL + JD + GPT resume to DevStrider (same JWT as web app). */
+/**
+ * Record the URL + JD + GPT resume in the local DevStrider desktop app.
+ * Loopback-only POST to /record-bid; no JWT, no groupId. The WPF listener applies
+ * the same fast-feed parsing rules the web backend used.
+ */
 function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
-  var groupId = (st.devStriderGroupId || "").trim();
   var pending = st && st.devstriderPending;
-  if (!groupId) {
-    callback({ skipped: true, reason: "no_group" });
-    return;
-  }
   if (!pending || !pending.url) {
     callback({
       ok: false,
@@ -173,14 +99,13 @@ function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
     });
     return;
   }
-  var baseUrl = DEVSTRIDER_BASE_URL;
-  var gpt =    gptResumeContent != null && String(gptResumeContent) ? String(gptResumeContent).trim() : "";
+  var gpt =
+    gptResumeContent != null && String(gptResumeContent) ? String(gptResumeContent).trim() : "";
   var ff =
     fastFeedInput != null && String(fastFeedInput).trim()
       ? String(fastFeedInput).trim()
       : "";
   var bodyObj = {
-    groupId: groupId,
     url: pending.url,
     jobDescription: pending.jobDescription || "",
     gptResumeContent: gpt,
@@ -188,67 +113,46 @@ function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
   };
   if (ff) bodyObj.fastFeedInput = ff;
   var body = JSON.stringify(bodyObj);
-  var useProxy = st.devStriderUseProxy !== false;
 
-  withDevStriderJwt(function (token, errMsg) {
-    if (!token) {
-      callback({ ok: false, error: errMsg || "Could not read DevStrider login token." });
-      return;
-    }
-    var targetUrl = useProxy
-      ? APP_URL + "/record-devstrider"
-      : baseUrl.replace(/\/$/, "") + "/api/integrations/bid-assistant/record-bid";
-    var fetchOpts = {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + token,
-      },
-      body: body,
-    };
-    fetchWithTimeout(targetUrl, fetchOpts, 120000)
-      .then(function (r) {
-        return r.text().then(function (text) {
-          return { status: r.status, text: text };
-        });
-      })
-      .then(function (r) {
-        var data;
-        try {
-          data = JSON.parse(r.text);
-        } catch (e) {
-          callback({ ok: false, error: "Invalid JSON from server" });
-          return;
-        }
-        if (r.status === 401) {
-          chrome.storage.local.remove(["devstrider_token"]);
-        }
-        if (r.status >= 200 && r.status < 300) {
-          chrome.storage.local.set({
-            bidAssistantSessionCache: {
-              url: pending.url,
-              jobDescription: pending.jobDescription || "",
-              gptResumeContent: gpt,
-              updatedAt: Date.now(),
-            },
-          });
-          callback({ ok: true, data: data });
-        } else {
-          var err =
-            (data && (data.error || (data.errors && data.errors[0] && data.errors[0].msg))) ||
-            String(r.status);
-          callback({ ok: false, error: String(err) });
-        }
-      })
-      .catch(function (err) {
-        if (typeof console !== "undefined" && console.error)
-          console.error("[Bid Assistant] DevStrider record failed:", err);
-        callback({
-          ok: false,
-          error: "Network error — is DevStrider or the desktop app running?",
-        });
+  fetchWithTimeout(APP_URL + "/record-bid", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body,
+  }, 120000)
+    .then(function (r) {
+      return r.text().then(function (text) {
+        return { status: r.status, text: text };
       });
-  });
+    })
+    .then(function (r) {
+      var data;
+      try { data = JSON.parse(r.text); }
+      catch (e) { callback({ ok: false, error: "Invalid JSON from DevStrider app" }); return; }
+      if (r.status >= 200 && r.status < 300) {
+        chrome.storage.local.set({
+          bidAssistantSessionCache: {
+            url: pending.url,
+            jobDescription: pending.jobDescription || "",
+            gptResumeContent: gpt,
+            updatedAt: Date.now(),
+          },
+        });
+        callback({ ok: true, data: data });
+      } else {
+        var err =
+          (data && (data.error || (data.errors && data.errors[0] && data.errors[0].msg))) ||
+          String(r.status);
+        callback({ ok: false, error: String(err) });
+      }
+    })
+    .catch(function (err) {
+      if (typeof console !== "undefined" && console.error)
+        console.error("[Bid Assistant] DevStrider record failed:", err);
+      callback({
+        ok: false,
+        error: "Network error — is the DevStrider desktop app running?",
+      });
+    });
 }
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
@@ -275,8 +179,6 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         "wordDocPath",
         "wordHotkey",
         "devstriderPending",
-        "devStriderGroupId",
-        "devStriderUseProxy",
       ],
       function (st) {
         var jobTabId = st && st.lastJobTabId;
@@ -294,9 +196,8 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
             // Fire-and-forget: report outcome to BAA dashboard
             var outcomePayload = JSON.stringify({
               phase: "after_word",
-              code: ds.skipped ? "skipped" : (ds.ok ? "ok" : "error"),
-              detail: ds.skipped ? (ds.reason || "no_group") : (ds.ok ? "" : (ds.error || "failed")),
-              useProxy: st.devStriderUseProxy !== false,
+              code: ds.ok ? "ok" : "error",
+              detail: ds.ok ? "" : (ds.error || "failed"),
               ts: Date.now(),
             });
             try {
@@ -307,10 +208,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
               }).catch(function () {});
             } catch (e) {}
 
-            if (ds.skipped) {
-              setStatus("Word document refreshed successfully!");
-              sendResponse({ ok: true, devStrider: ds });
-            } else if (ds.ok) {
+            if (ds.ok) {
               setStatus("Word updated & DevStrider recorded!");
               sendResponse({ ok: true, devStrider: { ok: true, data: ds.data } });
             } else {

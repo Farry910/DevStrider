@@ -2,20 +2,13 @@
   'use strict';
 
   chrome.storage.local.get(
-    [
-      'wordDocPath',
-      'wordHotkey',
-      'devStriderGroupId',
-      'devStriderUseProxy',
-    ],
+    ['wordDocPath', 'wordHotkey'],
     function (r) {
       if (r.wordDocPath) document.getElementById('wordPath').value = r.wordDocPath;
       if (r.wordHotkey) {
         document.getElementById('wordHotkey').value = r.wordHotkey;
         document.getElementById('hotkeyPlaceholder').style.display = 'none';
       }
-      if (r.devStriderGroupId) document.getElementById('devStriderGroupId').value = r.devStriderGroupId;
-      if (r.devStriderUseProxy === false) document.getElementById('devStriderUseProxy').checked = false;
     }
   );
 
@@ -25,8 +18,6 @@
     chrome.storage.local.set({
       wordDocPath: wordPath,
       wordHotkey: wordHotkey || 'F9',
-      devStriderGroupId: document.getElementById('devStriderGroupId').value.trim(),
-      devStriderUseProxy: document.getElementById('devStriderUseProxy').checked,
     }, function () {
       var el = document.getElementById('saved');
       el.style.display = 'block';
