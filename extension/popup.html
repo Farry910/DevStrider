@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      width: 340px;
+      padding: 20px;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      font-size: 13px;
+      background: #ffffff;
+      color: #1f2937;
+      letter-spacing: 0.01em;
+    }
+    h3 {
+      margin: 0 0 20px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      letter-spacing: -0.02em;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: #6b7280;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      color: #111827;
+      font-size: 13px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #111827;
+      box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06);
+    }
+    input::placeholder {
+      color: #9ca3af;
+    }
+    input[readonly] {
+      cursor: pointer;
+      caret-color: transparent;
+    }
+    .hotkey-wrap {
+      position: relative;
+      margin-bottom: 14px;
+    }
+    .hotkey-wrap input {
+      margin-bottom: 0;
+    }
+    .hotkey-placeholder {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #9ca3af;
+      font-size: 13px;
+      pointer-events: none;
+    }
+    select option {
+      background: #ffffff;
+      color: #111827;
+    }
+    button {
+      width: 100%;
+      padding: 11px 16px;
+      background: #111827;
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    button:hover {
+      background: #1f2937;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    .saved {
+      color: #374151;
+      font-size: 12px;
+      font-weight: 500;
+      margin-top: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h3>Bid Assistant</h3>
+  <h4 style="margin:16px 0 8px 0;font-size:13px;font-weight:600;color:#374151;">DevStrider</h4>
+  <label>Group id</label>
+  <input type="text" id="devStriderGroupId" placeholder="From DevStrider group URL / settings" autocomplete="off">
+  <label style="text-transform:none;letter-spacing:normal;" class="row-check">
+    <input type="checkbox" id="devStriderUseProxy" checked style="width:auto;margin:0 8px 0 0;">
+    Use desktop app proxy (forwards your DevStrider login JWT)
+  </label>
+  <p style="margin:0 0 12px 0;font-size:11px;color:#6b7280;line-height:1.4;">
+    The extension uses <code style="font-size:10px;">https://devstrider.onrender.com</code> and reads <code style="font-size:10px;">localStorage.devstrider_token</code> from an open DevStrider tab.
+  </p>
+
+  <h4 style="margin:16px 0 8px 0;font-size:13px;font-weight:600;color:#374151;">Word</h4>
+  <label>Word document path</label>
+  <input type="text" id="wordPath" placeholder="Click to select Word document" readonly>
+  <label>Hotkey</label>
+  <div class="hotkey-wrap">
+    <input type="text" id="wordHotkey" readonly>
+    <span id="hotkeyPlaceholder" class="hotkey-placeholder">Click to set hotkey</span>
+  </div>
+  <button id="save">Save</button>
+  <div id="saved" class="saved" style="display: none;">Saved</div>
+  <script src="popup.js"></script>
+</body>
+</html>
