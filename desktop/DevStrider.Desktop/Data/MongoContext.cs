@@ -52,6 +52,9 @@ public class MongoContext
     public IMongoCollection<Resume> Resumes =>
         Database.GetCollection<Resume>("resumes");
 
+    public IMongoCollection<UploadLog> UploadLogs =>
+        Database.GetCollection<UploadLog>("uploadLogs");
+
     /// <summary>
     /// Camel-case + ignore-unknown-fields so we can round-trip JSON payloads (export/import)
     /// without forcing the deserializer to know every property the producer might add later.
@@ -99,5 +102,8 @@ public class MongoContext
             Builders<Resume>.IndexKeys.Ascending(x => x.Uid)));
         await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
             Builders<Resume>.IndexKeys.Descending(x => x.UploadedAt)));
+
+        await UploadLogs.Indexes.CreateOneAsync(new CreateIndexModel<UploadLog>(
+            Builders<UploadLog>.IndexKeys.Descending(x => x.PushedAt)));
     }
 }

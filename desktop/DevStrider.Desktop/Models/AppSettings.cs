@@ -41,11 +41,18 @@ public class AppSettings
     public string WordHotkey { get; set; } = "F9";
 
     /// <summary>
-    /// Folder the Word macro saves generated resume files into (filenames follow
-    /// "UID, Company, Role, Stacks…"). A FileSystemWatcher on this folder auto-imports new
-    /// files into the local Resumes collection.
+    /// Folder the Word macro saves generated resume files into. **No longer used** for
+    /// auto-ingest — resumes aren't stored or shared. Kept on the schema only so old docs
+    /// deserialize cleanly. Future cleanup can drop this field after data migration.
     /// </summary>
     public string ResumeOutputFolder { get; set; } = "";
+
+    /// <summary>
+    /// Shared passphrase the local group agrees on out-of-band. Used to encrypt every
+    /// snapshot before push and decrypt every peer's snapshot on import (AES-GCM, key
+    /// derived from SHA-256 of this string). Empty = push/import as plaintext (legacy).
+    /// </summary>
+    public string SharingKey { get; set; } = "";
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

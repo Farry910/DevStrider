@@ -11,7 +11,39 @@
         <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="Bid board" Style="{StaticResource H1}" VerticalAlignment="Center"/>
-      <DatePicker Grid.Column="1" SelectedDate="{Binding SelectedDay, Mode=TwoWay}" Margin="16,0" VerticalAlignment="Center"/>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
+        <CheckBox IsChecked="{Binding UseCustomRange, Mode=TwoWay}"
+                  Content="Range"
+                  VerticalAlignment="Center"
+                  ToolTip="Use a date range instead of a single day"
+                  Margin="0,0,8,0"/>
+        <DatePicker SelectedDate="{Binding SelectedDay, Mode=TwoWay}" VerticalAlignment="Center">
+          <DatePicker.Style>
+            <Style TargetType="DatePicker" BasedOn="{StaticResource {x:Type DatePicker}}">
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding UseCustomRange}" Value="True">
+                  <Setter Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </DatePicker.Style>
+        </DatePicker>
+        <StackPanel Orientation="Horizontal">
+          <StackPanel.Style>
+            <Style TargetType="StackPanel">
+              <Setter Property="Visibility" Value="Collapsed"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding UseCustomRange}" Value="True">
+                  <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </StackPanel.Style>
+          <DatePicker SelectedDate="{Binding From, Mode=TwoWay}" VerticalAlignment="Center"/>
+          <TextBlock Text="→" VerticalAlignment="Center" Margin="6,0" Foreground="{StaticResource Muted}"/>
+          <DatePicker SelectedDate="{Binding To, Mode=TwoWay}" VerticalAlignment="Center"/>
+        </StackPanel>
+      </StackPanel>
       <TextBlock Grid.Column="2" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0" Foreground="{StaticResource Muted}"/>
       <Button Grid.Column="3"
               Command="{Binding ReloadCommand}"
@@ -43,7 +75,24 @@
     <!-- Rows -->
     <DataGrid ItemsSource="{Binding Rows}" SelectionUnit="FullRow">
       <DataGrid.Columns>
-        <DataGridTextColumn Header="URL"        Binding="{Binding Link.Url}" Width="2*"/>
+        <DataGridTemplateColumn Header="URL" Width="2*">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <!-- Clickable hyperlink: opens the URL in the OS default browser via the
+                   Click handler in code-behind (ProcessStartInfo + UseShellExecute=true).
+                   Bound via Hyperlink.Tag so the handler can read the URL without
+                   pulling in a separate value converter. -->
+              <TextBlock VerticalAlignment="Center"
+                         TextTrimming="CharacterEllipsis">
+                <Hyperlink Click="OnUrlClick"
+                           Tag="{Binding Link.Url}"
+                           Foreground="{StaticResource Primary}">
+                  <Run Text="{Binding Link.Url, Mode=OneWay}"/>
+                </Hyperlink>
+              </TextBlock>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <!-- Bid.ResumeId is the resume's UID (e.g. "7mK92") — the filename prefix of the
              resume file the user uploaded for this job. Lets the Interview row's download
              button resolve back to a file via ResumeService.GetByUidAsync. -->
@@ -68,10 +117,30 @@
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="Origin"     Binding="{Binding Bid.Origin}" Width="120"/>
         <DataGridTextColumn Header="Created"    Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:MMM dd HH:mm}'}" Width="120"/>
-        <DataGridTemplateColumn Header="Actions" Width="120">
+        <DataGridTemplateColumn Header="Actions" Width="220">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">
+                <!-- Fast-feed entry: opens a popup with a single text box. Code-behind
+                     calls the VM's ApplyFastFeedCommand with the typed string. -->
+                <Button Click="OnFastFeedClick"
+                        Tag="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Apply fast-feed line (UID, Company, Role, Stack1, …)"
+                        Content="&#xE756;"/>
+                <!-- JD viewer: opens a modal with this row's job description (bid JD takes
+                     precedence over the link's shared JD). -->
+                <Button Click="OnViewJdClick"
+                        Tag="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="View job description"
+                        Content="&#xE7C3;"/>
+                <!-- Schedule an interview straight off this bid. Inherits ResumeId + JD. -->
+                <Button Click="OnScheduleInterviewClick"
+                        Tag="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Schedule interview from this bid"
+                        Content="&#xE787;"/>
                 <Button Command="{Binding DataContext.SaveBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                         CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
                         Style="{StaticResource IconButton}"

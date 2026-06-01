@@ -23,8 +23,11 @@
       <DataTemplate DataType="{x:Type vm:StatsViewModel}">
         <views:StatsView/>
       </DataTemplate>
-      <DataTemplate DataType="{x:Type vm:ResumesViewModel}">
-        <views:ResumesView/>
+      <DataTemplate DataType="{x:Type vm:FindBidViewModel}">
+        <views:FindBidView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:SharingViewModel}">
+        <views:SharingView/>
       </DataTemplate>
       <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
         <views:SettingsView/>

@@ -58,9 +58,10 @@ public partial class App : Application
 
             services.AddSingleton<BidBoardViewModel>();
             services.AddSingleton<InterviewPanelViewModel>();
+            services.AddSingleton<FindBidViewModel>();
             services.AddSingleton<OverviewViewModel>();
             services.AddSingleton<StatsViewModel>();
-            services.AddSingleton<ResumesViewModel>();
+            services.AddSingleton<SharingViewModel>();
             services.AddSingleton<SettingsViewModel>();
             services.AddSingleton<ImportViewModel>();
             services.AddSingleton<MainWindowViewModel>();
@@ -101,9 +102,9 @@ public partial class App : Application
                         var server = Services.GetRequiredService<LocalApiServer>();
                         Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
                     }
-                    // Start the auto-ingest folder watcher (no-op if folder not set).
-                    var ingest = Services.GetRequiredService<ResumeAutoIngestService>();
-                    await ingest.StartAsync();
+                    // Resume auto-ingest is gone — only data snapshots are shared with the
+                    // group, never resume bytes. ResumeAutoIngestService stays in DI for
+                    // compatibility but is no longer started.
                 }
                 catch (Exception ex)
                 {

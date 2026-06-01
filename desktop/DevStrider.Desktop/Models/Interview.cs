@@ -36,6 +36,12 @@ public class Interview
     public string Recruiter { get; set; } = "";
     public List<string> AdditionalAttendees { get; set; } = new();
 
+    /// <summary>
+    /// Resume UID captured from the source bid at scheduling time (e.g. "7mK92"). Lets the
+    /// interview row label which resume was submitted without re-traversing the bid.
+    /// </summary>
+    public string ResumeId { get; set; } = "";
+
     public DateTime? ScheduledDate { get; set; }
     public string ScheduledTime { get; set; } = "";
     public int? DurationMinutes { get; set; }

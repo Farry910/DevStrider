@@ -10,7 +10,6 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ProfileService _profiles;
     private readonly GitHubSyncService _sync;
     private readonly LocalApiServer _localApi;
-    private readonly ResumeAutoIngestService _ingest;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -18,14 +17,12 @@ public partial class SettingsViewModel : ViewModelBase
         SettingsService settings,
         ProfileService profiles,
         GitHubSyncService sync,
-        LocalApiServer localApi,
-        ResumeAutoIngestService ingest)
+        LocalApiServer localApi)
     {
         _settings = settings;
         _profiles = profiles;
         _sync = sync;
         _localApi = localApi;
-        _ingest = ingest;
     }
 
     private AppSettings _model = new();
@@ -81,9 +78,6 @@ public partial class SettingsViewModel : ViewModelBase
                 _localApi.Start(Model.ListenerPort);
             }
 
-            // Re-target the resume-folder watcher (handles enable / disable / path change).
-            _ingest.Restart(Model.ResumeOutputFolder);
-
             StatusMessage = "Saved.";
         }
         finally { IsBusy = false; }
@@ -111,22 +105,6 @@ public partial class SettingsViewModel : ViewModelBase
         OnPropertyChanged(nameof(Model));
     }
 
-    /// <summary>WPF folder-picker (via OpenFolderDialog on .NET 8) for the resume output folder.</summary>
-    [RelayCommand]
-    public void BrowseResumeFolder()
-    {
-        var dlg = new Microsoft.Win32.OpenFolderDialog
-        {
-            Title = "Select the folder the Word macro saves resumes into"
-        };
-        if (!string.IsNullOrWhiteSpace(Model.ResumeOutputFolder) &&
-            System.IO.Directory.Exists(Model.ResumeOutputFolder))
-        {
-            dlg.InitialDirectory = Model.ResumeOutputFolder;
-        }
-        if (dlg.ShowDialog() == true) Model.ResumeOutputFolder = dlg.FolderName;
-        OnPropertyChanged(nameof(Model));
-    }
 
     [RelayCommand]
     public async Task PushTodayAsync()

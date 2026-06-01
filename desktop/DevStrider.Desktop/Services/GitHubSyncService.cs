@@ -18,14 +18,12 @@ public class GitHubSyncService
     private readonly MongoContext _db;
     private readonly SettingsService _settings;
     private readonly ExportService _export;
-    private readonly ResumeService _resumes;
 
-    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export, ResumeService resumes)
+    public GitHubSyncService(MongoContext db, SettingsService settings, ExportService export)
     {
         _db = db;
         _settings = settings;
         _export = export;
-        _resumes = resumes;
     }
 
     public class RepoFileMeta
@@ -75,37 +73,64 @@ public class GitHubSyncService
     }
 
     /// <summary>
-    /// End-of-day push. Uploads:
-    ///   <c>YYYY-MM-DD/{username}.json</c> — data snapshot (bids, interviews, …)
-    /// plus, for every resume the user uploaded between local-midnight today and now:
-    ///   <c>YYYY-MM-DD/{username}/{filename}</c> — raw resume bytes (PDF/DOCX/…).
-    /// Resumes are base64-encoded by Octokit; existing files are updated, new ones created.
+    /// End-of-day push. Uploads only the data snapshot
+    ///   <c>YYYY-MM-DD/{username}.json</c>
+    /// containing bids / interviews / links / achievements — the rows that drive Overview +
+    /// Stats. The snapshot is encrypted with the user's <see cref="AppSettings.SharingKey"/>
+    /// (AES-GCM) before push; peers decrypt with the same key on import. If no key is
+    /// configured the snapshot uploads as plaintext (legacy behaviour).
+    ///
+    /// Resume bytes are NO LONGER pushed — the group privacy model is that only Overview /
+    /// Stats data is shared. Resume files live only on the originating machine.
     /// </summary>
-    public async Task PushTodayAsync(string username)
+    public async Task<string> PushTodayAsync(string username)
     {
-        var (client, owner, name, branch) = await ClientAsync();
         var day = DateOnly.FromDateTime(DateTime.Now);
         var jsonPath = ExportService.RepoFilePath(day, username);
-        var (json, _) = await _export.BuildAsync(username);
+        var settings = await _settings.GetAsync();
+        bool encrypted = !string.IsNullOrEmpty(settings.SharingKey);
 
-        var message = $"DevStrider sync · {username} · {day:yyyy-MM-dd}";
-        await CreateOrUpdateAsync(client, owner, name, branch, jsonPath, json, message, asBase64: false);
-
-        var dayStart = day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
-        var dayEnd = dayStart.AddDays(1);
-        var todayResumes = await _resumes.ListInRangeAsync(dayStart, dayEnd);
-        var folder = SlugForRepo(username);
-        foreach (var resume in todayResumes)
+        try
         {
-            if (string.IsNullOrWhiteSpace(resume.FileName)) continue;
-            var resumePath = $"{day:yyyy-MM-dd}/{folder}/{resume.FileName}";
-            var base64 = Convert.ToBase64String(resume.Bytes);
-            await CreateOrUpdateAsync(
-                client, owner, name, branch, resumePath, base64,
-                $"Resume · {username} · {resume.FileName}",
-                asBase64: true);
+            var (client, owner, name, branch) = await ClientAsync();
+            var (json, _) = await _export.BuildAsync(username);
+            var payload = EncryptionService.EncryptToEnvelope(json, settings.SharingKey);
+            var message = $"DevStrider sync · {username} · {day:yyyy-MM-dd}";
+            await CreateOrUpdateAsync(client, owner, name, branch, jsonPath, payload, message, asBase64: false);
+
+            await _db.UploadLogs.InsertOneAsync(new UploadLog
+            {
+                DayKey = $"{day:yyyy-MM-dd}",
+                PushedAt = DateTime.UtcNow,
+                RepoPath = jsonPath,
+                Success = true,
+                Encrypted = encrypted,
+                Message = encrypted ? "Pushed (encrypted)." : "Pushed (plaintext)."
+            });
+            return jsonPath;
+        }
+        catch (Exception ex)
+        {
+            await _db.UploadLogs.InsertOneAsync(new UploadLog
+            {
+                DayKey = $"{day:yyyy-MM-dd}",
+                PushedAt = DateTime.UtcNow,
+                RepoPath = jsonPath,
+                Success = false,
+                Encrypted = encrypted,
+                Message = ex.Message
+            });
+            throw;
         }
     }
+
+    /// <summary>Most-recent push history (for the Sharing tab).</summary>
+    public Task<List<UploadLog>> ListUploadLogsAsync(int limit = 100) =>
+        _db.UploadLogs
+           .Find(FilterDefinition<UploadLog>.Empty)
+           .SortByDescending(x => x.PushedAt)
+           .Limit(limit)
+           .ToListAsync();
 
     /// <summary>
     /// Create-or-update a single file in the repo. <paramref name="asBase64"/> tells Octokit
@@ -202,6 +227,20 @@ public class GitHubSyncService
         {
             var bytes = Convert.FromBase64String(content.EncodedContent);
             json = Encoding.UTF8.GetString(bytes);
+        }
+
+        // Decrypt if the payload is an AES-GCM envelope. Plaintext snapshots from older
+        // pushes go through unchanged (DecryptFromEnvelope is a no-op when the input
+        // doesn't look like an envelope).
+        try
+        {
+            var s = await _settings.GetAsync();
+            json = EncryptionService.DecryptFromEnvelope(json ?? "", s.SharingKey);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Couldn't decrypt {meta.Owner}'s snapshot — check the sharing key in Settings. ({ex.Message})", ex);
         }
 
         var snap = new ImportedSnapshot

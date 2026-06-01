@@ -140,28 +140,13 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Resume auto-import" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Sharing key (group passphrase)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="When the Word macro saves a resume to this folder, DevStrider auto-imports it into the Resumes collection. Filename must follow 'UID, Company, Role, Stack1, Stack2, …'."/>
-
-          <TextBlock Text="Output folder"/>
-          <Grid Margin="0,2,0,4">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Grid.Column="0"
-                     Text="{Binding Model.ResumeOutputFolder, UpdateSourceTrigger=PropertyChanged}"
-                     Tag="C:\Users\you\Documents\Resumes"
-                     FontFamily="Consolas"/>
-            <Button Grid.Column="1" Margin="6,0,0,0"
-                    Command="{Binding BrowseResumeFolderCommand}"
-                    Style="{StaticResource IconButton}"
-                    ToolTip="Browse for folder"
-                    Content="&#xE8B7;"/>
-          </Grid>
-          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,0" TextWrapping="Wrap"
-                     Text="Leave blank to disable auto-import (you can still upload manually on the Resumes screen)."/>
+                     Text="Daily snapshots are encrypted with this passphrase before push (AES-GCM, key derived as SHA-256 of the string). Everyone in your local group sets the same value, exchanged out-of-band. Leave blank to push as plaintext."/>
+          <TextBox Text="{Binding Model.SharingKey, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Tag="A long, hard-to-guess passphrase your group agrees on"
+                   Margin="0,2,0,0"/>
         </StackPanel>
       </Border>
     </StackPanel>

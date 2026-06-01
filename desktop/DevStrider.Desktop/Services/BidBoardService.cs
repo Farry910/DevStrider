@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using MongoDB.Bson;
@@ -8,14 +9,26 @@ namespace DevStrider.Desktop.Services;
 /// <summary>
 /// One row on the bid board: the link, the user's bid (if any), and warning flags computed from
 /// cross-row state (duplicate URL, duplicate company+role, prior-interview-at-company).
+///
+/// Inherits <see cref="ObservableObject"/> so the per-row transient <see cref="FastFeedDraft"/>
+/// can two-way-bind to a textbox. Persisted fields (Link / Bid / flags) are set once at
+/// construction and don't need property-changed notifications.
 /// </summary>
-public class BoardRow
+public partial class BoardRow : ObservableObject
 {
     public GroupLink Link { get; set; } = default!;
     public UserBid? Bid { get; set; }
     public bool LinkDuplicate { get; set; }
     public bool DuplicateCompanyRole { get; set; }
     public bool CompanyInterviewWarning { get; set; }
+
+    /// <summary>
+    /// Transient (view-only) buffer for a manually-typed fast-feed line of the form
+    /// "UID, Company, Role, Stack1, Stack2, …". The Apply button calls
+    /// <see cref="DevStrider.Desktop.ViewModels.BidBoardViewModel.ApplyFastFeedAsync"/> which
+    /// parses this and writes the parsed fields onto the bid. Never persisted to Mongo.
+    /// </summary>
+    [ObservableProperty] private string _fastFeedDraft = "";
 
     public string RowKey =>
         Bid != null
