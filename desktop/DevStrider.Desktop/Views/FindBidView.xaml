@@ -30,7 +30,7 @@
         <DataGridTextColumn Header="Status"  Binding="{Binding Bid.Status}" Width="120"/>
         <DataGridTextColumn Header="Created" Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:yyyy-MM-dd}'}" Width="100"/>
         <DataGridTextColumn Header="URL"     Binding="{Binding Url}" Width="2*"/>
-        <DataGridTemplateColumn Header="Actions" Width="60">
+        <DataGridTemplateColumn Header="Actions" Width="60" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <Button Click="OnScheduleClick"

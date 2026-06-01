@@ -42,7 +42,7 @@
             <DataGrid.Columns>
               <DataGridTextColumn Header="Owner" Binding="{Binding Owner}" Width="*"/>
               <DataGridTextColumn Header="Path"  Binding="{Binding Path}" Width="2*"/>
-              <DataGridTemplateColumn Header="Import" Width="56">
+              <DataGridTemplateColumn Header="Import" Width="56" CanUserSort="False">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
                     <Button Command="{Binding DataContext.ImportFileCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
@@ -67,7 +67,7 @@
               <DataGridTextColumn Header="Owner"   Binding="{Binding Owner}" Width="*"/>
               <DataGridTextColumn Header="Day"     Binding="{Binding DayKey}" Width="100"/>
               <DataGridTextColumn Header="Imported" Binding="{Binding ImportedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}" Width="160"/>
-              <DataGridTemplateColumn Header="Remove" Width="56">
+              <DataGridTemplateColumn Header="Remove" Width="56" CanUserSort="False">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>
                     <Button Command="{Binding DataContext.DeleteSnapshotCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"

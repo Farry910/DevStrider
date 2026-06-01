@@ -43,7 +43,7 @@
           </DataGridComboBoxColumn.ItemsSource>
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="UID"        Binding="{Binding ResumeId}" Width="80"/>
-        <DataGridTemplateColumn Header="Actions" Width="150">
+        <DataGridTemplateColumn Header="Actions" Width="150" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">

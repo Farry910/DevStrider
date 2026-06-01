@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Media.Effects;
 using DevStrider.Desktop.ViewModels;
 
 namespace DevStrider.Desktop.Views;
@@ -56,9 +57,10 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 5-px rounded corners look great in the normal state but leave dead transparent pixels
-    /// at the screen corners when maximized (the window touches the monitor edge). Flatten
-    /// to 0 while maximized; restore on return to normal.
+    /// 5-px rounded corners + the drop-shadow gutter look great in the normal state, but when
+    /// maximized the window touches the monitor edge so the rounded transparent pixels and
+    /// the shadow gutter both become dead space at the screen corners. Flatten everything
+    /// flush to the screen on maximize; restore on return to normal.
     /// </summary>
     private void SyncRoundedCorners()
     {
@@ -69,6 +71,17 @@ public partial class MainWindow : Window
         ContentBorder.CornerRadius  = max ? new CornerRadius(0) : new CornerRadius(0, 0, 5, 0);
         // Drop the 1-px outer rim too — otherwise it shows along the screen edges.
         RootBorder.BorderThickness  = max ? new Thickness(0) : new Thickness(1);
+        // Shadow gutter only makes sense when the window has free space around it.
+        RootBorder.Margin = max ? new Thickness(0) : new Thickness(10);
+        RootBorder.Effect = max ? null : new DropShadowEffect
+        {
+            Color = System.Windows.Media.Colors.Black,
+            BlurRadius = 14,
+            ShadowDepth = 0,
+            Opacity = 0.35
+        };
+        // Caption hot-zone shrinks back to just the visible title bar when there's no gutter.
+        Chrome.CaptionHeight = max ? 36 : 46;
     }
 
     private void OnMinimizeClick(object sender, RoutedEventArgs e) =>

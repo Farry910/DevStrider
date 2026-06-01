@@ -171,14 +171,6 @@ public partial class BidBoardViewModel : ViewModelBase
         await ReloadAsync();
     }
 
-    [RelayCommand]
-    public async Task ToggleUselessAsync(object? param)
-    {
-        if (param is not BoardRow row || row.Link == null) return;
-        await _service.SetUselessAsync(row.Link.Id, row.Link.MarkedUselessAt == null);
-        await ReloadAsync();
-    }
-
     /// <summary>
     /// Parse the row's manually-typed fast-feed line and apply it: sets resumeId/company/role/
     /// stacks on the bid and flips status to <c>applied</c>. Mirrors what the extension does

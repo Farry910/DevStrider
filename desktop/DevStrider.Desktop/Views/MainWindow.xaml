@@ -17,21 +17,33 @@
         SnapsToDevicePixels="True">
 
   <!-- WindowChrome keeps OS features (snap, resize-from-edges, Win11 thumbnails) while
-       letting us paint the entire window ourselves. CaptionHeight defines the draggable
-       strip at the top; ResizeBorderThickness is the invisible 6px hot-zone for resizing. -->
+       letting us paint the entire window ourselves. CaptionHeight = 10-px shadow gutter +
+       36-px visible title bar. ResizeBorderThickness covers the gutter + the visible rim so
+       the resize hot-zone still lines up with what the user sees. -->
   <shell:WindowChrome.WindowChrome>
-    <shell:WindowChrome CaptionHeight="36"
+    <shell:WindowChrome x:Name="Chrome"
+                        CaptionHeight="46"
                         CornerRadius="0"
                         GlassFrameThickness="0"
-                        ResizeBorderThickness="6"
+                        ResizeBorderThickness="16"
                         UseAeroCaptionButtons="False"/>
   </shell:WindowChrome.WindowChrome>
 
+  <!-- 10-px Margin reserves room for the DropShadowEffect to bleed past the visible chrome.
+       On maximize, code-behind zeroes out Margin + Effect so the window hugs the screen. -->
   <Border x:Name="RootBorder"
           Background="{StaticResource Bg}"
           BorderBrush="{StaticResource Border}"
           BorderThickness="1"
-          CornerRadius="5">
+          CornerRadius="5"
+          Margin="10">
+    <Border.Effect>
+      <DropShadowEffect x:Name="WindowShadow"
+                        Color="#000000"
+                        BlurRadius="14"
+                        ShadowDepth="0"
+                        Opacity="0.35"/>
+    </Border.Effect>
     <Grid>
       <Grid.RowDefinitions>
         <RowDefinition Height="36"/>

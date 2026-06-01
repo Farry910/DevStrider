@@ -178,39 +178,6 @@ public class BidBoardService
         _ = wasStatus;
     }
 
-    /// <summary>
-    /// Mark a link useless. Local-mode: every link belongs to "you", and you can purge it
-    /// immediately as long as no interview is attached to its bid.
-    /// </summary>
-    public async Task<bool> SetUselessAsync(ObjectId linkId, bool useless)
-    {
-        var link = await _db.Links.Find(l => l.Id == linkId).FirstOrDefaultAsync();
-        if (link == null) return false;
-
-        if (useless)
-        {
-            link.MarkedUselessAt = DateTime.UtcNow;
-            await _db.Links.ReplaceOneAsync(l => l.Id == linkId, link);
-
-            var bids = await _db.Bids.Find(b => b.GroupLinkId == linkId).ToListAsync();
-            var bidIds = bids.Select(b => b.Id).ToList();
-            var hasInterview = bidIds.Count > 0 &&
-                await _db.Interviews.Find(Builders<Interview>.Filter.In(i => i.BidId, bidIds))
-                    .AnyAsync();
-            if (!hasInterview)
-            {
-                await _db.Bids.DeleteManyAsync(b => b.GroupLinkId == linkId);
-                await _db.Links.DeleteOneAsync(l => l.Id == linkId);
-                return true;
-            }
-            return false;
-        }
-
-        link.MarkedUselessAt = null;
-        await _db.Links.ReplaceOneAsync(l => l.Id == linkId, link);
-        return false;
-    }
-
     public Task DeleteBidAsync(ObjectId bidId) =>
         _db.Bids.DeleteOneAsync(b => b.Id == bidId);
 }

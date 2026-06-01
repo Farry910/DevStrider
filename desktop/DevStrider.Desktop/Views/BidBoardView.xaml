@@ -75,7 +75,7 @@
     <!-- Rows -->
     <DataGrid ItemsSource="{Binding Rows}" SelectionUnit="FullRow">
       <DataGrid.Columns>
-        <DataGridTemplateColumn Header="URL" Width="2*">
+        <DataGridTemplateColumn Header="URL" Width="2*" SortMemberPath="Link.Url">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <!-- Clickable hyperlink: opens the URL in the OS default browser via the
@@ -117,7 +117,7 @@
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="Origin"     Binding="{Binding Bid.Origin}" Width="120"/>
         <DataGridTextColumn Header="Created"    Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:MMM dd HH:mm}'}" Width="120"/>
-        <DataGridTemplateColumn Header="Actions" Width="220">
+        <DataGridTemplateColumn Header="Actions" Width="190" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <StackPanel Orientation="Horizontal">
@@ -146,11 +146,6 @@
                         Style="{StaticResource IconButton}"
                         ToolTip="Save row"
                         Content="&#xE74E;"/>
-                <Button Command="{Binding DataContext.ToggleUselessCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
-                        Style="{StaticResource IconButton}"
-                        ToolTip="Mark useless"
-                        Content="&#xE711;"/>
                 <Button Command="{Binding DataContext.DeleteBidCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                         CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
                         Style="{StaticResource DangerIconButton}"
