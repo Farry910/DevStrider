@@ -261,7 +261,7 @@ public class GitHubSyncService
         };
         try
         {
-            var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(json ?? "");
+            var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(json ?? "", SnapshotPayload.JsonOptions);
             if (payload != null) snap.ExportedAt = payload.ExportedAt;
         }
         catch { /* leave ExportedAt = now */ }

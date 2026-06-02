@@ -7,6 +7,7 @@
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="Find bid" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <TextBox Grid.Column="1"
@@ -14,7 +15,21 @@
                Tag="Search company, role, stack, or URL…"
                Margin="16,0,16,0"
                VerticalAlignment="Center"/>
-      <Button Grid.Column="2"
+      <!-- Search window — defaults to 60 days (2-month floor). Widen here when you need older bids. -->
+      <ComboBox Grid.Column="2"
+                SelectedValue="{Binding SearchDaysBack, Mode=TwoWay}"
+                SelectedValuePath="Tag"
+                MinWidth="110"
+                Margin="0,0,8,0"
+                VerticalAlignment="Center"
+                ToolTip="How far back to search">
+        <ComboBoxItem Content="Last 60 days" Tag="60"/>
+        <ComboBoxItem Content="Last 6 months" Tag="180"/>
+        <ComboBoxItem Content="Last year" Tag="365"/>
+        <ComboBoxItem Content="Last 2 years" Tag="730"/>
+        <ComboBoxItem Content="All time" Tag="36500"/>
+      </ComboBox>
+      <Button Grid.Column="3"
               Command="{Binding SearchCommand}"
               Style="{StaticResource IconButton}"
               ToolTip="Refresh search"

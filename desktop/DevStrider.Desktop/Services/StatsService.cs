@@ -97,7 +97,7 @@ public class StatsService
         {
             try
             {
-                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson);
+                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions);
                 if (payload?.Bids == null) continue;
                 foreach (var b in payload.Bids.Where(b => b.Status != BidStatuses.Draft))
                 {
@@ -124,7 +124,7 @@ public class StatsService
         {
             try
             {
-                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson);
+                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions);
                 if (payload == null) continue;
                 rows.Add(BuildPeer(snap.Owner, payload, fromUtc, toUtc));
             }

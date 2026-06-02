@@ -197,5 +197,12 @@ public partial class App : Application
         Tray?.Dispose();
         Tray = null;
         base.OnExit(e);
+
+        // Belt-and-braces: WPF's Shutdown() unwinds the dispatcher but leaves background
+        // threads (LiveCharts/SkiaSharp render thread, Octokit's HttpClient connection-pool
+        // finalizer, lingering Task.Run handlers) alive. Without this the tray icon
+        // disappears but DevStrider.exe lingers in Task Manager, which then blocks the
+        // next `dotnet run` with a file-lock on bin\…\DevStrider.exe.
+        Environment.Exit(e.ApplicationExitCode);
     }
 }

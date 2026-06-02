@@ -41,4 +41,15 @@ public class SnapshotPayload
     public List<UserBid> Bids { get; set; } = new();
     public List<Interview> Interviews { get; set; } = new();
     public List<Achievement> Achievements { get; set; } = new();
+
+    /// <summary>
+    /// JSON options used by every snapshot deserializer in the app. ExportService writes
+    /// the payload with <c>PropertyNamingPolicy = CamelCase</c>; without case-insensitive
+    /// matching here every reader would silently get an empty payload (all properties at
+    /// their default values). Centralised so the two settings can't drift apart.
+    /// </summary>
+    public static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 }

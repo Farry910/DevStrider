@@ -28,6 +28,17 @@ public partial class FindBidViewModel : ViewModelBase
         set { if (SetProperty(ref _query, value)) _ = SearchAsync(); }
     }
 
+    /// <summary>
+    /// How many days back the search reaches. Defaults to 60 (the 2-month floor); changing it
+    /// re-runs the search so the user can widen on demand. Stored in memory only.
+    /// </summary>
+    private int _searchDaysBack = 60;
+    public int SearchDaysBack
+    {
+        get => _searchDaysBack;
+        set { if (SetProperty(ref _searchDaysBack, Math.Max(7, value))) _ = SearchAsync(); }
+    }
+
     private readonly ProfileContext _profileContext;
 
     public FindBidViewModel(MongoContext db, InterviewService interviews, ProfileContext profileContext)
@@ -57,9 +68,12 @@ public partial class FindBidViewModel : ViewModelBase
                 StatusMessage = "No active profile.";
                 return;
             }
-            var bids = await _db.Bids.Find(b => b.ProfileId == profileId)
+            // Search window: at least the last 2 months, ordered newest-first. No count cap —
+            // even a year of heavy bidding (~3-4k rows) is trivial to filter client-side.
+            // Tuneable via the SearchDaysBack property on this VM.
+            var cutoff = DateTime.UtcNow.AddDays(-SearchDaysBack);
+            var bids = await _db.Bids.Find(b => b.ProfileId == profileId && b.UpdatedAt >= cutoff)
                                      .SortByDescending(b => b.UpdatedAt)
-                                     .Limit(500)
                                      .ToListAsync();
             var links = await _db.Links.Find(l => l.ProfileId == profileId).ToListAsync();
             var linksById = links.ToDictionary(l => l.Id);
@@ -71,9 +85,10 @@ public partial class FindBidViewModel : ViewModelBase
                 if (q.Length > 0 && !Matches(b, link, q)) continue;
                 Results.Add(new FindBidRow { Bid = b, Link = link });
             }
+            var window = $"last {SearchDaysBack} day{(SearchDaysBack == 1 ? "" : "s")}";
             StatusMessage = q.Length == 0
-                ? $"{Results.Count} bid{(Results.Count == 1 ? "" : "s")} loaded — type to search."
-                : $"{Results.Count} match{(Results.Count == 1 ? "" : "es")} for \"{q}\".";
+                ? $"{Results.Count} bid{(Results.Count == 1 ? "" : "s")} in the {window} — type to search."
+                : $"{Results.Count} match{(Results.Count == 1 ? "" : "es")} for \"{q}\" in the {window}.";
         }
         finally { IsBusy = false; }
     }

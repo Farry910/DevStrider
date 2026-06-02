@@ -107,7 +107,7 @@ public partial class PeersViewModel : ViewModelBase
             foreach (var snap in snaps)
             {
                 SnapshotPayload? payload;
-                try { payload = JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson); }
+                try { payload = JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions); }
                 catch { continue; }
                 if (payload == null) continue;
 
