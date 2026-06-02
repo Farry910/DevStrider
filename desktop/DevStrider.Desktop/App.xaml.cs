@@ -78,6 +78,7 @@ public partial class App : Application
             services.AddSingleton<AboutViewModel>();
             services.AddSingleton<ActivityViewModel>();
             services.AddSingleton<ProfilesViewModel>();
+            services.AddSingleton<PeersViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();

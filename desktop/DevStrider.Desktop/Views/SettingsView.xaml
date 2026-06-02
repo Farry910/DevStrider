@@ -139,10 +139,20 @@
           <TextBlock Text="Sharing key (group passphrase)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
                      Text="Daily snapshots are encrypted with this passphrase before push (AES-GCM, key derived as SHA-256 of the string). Everyone in your local group sets the same value, exchanged out-of-band. Leave blank to push as plaintext."/>
-          <TextBox Text="{Binding Model.SharingKey, UpdateSourceTrigger=PropertyChanged}"
+          <TextBox Text="{Binding SharingKeyInput, UpdateSourceTrigger=PropertyChanged}"
                    FontFamily="Consolas"
                    Tag="A long, hard-to-guess passphrase your group agrees on"
                    Margin="0,2,0,8"/>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Fingerprint:" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"/>
+            <Border Background="{StaticResource SurfaceAlt}" CornerRadius="3" Padding="6,1" Margin="6,0,0,0" VerticalAlignment="Center">
+              <TextBlock Text="{Binding SharingKeyFingerprint}"
+                         FontFamily="Consolas" FontSize="11"
+                         Foreground="{StaticResource Muted}"/>
+            </Border>
+            <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center"
+                       Text="(share with teammates out-of-band to confirm everyone's typed the same key)"/>
+          </StackPanel>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
                      Text="DPAPI-encrypted into HKCU\Software\DevStrider on Save so it survives a Mongo wipe. Pull a registry-edited value back into the form via the Sync button at the top."/>
         </StackPanel>

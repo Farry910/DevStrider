@@ -42,6 +42,41 @@ public partial class SettingsViewModel : ViewModelBase
     private string _githubTokenPlain = "";
     public string GitHubTokenPlain { get => _githubTokenPlain; set => SetProperty(ref _githubTokenPlain, value); }
 
+    /// <summary>
+    /// Sharing key bound to the TextBox via this property so we can fan out a
+    /// <see cref="SharingKeyFingerprint"/> recomputation on every keystroke. Writes through
+    /// to <see cref="AppSettings.SharingKey"/>; reads from the same on Load.
+    /// </summary>
+    private string _sharingKeyInput = "";
+    public string SharingKeyInput
+    {
+        get => _sharingKeyInput;
+        set
+        {
+            if (SetProperty(ref _sharingKeyInput, value))
+            {
+                Model.SharingKey = value ?? "";
+                OnPropertyChanged(nameof(SharingKeyFingerprint));
+            }
+        }
+    }
+
+    /// <summary>
+    /// First 8 hex characters of SHA-256(SharingKey). Members can compare this short string
+    /// out-of-band to confirm they're using the same key before relying on encrypted pushes.
+    /// </summary>
+    public string SharingKeyFingerprint
+    {
+        get
+        {
+            var k = _sharingKeyInput ?? "";
+            if (string.IsNullOrEmpty(k)) return "(empty)";
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(k));
+            return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
+        }
+    }
+
     [RelayCommand]
     public async Task LoadAsync()
     {
@@ -52,6 +87,7 @@ public partial class SettingsViewModel : ViewModelBase
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
             GitHubTokenPlain = SecretStore.Unprotect(Model.GitHubTokenProtected);
+            SharingKeyInput = Model.SharingKey ?? "";
         }
         finally { IsBusy = false; }
     }
@@ -109,6 +145,7 @@ public partial class SettingsViewModel : ViewModelBase
             var changed = await _registrySync.PullAsync();
             Model = await _settings.GetAsync();
             GitHubTokenPlain = SecretStore.Unprotect(Model.GitHubTokenProtected);
+            SharingKeyInput = Model.SharingKey ?? "";
             StatusMessage = changed
                 ? "Pulled Sharing key + Word macro from registry."
                 : "Already in sync with registry.";
