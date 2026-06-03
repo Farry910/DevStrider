@@ -3,20 +3,19 @@ using DevStrider.Desktop.Models;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// Keeps a small set of fields synchronised between <c>HKCU\Software\DevStrider</c> and
-/// <see cref="AppSettings"/>. The registry is the long-lived copy (survives Mongo wipes);
-/// AppSettings is the working copy used by the rest of the app.
+/// Keeps the Word-macro settings synchronised between <c>HKCU\Software\DevStrider</c> and
+/// <see cref="AppSettings"/> / the active <see cref="Profile"/>. The registry is the
+/// long-lived copy (survives Mongo wipes); AppSettings + Profile are the working copies.
 ///
 /// <para>
-/// Synced fields: <c>SharingKey</c> (DPAPI-encrypted in the registry), <c>WordDocPath</c>,
-/// <c>WordHotkey</c>. Everything else stays Mongo-only.
+/// Synced fields: <c>WordHotkey</c> (global) + <c>WordDocPath</c> (active profile's path —
+/// registry holds what's effective right now). Everything else stays Mongo-only.
 /// </para>
 /// </summary>
 public sealed class RegistrySyncService
 {
-    public const string SharingKeyValue   = "SharingKey";
-    public const string WordDocPathValue  = "WordDocPath";
-    public const string WordHotkeyValue   = "WordHotkey";
+    public const string WordDocPathValue = "WordDocPath";
+    public const string WordHotkeyValue  = "WordHotkey";
 
     private readonly RegistryStore _registry;
     private readonly SettingsService _settings;
@@ -39,22 +38,13 @@ public sealed class RegistrySyncService
     }
 
     /// <summary>
-    /// Registry → AppSettings + active profile. WordDocPath in registry mirrors the
-    /// **currently active profile's** path (registry is "what's effective right now").
-    /// Returns true if anything changed.
+    /// Registry → AppSettings + active profile. Returns true if anything changed.
     /// </summary>
     public async Task<bool> PullAsync()
     {
         var s = await _settings.GetAsync();
         var dirty = false;
         var profileDirty = false;
-
-        var sharing = _registry.ReadProtected(SharingKeyValue);
-        if (sharing != null && !string.Equals(sharing, s.SharingKey ?? "", StringComparison.Ordinal))
-        {
-            s.SharingKey = sharing;
-            dirty = true;
-        }
 
         var hotkey = _registry.Read(WordHotkeyValue);
         if (hotkey != null && !string.Equals(hotkey, s.WordHotkey ?? "", StringComparison.Ordinal))
@@ -63,7 +53,7 @@ public sealed class RegistrySyncService
             dirty = true;
         }
 
-        // Word doc path only applies to the active profile.
+        // Word doc path applies to the active profile only.
         var active = _profileContext.Current;
         if (active != null)
         {
@@ -85,26 +75,23 @@ public sealed class RegistrySyncService
     }
 
     /// <summary>
-    /// AppSettings + active profile → Registry. Writes Sharing key (DPAPI), Word hotkey, and
-    /// the active profile's Word doc path. Empty values are deleted from the registry.
+    /// AppSettings + active profile → Registry. Empty values are deleted from the registry.
     /// </summary>
     public async Task PushAsync()
     {
         var s = await _settings.GetAsync();
-        _registry.WriteProtected(SharingKeyValue, s.SharingKey ?? "");
         _registry.Write(WordHotkeyValue, s.WordHotkey ?? "");
         _registry.Write(WordDocPathValue, _profileContext.Current?.WordDocPath ?? "");
     }
 
     /// <summary>
-    /// Launch-time reconciliation: if the registry has any of the three values, pull (the
+    /// Launch-time reconciliation: if the registry has any of the values, pull (the
     /// registry wins). Otherwise the AppSettings copy is the only known good state and we
     /// seed the registry from it so future launches survive a Mongo wipe.
     /// </summary>
     public async Task InitialSyncAsync()
     {
         var hasRegistry =
-            _registry.Read(SharingKeyValue)  != null ||
             _registry.Read(WordHotkeyValue)  != null ||
             _registry.Read(WordDocPathValue) != null;
 

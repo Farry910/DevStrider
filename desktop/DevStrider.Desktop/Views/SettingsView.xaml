@@ -139,29 +139,6 @@
         </StackPanel>
       </Border>
 
-      <Border Style="{StaticResource Card}">
-        <StackPanel>
-          <TextBlock Text="Sharing key (group passphrase)" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Reserved for a future per-row encryption layer on peer sync. Today peer data goes over TLS to your shared cluster as plaintext; the cluster's access control is the only protection. Set the same value across the team if you plan to opt in later — the fingerprint below makes it easy to confirm a match."/>
-          <TextBox Text="{Binding SharingKeyInput, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   Tag="A long, hard-to-guess passphrase your group agrees on"
-                   Margin="0,2,0,8"/>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <TextBlock Text="Fingerprint:" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"/>
-            <Border Background="{StaticResource SurfaceAlt}" CornerRadius="3" Padding="6,1" Margin="6,0,0,0" VerticalAlignment="Center">
-              <TextBlock Text="{Binding SharingKeyFingerprint}"
-                         FontFamily="Consolas" FontSize="11"
-                         Foreground="{StaticResource Muted}"/>
-            </Border>
-            <TextBlock Foreground="{StaticResource Muted}" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center"
-                       Text="(share with teammates out-of-band to confirm everyone's typed the same key)"/>
-          </StackPanel>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="DPAPI-encrypted into HKCU\Software\DevStrider on Save so it survives a Mongo wipe. Pull a registry-edited value back into the form via the Sync button at the top."/>
-        </StackPanel>
-      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -29,6 +29,9 @@ public class AppSettings
     /// <summary>UTC timestamp of the last successful peer sync. Drives delta queries.</summary>
     public DateTime LastSyncAt { get; set; } = DateTime.MinValue;
 
+    /// <summary>UTC timestamp of the last successful legacy-database import (web-app schema → local).</summary>
+    public DateTime LegacyMigratedAt { get; set; } = DateTime.MinValue;
+
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
     /// sync with the Chrome extension's configured base URL. Localhost binding means no
@@ -59,13 +62,6 @@ public class AppSettings
     /// deserialize cleanly.
     /// </summary>
     public string ResumeOutputFolder { get; set; } = "";
-
-    /// <summary>
-    /// Shared passphrase the local group agrees on out-of-band. Currently unused (peer
-    /// sync over Atlas is plaintext + TLS); preserved for a future per-row encryption layer
-    /// and for the fingerprint display in Settings.
-    /// </summary>
-    public string SharingKey { get; set; } = "";
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

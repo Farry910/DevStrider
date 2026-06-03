@@ -16,21 +16,30 @@ public partial class SharingViewModel : ViewModelBase
     private readonly AtlasContext _atlas;
     private readonly SettingsService _settings;
     private readonly ActivityLogService _activity;
+    private readonly LegacyMigrationService _legacy;
 
     public SharingViewModel(
         AtlasSyncService sync,
         AtlasContext atlas,
         SettingsService settings,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        LegacyMigrationService legacy)
     {
         _sync = sync;
         _atlas = atlas;
         _settings = settings;
         _activity = activity;
+        _legacy = legacy;
     }
 
     private string _lastSyncDisplay = "Never";
     public string LastSyncDisplay { get => _lastSyncDisplay; set => SetProperty(ref _lastSyncDisplay, value); }
+
+    private string _legacyMigratedDisplay = "Never";
+    public string LegacyMigratedDisplay { get => _legacyMigratedDisplay; set => SetProperty(ref _legacyMigratedDisplay, value); }
+
+    private string _legacyEmail = "";
+    public string LegacyEmail { get => _legacyEmail; set => SetProperty(ref _legacyEmail, value); }
 
     /// <summary>true when <see cref="Models.AppSettings.SharedMongoUri"/> is set.</summary>
     private bool _isConfigured;
@@ -46,6 +55,9 @@ public partial class SharingViewModel : ViewModelBase
         IsConfigured = !string.IsNullOrWhiteSpace(s.SharedMongoUri);
         LastSyncDisplay = s.LastSyncAt > DateTime.MinValue
             ? $"{s.LastSyncAt:yyyy-MM-dd HH:mm:ss} UTC"
+            : "Never";
+        LegacyMigratedDisplay = s.LegacyMigratedAt > DateTime.MinValue
+            ? $"{s.LegacyMigratedAt:yyyy-MM-dd HH:mm:ss} UTC"
             : "Never";
         if (IsConfigured)
         {
@@ -69,6 +81,38 @@ public partial class SharingViewModel : ViewModelBase
             var result = await _sync.SyncAsync();
             StatusMessage = result;
             await LoadAsync();
+        }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>
+    /// Pull this user's data from the legacy web-app collections in Atlas
+    /// (users / groups / grouplinks / userbids / interviews) into local Mongo.
+    /// Each legacy group becomes its own local profile; bids + interviews +
+    /// links attach to the matching profile. Idempotent — re-running picks up
+    /// any new web-app rows.
+    /// </summary>
+    [RelayCommand]
+    public async Task MigrateLegacyAsync()
+    {
+        var email = (LegacyEmail ?? "").Trim();
+        if (email.Length == 0)
+        {
+            StatusMessage = "Enter the email you used in the web app first.";
+            return;
+        }
+        IsBusy = true;
+        try
+        {
+            StatusMessage = $"Pulling legacy data for {email}…";
+            var result = await _legacy.MigrateAsync(email);
+            StatusMessage = result.Summary;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Legacy import failed: {ex.Message}";
+            _activity.Error("Migration", "Legacy import crashed", ex.Message);
         }
         finally { IsBusy = false; }
     }

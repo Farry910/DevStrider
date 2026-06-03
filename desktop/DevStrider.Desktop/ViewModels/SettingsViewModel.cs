@@ -38,39 +38,6 @@ public partial class SettingsViewModel : ViewModelBase
     /// <summary>Mirror of <see cref="UserProfile.Username"/> — your filename in the shared cluster.</summary>
     public string Username { get => _username; set => SetProperty(ref _username, value); }
 
-    /// <summary>
-    /// Sharing key bound to the TextBox via this property so we can fan out a
-    /// <see cref="SharingKeyFingerprint"/> recomputation on every keystroke. Writes through
-    /// to <see cref="AppSettings.SharingKey"/>; reads from the same on Load. Kept for the
-    /// fingerprint UI and as a placeholder for a future per-row encryption layer.
-    /// </summary>
-    private string _sharingKeyInput = "";
-    public string SharingKeyInput
-    {
-        get => _sharingKeyInput;
-        set
-        {
-            if (SetProperty(ref _sharingKeyInput, value))
-            {
-                Model.SharingKey = value ?? "";
-                OnPropertyChanged(nameof(SharingKeyFingerprint));
-            }
-        }
-    }
-
-    /// <summary>First 8 hex chars of SHA-256(SharingKey) — members compare out-of-band.</summary>
-    public string SharingKeyFingerprint
-    {
-        get
-        {
-            var k = _sharingKeyInput ?? "";
-            if (string.IsNullOrEmpty(k)) return "(empty)";
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(k));
-            return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
-        }
-    }
-
     [RelayCommand]
     public async Task LoadAsync()
     {
@@ -80,7 +47,6 @@ public partial class SettingsViewModel : ViewModelBase
             Model = await _settings.GetAsync();
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
-            SharingKeyInput = Model.SharingKey ?? "";
         }
         finally { IsBusy = false; }
     }
@@ -124,8 +90,8 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Pull Sharing key + Word macro from the registry into the form (discards unsaved edits
-    /// to those three fields).
+    /// Pull Word macro (path + hotkey) from the registry into the form (discards unsaved
+    /// edits to those fields).
     /// </summary>
     [RelayCommand]
     public async Task SyncFromRegistryAsync()
@@ -135,12 +101,11 @@ public partial class SettingsViewModel : ViewModelBase
         {
             var changed = await _registrySync.PullAsync();
             Model = await _settings.GetAsync();
-            SharingKeyInput = Model.SharingKey ?? "";
             StatusMessage = changed
-                ? "Pulled Sharing key + Word macro from registry."
+                ? "Pulled Word macro from registry."
                 : "Already in sync with registry.";
             _activity.Success("Registry", "Synced from registry",
-                changed ? "Sharing key / Word macro updated from HKCU\\Software\\DevStrider." : "Already in sync.");
+                changed ? "Word macro updated from HKCU\\Software\\DevStrider." : "Already in sync.");
         }
         catch (Exception ex)
         {

@@ -62,6 +62,7 @@ public partial class App : Application
             services.AddSingleton<RegistrySyncService>();
             services.AddSingleton<AtlasContext>();
             services.AddSingleton<AtlasSyncService>();
+            services.AddSingleton<LegacyMigrationService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 

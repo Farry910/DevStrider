@@ -34,7 +34,7 @@ public class AboutViewModel : ViewModelBase
     public string DataLocation => "MongoDB (local) · 127.0.0.1:27017/devstrider";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
     public string RegistryLocation =>
-        @"HKCU\Software\DevStrider · SharingKey (DPAPI), WordDocPath, WordHotkey · mirrored on Save, pulled by Sync button";
+        @"HKCU\Software\DevStrider · WordDocPath (active profile), WordHotkey · mirrored on Save, pulled by Sync from registry";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
@@ -54,7 +54,6 @@ public class AboutViewModel : ViewModelBase
         Add("DEVSTRIDER_LISTENER_PORT",      "AppSettings.ListenerPort",      "Local HTTP listener port. Default 8765.");
         Add("DEVSTRIDER_WORD_DOC_PATH",      "Default profile's WordDocPath", "Full path to the .docm with the resume macro. Seeded into the default profile on first launch; edit per-profile under Profiles afterwards.");
         Add("DEVSTRIDER_WORD_HOTKEY",        "AppSettings.WordHotkey",        "Keyboard shortcut that triggers the macro. Default F9.");
-        Add("DEVSTRIDER_SHARING_KEY",        "AppSettings.SharingKey",        "Group passphrase reserved for a future per-row encryption layer.", isSecret: true);
     }
 
     private void Add(string name, string field, string desc, bool isSecret = false)

@@ -41,6 +41,39 @@
         </StackPanel>
       </Border>
 
+      <!-- Legacy import card -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Import from legacy database (one-time)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Pull your web-app data into local Mongo. Each web-app group becomes its own local profile and the matching bids / interviews / links attach to it. Safe to re-run — upserts are keyed on the legacy _id, so the same row never imports twice."/>
+
+          <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="140"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Last imported" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text="{Binding LegacyMigratedDisplay}" FontFamily="Consolas" VerticalAlignment="Center"/>
+          </Grid>
+
+          <TextBlock Text="Email used in the web app"/>
+          <TextBox Text="{Binding LegacyEmail, UpdateSourceTrigger=PropertyChanged}"
+                   Tag="you@example.com"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"/>
+
+          <Button Command="{Binding MigrateLegacyCommand}"
+                  IsEnabled="{Binding IsConfigured}"
+                  HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Text="Import legacy data" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </Border>
+
       <!-- Reset card -->
       <Border Style="{StaticResource Card}">
         <StackPanel>

@@ -17,7 +17,6 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_LISTENER_PORT     → AppSettings.ListenerPort            (when default 8765)
 ///   DEVSTRIDER_WORD_DOC_PATH     → AppSettings.WordDocPath             (when empty)
 ///   DEVSTRIDER_WORD_HOTKEY       → AppSettings.WordHotkey              (when default "F9")
-///   DEVSTRIDER_SHARING_KEY       → AppSettings.SharingKey              (when empty)
 ///
 /// Note: MongoUri / DatabaseName get seeded into AppSettings here for the UI to display
 /// them, but the live MongoContext is constructed from the same env vars at startup
@@ -38,7 +37,6 @@ public static class SettingsBootstrap
         settingsDirty |= SeedIfMatch(settings.SharedDatabaseName, "devstrider-shared",         "DEVSTRIDER_SHARED_DATABASE",  v => settings.SharedDatabaseName = v);
         settingsDirty |= SeedIfEmpty(settings.WordDocPath,                                     "DEVSTRIDER_WORD_DOC_PATH",    v => settings.WordDocPath = v);
         settingsDirty |= SeedIfMatch(settings.WordHotkey,         "F9",                        "DEVSTRIDER_WORD_HOTKEY",      v => settings.WordHotkey = v);
-        settingsDirty |= SeedIfEmpty(settings.SharingKey,                                      "DEVSTRIDER_SHARING_KEY",      v => settings.SharingKey = v);
 
         // Int field — accept only well-formed integers in the listening-port range.
         if (settings.ListenerPort == 8765)
