@@ -4,9 +4,11 @@ using System.Text;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// DPAPI wrapper: lets us persist the GitHub PAT in the local Mongo doc but keep it readable
-/// only by the current Windows user. Round-trips through base64 so the ciphertext survives
-/// the JSON / BSON layer cleanly.
+/// DPAPI wrapper: encrypts a string with the current Windows user's master key so it can
+/// be persisted in plaintext-ish storage (Mongo, registry, JSON file) without being
+/// readable from another account. Round-trips through base64 so the ciphertext survives
+/// the JSON / BSON layer cleanly. Used today by <see cref="RegistryStore.WriteProtected"/>;
+/// available for any future secret a feature wants to stash.
 /// </summary>
 public static class SecretStore
 {

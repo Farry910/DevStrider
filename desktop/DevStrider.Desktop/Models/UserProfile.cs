@@ -12,7 +12,11 @@ public class UserProfile
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    /// <summary>Stable identity used as the GitHub-sync file prefix.</summary>
+    /// <summary>
+    /// Stable nickname for this machine. Stamped as <c>OwnerUsername</c> on every row pushed
+    /// to the shared peer cluster, and used as the local match against incoming peer rows so
+    /// the sync service can skip your own contributions on pull.
+    /// </summary>
     public string Username { get; set; } = "me";
     public string DisplayName { get; set; } = "";
     public string Headline { get; set; } = "";
