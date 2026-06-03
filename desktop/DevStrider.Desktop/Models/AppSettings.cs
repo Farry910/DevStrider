@@ -4,30 +4,35 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace DevStrider.Desktop.Models;
 
 /// <summary>
-/// One-row singleton holding install-level settings (mongo URI, GitHub PAT, team repo URL).
-/// PAT is stored DPAPI-protected (see <see cref="DevStrider.Desktop.Services.SecretStore"/>).
+/// One-row singleton holding install-level settings. <see cref="MongoContext"/> reads it on
+/// startup; the Settings UI is the editor. Unknown fields are tolerated (BSON convention)
+/// so removed fields from older installs deserialize quietly.
 /// </summary>
 public class AppSettings
 {
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    /// <summary>Defaults to the local docker / msi install.</summary>
+    /// <summary>Local Mongo connection — defaults to the standard local install.</summary>
     public string MongoUri { get; set; } = "mongodb://127.0.0.1:27017";
     public string DatabaseName { get; set; } = "devstrider";
 
-    /// <summary>e.g. "https://github.com/your-team/devstrider-sync" (https form preferred).</summary>
-    public string GitHubRepoUrl { get; set; } = "";
-    /// <summary>Branch to push/pull from. Defaults to "main".</summary>
-    public string GitHubBranch { get; set; } = "main";
-    /// <summary>Encrypted PAT bytes (DPAPI, current-user scope). Base64 of the ciphertext.</summary>
-    public string GitHubTokenProtected { get; set; } = "";
+    /// <summary>
+    /// Atlas / shared-cluster connection used for peer sync. Empty disables sync.
+    /// Format: <c>mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&amp;w=majority</c>.
+    /// </summary>
+    public string SharedMongoUri { get; set; } = "";
+
+    /// <summary>Database inside the shared cluster that holds <c>peerBids</c> + <c>peerInterviews</c>.</summary>
+    public string SharedDatabaseName { get; set; } = "devstrider-shared";
+
+    /// <summary>UTC timestamp of the last successful peer sync. Drives delta queries.</summary>
+    public DateTime LastSyncAt { get; set; } = DateTime.MinValue;
 
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
     /// sync with the Chrome extension's configured base URL. Localhost binding means no
-    /// authentication is required. The listener always starts at app launch; only the port
-    /// is configurable (collision recovery).
+    /// authentication is required.
     /// </summary>
     public int ListenerPort { get; set; } = 8765;
 
@@ -51,14 +56,14 @@ public class AppSettings
     /// <summary>
     /// Folder the Word macro saves generated resume files into. **No longer used** for
     /// auto-ingest — resumes aren't stored or shared. Kept on the schema only so old docs
-    /// deserialize cleanly. Future cleanup can drop this field after data migration.
+    /// deserialize cleanly.
     /// </summary>
     public string ResumeOutputFolder { get; set; } = "";
 
     /// <summary>
-    /// Shared passphrase the local group agrees on out-of-band. Used to encrypt every
-    /// snapshot before push and decrypt every peer's snapshot on import (AES-GCM, key
-    /// derived from SHA-256 of this string). Empty = push/import as plaintext (legacy).
+    /// Shared passphrase the local group agrees on out-of-band. Currently unused (peer
+    /// sync over Atlas is plaintext + TLS); preserved for a future per-row encryption layer
+    /// and for the fingerprint display in Settings.
     /// </summary>
     public string SharingKey { get; set; } = "";
 

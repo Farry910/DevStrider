@@ -27,8 +27,9 @@ public class AboutViewModel : ViewModelBase
 
     public string Summary =>
         "Local-first job-bid tracker. The Chrome extension records bids to the local " +
-        "HTTP listener; daily snapshots are AES-GCM-encrypted with your group passphrase " +
-        "and pushed to a shared GitHub repo so peers can import each other's day.";
+        "HTTP listener; peers see each other's bids/interviews via the shared MongoDB " +
+        "cluster configured in Settings (Sync button on the Sharing tab triggers a " +
+        "two-way delta sync).";
 
     public string DataLocation => "MongoDB (local) · 127.0.0.1:27017/devstrider";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
@@ -38,23 +39,22 @@ public class AboutViewModel : ViewModelBase
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
         "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
-        "(setx DEVSTRIDER_GITHUB_PAT \"ghp_…\"), restart DevStrider, then clear the env " +
-        "var if you like — the PAT is DPAPI-encrypted in Mongo after first run.";
+        "(setx DEVSTRIDER_SHARED_MONGO_URI \"mongodb+srv://…\"), restart DevStrider, then " +
+        "clear the env var if you want — values are saved to your local Mongo after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
 
     public AboutViewModel()
     {
-        Add("DEVSTRIDER_MONGO_URI",        "AppSettings.MongoUri",         "MongoDB connection string. Default mongodb://127.0.0.1:27017.");
-        Add("DEVSTRIDER_DATABASE_NAME",    "AppSettings.DatabaseName",     "MongoDB database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_USERNAME",         "UserProfile.Username",         "Your username in the team repo (filename of your daily snapshot). Defaults to your Windows account name.");
-        Add("DEVSTRIDER_GITHUB_REPO_URL",  "AppSettings.GitHubRepoUrl",    "https://github.com/your-team/repo for shared daily snapshots.");
-        Add("DEVSTRIDER_GITHUB_BRANCH",    "AppSettings.GitHubBranch",     "Branch to push/pull. Default 'main'.");
-        Add("DEVSTRIDER_GITHUB_PAT",       "AppSettings.GitHubToken",      "Personal access token (repo scope). DPAPI-encrypted after first seed.", isSecret: true);
-        Add("DEVSTRIDER_LISTENER_PORT",    "AppSettings.ListenerPort",     "Local HTTP listener port. Default 8765.");
-        Add("DEVSTRIDER_WORD_DOC_PATH",    "Default profile's WordDocPath", "Full path to the .docm with the resume macro. Seeded into the default profile on first launch; edit per-profile under Profiles afterwards.");
-        Add("DEVSTRIDER_WORD_HOTKEY",      "AppSettings.WordHotkey",       "Keyboard shortcut that triggers the macro. Default F9.");
-        Add("DEVSTRIDER_SHARING_KEY",      "AppSettings.SharingKey",       "Group passphrase. AES-GCM key for snapshot encryption.", isSecret: true);
+        Add("DEVSTRIDER_MONGO_URI",          "AppSettings.MongoUri",          "Local MongoDB connection string. Default mongodb://127.0.0.1:27017.");
+        Add("DEVSTRIDER_DATABASE_NAME",      "AppSettings.DatabaseName",      "Local MongoDB database name. Default 'devstrider'.");
+        Add("DEVSTRIDER_USERNAME",           "UserProfile.Username",          "Your username in the shared cluster. Defaults to your Windows account name.");
+        Add("DEVSTRIDER_SHARED_MONGO_URI",   "AppSettings.SharedMongoUri",    "Atlas / shared MongoDB connection string. Empty disables peer sync.", isSecret: true);
+        Add("DEVSTRIDER_SHARED_DATABASE",    "AppSettings.SharedDatabaseName","Shared DB name. Default 'devstrider-shared'.");
+        Add("DEVSTRIDER_LISTENER_PORT",      "AppSettings.ListenerPort",      "Local HTTP listener port. Default 8765.");
+        Add("DEVSTRIDER_WORD_DOC_PATH",      "Default profile's WordDocPath", "Full path to the .docm with the resume macro. Seeded into the default profile on first launch; edit per-profile under Profiles afterwards.");
+        Add("DEVSTRIDER_WORD_HOTKEY",        "AppSettings.WordHotkey",        "Keyboard shortcut that triggers the macro. Default F9.");
+        Add("DEVSTRIDER_SHARING_KEY",        "AppSettings.SharingKey",        "Group passphrase reserved for a future per-row encryption layer.", isSecret: true);
     }
 
     private void Add(string name, string field, string desc, bool isSecret = false)

@@ -8,44 +8,41 @@ public partial class SettingsViewModel : ViewModelBase
 {
     private readonly SettingsService _settings;
     private readonly ProfileService _profiles;
-    private readonly GitHubSyncService _sync;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
     private readonly RegistrySyncService _registrySync;
+    private readonly AtlasContext _atlas;
 
     public LocalApiServer LocalApi => _localApi;
 
     public SettingsViewModel(
         SettingsService settings,
         ProfileService profiles,
-        GitHubSyncService sync,
         LocalApiServer localApi,
         ActivityLogService activity,
-        RegistrySyncService registrySync)
+        RegistrySyncService registrySync,
+        AtlasContext atlas)
     {
         _settings = settings;
         _profiles = profiles;
-        _sync = sync;
         _localApi = localApi;
         _activity = activity;
         _registrySync = registrySync;
+        _atlas = atlas;
     }
 
     private AppSettings _model = new();
     public AppSettings Model { get => _model; set => SetProperty(ref _model, value); }
 
     private string _username = "me";
-    /// <summary>Mirror of <see cref="UserProfile.Username"/> — what your file is named in the team repo.</summary>
+    /// <summary>Mirror of <see cref="UserProfile.Username"/> — your filename in the shared cluster.</summary>
     public string Username { get => _username; set => SetProperty(ref _username, value); }
-
-    /// <summary>Plaintext PAT bound to the password box; protected on save.</summary>
-    private string _githubTokenPlain = "";
-    public string GitHubTokenPlain { get => _githubTokenPlain; set => SetProperty(ref _githubTokenPlain, value); }
 
     /// <summary>
     /// Sharing key bound to the TextBox via this property so we can fan out a
     /// <see cref="SharingKeyFingerprint"/> recomputation on every keystroke. Writes through
-    /// to <see cref="AppSettings.SharingKey"/>; reads from the same on Load.
+    /// to <see cref="AppSettings.SharingKey"/>; reads from the same on Load. Kept for the
+    /// fingerprint UI and as a placeholder for a future per-row encryption layer.
     /// </summary>
     private string _sharingKeyInput = "";
     public string SharingKeyInput
@@ -61,10 +58,7 @@ public partial class SettingsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>
-    /// First 8 hex characters of SHA-256(SharingKey). Members can compare this short string
-    /// out-of-band to confirm they're using the same key before relying on encrypted pushes.
-    /// </summary>
+    /// <summary>First 8 hex chars of SHA-256(SharingKey) — members compare out-of-band.</summary>
     public string SharingKeyFingerprint
     {
         get
@@ -86,7 +80,6 @@ public partial class SettingsViewModel : ViewModelBase
             Model = await _settings.GetAsync();
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
-            GitHubTokenPlain = SecretStore.Unprotect(Model.GitHubTokenProtected);
             SharingKeyInput = Model.SharingKey ?? "";
         }
         finally { IsBusy = false; }
@@ -98,7 +91,6 @@ public partial class SettingsViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            Model.GitHubTokenProtected = SecretStore.Protect(GitHubTokenPlain ?? "");
             await _settings.SaveAsync(Model);
 
             // Mirror Sharing key + Word macro into the registry so they outlive Mongo.
@@ -133,8 +125,7 @@ public partial class SettingsViewModel : ViewModelBase
 
     /// <summary>
     /// Pull Sharing key + Word macro from the registry into the form (discards unsaved edits
-    /// to those three fields). Use after editing the registry from outside DevStrider, or to
-    /// restore values after wiping Mongo.
+    /// to those three fields).
     /// </summary>
     [RelayCommand]
     public async Task SyncFromRegistryAsync()
@@ -144,7 +135,6 @@ public partial class SettingsViewModel : ViewModelBase
         {
             var changed = await _registrySync.PullAsync();
             Model = await _settings.GetAsync();
-            GitHubTokenPlain = SecretStore.Unprotect(Model.GitHubTokenProtected);
             SharingKeyInput = Model.SharingKey ?? "";
             StatusMessage = changed
                 ? "Pulled Sharing key + Word macro from registry."
@@ -160,24 +150,18 @@ public partial class SettingsViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    // BrowseWordPath moved to ProfilesViewModel — the field is per-profile now.
-
-
+    /// <summary>Save current form, then ping the shared cluster — surfaces TLS / auth / DNS errors fast.</summary>
     [RelayCommand]
-    public async Task PushTodayAsync()
+    public async Task TestSharedConnectionAsync()
     {
         IsBusy = true;
         try
         {
-            var profile = await _profiles.GetAsync();
-            await _sync.PushTodayAsync(profile.Username);
-            StatusMessage = $"Pushed snapshot to GitHub ({profile.Username}.json under today).";
-            _activity.Success("GitHub", "Snapshot pushed", $"{profile.Username}.json · today");
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Push failed: {ex.Message}";
-            _activity.Error("GitHub", "Snapshot push failed", ex.Message);
+            await _settings.SaveAsync(Model);
+            var (ok, message) = await _atlas.TestConnectionAsync();
+            StatusMessage = ok ? $"Shared cluster reachable: {message}" : $"Shared cluster unreachable: {message}";
+            if (ok) _activity.Success("Atlas", "Connection test passed", message);
+            else _activity.Error("Atlas", "Connection test failed", message);
         }
         finally { IsBusy = false; }
     }

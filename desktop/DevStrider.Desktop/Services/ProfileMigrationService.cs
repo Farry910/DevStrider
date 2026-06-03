@@ -15,7 +15,7 @@ namespace DevStrider.Desktop.Services;
 ///         (or "Default") and copy the legacy <see cref="AppSettings.WordDocPath"/> into it.</item>
 ///   <item>Set <see cref="AppSettings.ActiveProfileId"/> to a valid profile if it's unset or
 ///         points to a deleted profile.</item>
-///   <item>Backfill <c>ProfileId</c> on any Link / Bid / Interview / ImportedSnapshot with
+///   <item>Backfill <c>ProfileId</c> on any Link / Bid / Interview with
 ///         <see cref="ObjectId.Empty"/> — they all belong to the seed profile.</item>
 /// </list>
 /// </summary>
@@ -88,19 +88,14 @@ public sealed class ProfileMigrationService
                 Builders<Interview>.Filter.Eq(i => i.ProfileId, ObjectId.Empty),
                 Builders<Interview>.Update.Set(i => i.ProfileId, backfillTarget));
 
-            var snapResult = await _db.ImportedSnapshots.UpdateManyAsync(
-                Builders<ImportedSnapshot>.Filter.Eq(s => s.ProfileId, ObjectId.Empty),
-                Builders<ImportedSnapshot>.Update.Set(s => s.ProfileId, backfillTarget));
-
             var totalBackfilled =
-                linkResult.ModifiedCount + bidResult.ModifiedCount +
-                ivResult.ModifiedCount + snapResult.ModifiedCount;
+                linkResult.ModifiedCount + bidResult.ModifiedCount + ivResult.ModifiedCount;
 
             if (totalBackfilled > 0)
             {
                 _activity.Info("Profiles", "Backfilled legacy data",
                     $"{linkResult.ModifiedCount} links, {bidResult.ModifiedCount} bids, " +
-                    $"{ivResult.ModifiedCount} interviews, {snapResult.ModifiedCount} snapshots → " +
+                    $"{ivResult.ModifiedCount} interviews → " +
                     $"profile '{profiles.First(p => p.Id == backfillTarget).Name}'.",
                     silent: true);
             }

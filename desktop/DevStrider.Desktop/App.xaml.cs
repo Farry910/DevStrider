@@ -48,22 +48,20 @@ public partial class App : Application
             services.AddSingleton(_ => new MongoContext(mongoUri, mongoDb));
 
             services.AddSingleton<SettingsService>();
-            // ProfileService is kept (no longer surfaced in the UI but still used by
-            // GitHubSyncService for the local username + by older code paths).
-            services.AddSingleton<ProfileService>();
-            services.AddSingleton<ProfilesService>();
+            services.AddSingleton<ProfileService>();      // singleton Username row (legacy name)
+            services.AddSingleton<ProfilesService>();     // multi-profile CRUD
             services.AddSingleton<ProfileContext>();
             services.AddSingleton<ProfileMigrationService>();
             services.AddSingleton<BidBoardService>();
             services.AddSingleton<InterviewService>();
             services.AddSingleton<StatsService>();
             services.AddSingleton<AchievementService>();
-            services.AddSingleton<ExportService>();
             services.AddSingleton<ResumeService>();
-            services.AddSingleton<GitHubSyncService>();
             services.AddSingleton<ActivityLogService>();
             services.AddSingleton<RegistryStore>();
             services.AddSingleton<RegistrySyncService>();
+            services.AddSingleton<AtlasContext>();
+            services.AddSingleton<AtlasSyncService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -74,7 +72,6 @@ public partial class App : Application
             services.AddSingleton<StatsViewModel>();
             services.AddSingleton<SharingViewModel>();
             services.AddSingleton<SettingsViewModel>();
-            services.AddSingleton<ImportViewModel>();
             services.AddSingleton<AboutViewModel>();
             services.AddSingleton<ActivityViewModel>();
             services.AddSingleton<ProfilesViewModel>();
@@ -199,10 +196,10 @@ public partial class App : Application
         base.OnExit(e);
 
         // Belt-and-braces: WPF's Shutdown() unwinds the dispatcher but leaves background
-        // threads (LiveCharts/SkiaSharp render thread, Octokit's HttpClient connection-pool
-        // finalizer, lingering Task.Run handlers) alive. Without this the tray icon
-        // disappears but DevStrider.exe lingers in Task Manager, which then blocks the
-        // next `dotnet run` with a file-lock on bin\…\DevStrider.exe.
+        // threads (LiveCharts/SkiaSharp render thread, MongoClient's connection pool, the
+        // FileSystemWatcher in ResumeAutoIngestService, etc.) alive. Without this the
+        // tray icon disappears but DevStrider.exe lingers in Task Manager, which then
+        // blocks the next `dotnet run` with a file-lock on bin\…\DevStrider.exe.
         Environment.Exit(e.ApplicationExitCode);
     }
 }

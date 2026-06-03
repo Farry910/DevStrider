@@ -1,28 +1,22 @@
 using System.Collections.ObjectModel;
-using System.Text.Json;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace DevStrider.Desktop.ViewModels;
 
-/// <summary>One flat row pulled from a peer's snapshot payload (dedup-by-latest applied).</summary>
+/// <summary>One row in the Peers tab — flat shape sourced from <see cref="PeerBid"/>.</summary>
 public sealed class PeerBidRow
 {
     public string Username { get; set; } = "";
     public string Profile { get; set; } = "";
-    public string DayKey { get; set; } = "";
-    public DateTime ExportedAt { get; set; }
-
     public string Company { get; set; } = "";
     public string Role { get; set; } = "";
     public string Status { get; set; } = "";
     public string Origin { get; set; } = "";
     public string ResumeId { get; set; } = "";
-    public string Url { get; set; } = "";
     public string Stacks { get; set; } = "";
     public DateTime? AppliedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
@@ -32,8 +26,6 @@ public sealed class PeerInterviewRow
 {
     public string Username { get; set; } = "";
     public string Profile { get; set; } = "";
-    public string DayKey { get; set; } = "";
-
     public DateTime? ScheduledDate { get; set; }
     public string ScheduledTime { get; set; } = "";
     public string InterviewType { get; set; } = "";
@@ -41,18 +33,16 @@ public sealed class PeerInterviewRow
     public string Company { get; set; } = "";
     public string Role { get; set; } = "";
     public string Recruiter { get; set; } = "";
-    public string MeetingLink { get; set; } = "";
     public string ResumeId { get; set; } = "";
 }
 
 public partial class PeersViewModel : ViewModelBase
 {
     private readonly MongoContext _db;
-    private readonly ProfileContext _profileContext;
 
     public ObservableCollection<PeerBidRow> Bids { get; } = new();
     public ObservableCollection<PeerInterviewRow> Interviews { get; } = new();
-    /// <summary>Owners present in this profile's imported snapshots — feeds the filter combo.</summary>
+    /// <summary>Owners present in local peer data — feeds the filter combo. Empty string = All.</summary>
     public ObservableCollection<string> Owners { get; } = new();
 
     private DateTime _from = DateTime.Today.AddDays(-30);
@@ -65,13 +55,9 @@ public partial class PeersViewModel : ViewModelBase
     private string _ownerFilter = "";
     public string OwnerFilter { get => _ownerFilter; set { if (SetProperty(ref _ownerFilter, value)) _ = LoadAsync(); } }
 
-    public PeersViewModel(MongoContext db, ProfileContext profileContext)
+    public PeersViewModel(MongoContext db)
     {
         _db = db;
-        _profileContext = profileContext;
-        profileContext.ProfileChanged += () =>
-            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
-                new Action(async () => { try { await LoadAsync(); } catch { /* ignore */ } }));
     }
 
     [RelayCommand]
@@ -80,102 +66,89 @@ public partial class PeersViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            var profileId = _profileContext.Current?.Id ?? ObjectId.Empty;
-            if (profileId == ObjectId.Empty)
-            {
-                Bids.Clear(); Interviews.Clear(); Owners.Clear();
-                StatusMessage = "No active profile.";
-                return;
-            }
-
-            // Snapshots are scoped to the active profile (which profile *we* imported them into).
-            // Sorted newest-first so the dedupe loop keeps the latest copy of each (owner, bid).
-            var snaps = await _db.ImportedSnapshots
-                .Find(s => s.ProfileId == profileId)
-                .SortByDescending(s => s.ExportedAt)
-                .ToListAsync();
-
             var fromUtc = From.Date.ToUniversalTime();
             var toUtc = To.Date.AddDays(1).ToUniversalTime();
 
-            var seenBids = new HashSet<(string owner, ObjectId id)>();
-            var seenIvs = new HashSet<(string owner, ObjectId id)>();
-            var bidRows = new List<PeerBidRow>();
-            var ivRows = new List<PeerInterviewRow>();
+            // -------- bids --------
+            var bidFilter = Builders<PeerBid>.Filter.And(
+                Builders<PeerBid>.Filter.Gte(b => b.UpdatedAt, fromUtc),
+                Builders<PeerBid>.Filter.Lt(b => b.UpdatedAt, toUtc));
+            var bids = await _db.PeerBids
+                .Find(bidFilter)
+                .SortByDescending(b => b.UpdatedAt)
+                .ToListAsync();
+
+            // -------- interviews --------
+            var ivFilter = Builders<PeerInterview>.Filter.Or(
+                Builders<PeerInterview>.Filter.Eq(i => i.ScheduledDate, null),
+                Builders<PeerInterview>.Filter.And(
+                    Builders<PeerInterview>.Filter.Gte(i => i.ScheduledDate, fromUtc),
+                    Builders<PeerInterview>.Filter.Lt(i => i.ScheduledDate, toUtc)));
+            var ivs = await _db.PeerInterviews
+                .Find(ivFilter)
+                .SortBy(i => i.ScheduledDate)
+                .ToListAsync();
+
+            // Owner label = "username / Profile Name". Build the set across both collections.
+            string OwnerLabel(string user, string profile) => $"{user} / {profile}".Trim(' ', '/');
             var ownerSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var b in bids) ownerSet.Add(OwnerLabel(b.OwnerUsername, b.OwnerProfileName));
+            foreach (var i in ivs)  ownerSet.Add(OwnerLabel(i.OwnerUsername, i.OwnerProfileName));
 
-            foreach (var snap in snaps)
-            {
-                SnapshotPayload? payload;
-                try { payload = JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions); }
-                catch { continue; }
-                if (payload == null) continue;
-
-                var (user, profile) = SplitOwner(snap.Owner);
-                var ownerLabel = $"{user} / {profile}".Trim(' ', '/');
-                ownerSet.Add(ownerLabel);
-                if (!string.IsNullOrEmpty(OwnerFilter) && !string.Equals(OwnerFilter, ownerLabel, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var links = payload.Links?.ToDictionary(l => l.Id) ?? new Dictionary<ObjectId, GroupLink>();
-
-                foreach (var b in payload.Bids ?? new())
-                {
-                    if (!seenBids.Add((snap.Owner, b.Id))) continue;            // older copy — skip
-                    if (b.UpdatedAt < fromUtc || b.UpdatedAt >= toUtc) continue; // out of window
-                    links.TryGetValue(b.GroupLinkId, out var link);
-                    bidRows.Add(new PeerBidRow
-                    {
-                        Username = user, Profile = profile,
-                        DayKey = snap.DayKey, ExportedAt = snap.ExportedAt,
-                        Company = b.Company, Role = b.Role, Status = b.Status,
-                        Origin = b.Origin, ResumeId = b.ResumeId,
-                        Url = link?.Url ?? "",
-                        Stacks = string.Join(", ", b.PrimaryStacks ?? new()),
-                        AppliedAt = b.AppliedAt, UpdatedAt = b.UpdatedAt
-                    });
-                }
-
-                foreach (var iv in payload.Interviews ?? new())
-                {
-                    if (!seenIvs.Add((snap.Owner, iv.Id))) continue;
-                    if (iv.ScheduledDate.HasValue &&
-                        (iv.ScheduledDate.Value < fromUtc || iv.ScheduledDate.Value >= toUtc))
-                        continue;
-                    ivRows.Add(new PeerInterviewRow
-                    {
-                        Username = user, Profile = profile, DayKey = snap.DayKey,
-                        ScheduledDate = iv.ScheduledDate, ScheduledTime = iv.ScheduledTime,
-                        InterviewType = iv.InterviewType, Status = iv.Status,
-                        Company = iv.Company, Role = iv.Role,
-                        Recruiter = iv.Recruiter, MeetingLink = iv.MeetingLink,
-                        ResumeId = iv.ResumeId
-                    });
-                }
-            }
+            // Apply owner filter (post-query — small N, simpler than building a Mongo Or).
+            bool MatchesOwner(string label) =>
+                string.IsNullOrEmpty(OwnerFilter) ||
+                string.Equals(OwnerFilter, label, StringComparison.OrdinalIgnoreCase);
 
             Bids.Clear();
-            foreach (var b in bidRows.OrderByDescending(b => b.UpdatedAt)) Bids.Add(b);
-            Interviews.Clear();
-            foreach (var i in ivRows.OrderBy(i => i.ScheduledDate)) Interviews.Add(i);
+            foreach (var b in bids)
+            {
+                var label = OwnerLabel(b.OwnerUsername, b.OwnerProfileName);
+                if (!MatchesOwner(label)) continue;
+                Bids.Add(new PeerBidRow
+                {
+                    Username = b.OwnerUsername,
+                    Profile = b.OwnerProfileName,
+                    Company = b.Company,
+                    Role = b.Role,
+                    Status = b.Status,
+                    Origin = b.Origin,
+                    ResumeId = b.ResumeId,
+                    Stacks = string.Join(", ", b.PrimaryStacks ?? new()),
+                    AppliedAt = b.AppliedAt,
+                    UpdatedAt = b.UpdatedAt
+                });
+            }
 
-            // Refresh the owner-filter dropdown, preserving the current selection if still valid.
+            Interviews.Clear();
+            foreach (var i in ivs)
+            {
+                var label = OwnerLabel(i.OwnerUsername, i.OwnerProfileName);
+                if (!MatchesOwner(label)) continue;
+                Interviews.Add(new PeerInterviewRow
+                {
+                    Username = i.OwnerUsername,
+                    Profile = i.OwnerProfileName,
+                    ScheduledDate = i.ScheduledDate,
+                    ScheduledTime = i.ScheduledTime,
+                    InterviewType = i.InterviewType,
+                    Status = i.Status,
+                    Company = i.Company,
+                    Role = i.Role,
+                    Recruiter = i.Recruiter,
+                    ResumeId = i.ResumeId
+                });
+            }
+
             var currentFilter = OwnerFilter;
             Owners.Clear();
-            Owners.Add(""); // "All"
+            Owners.Add("");  // "All"
             foreach (var o in ownerSet.OrderBy(o => o, StringComparer.OrdinalIgnoreCase)) Owners.Add(o);
             if (!string.IsNullOrEmpty(currentFilter) && !Owners.Contains(currentFilter)) OwnerFilter = "";
 
-            StatusMessage = $"{Bids.Count} peer bids, {Interviews.Count} peer interviews across {snaps.Count} snapshot(s).";
+            StatusMessage = $"{Bids.Count} peer bids, {Interviews.Count} peer interviews. " +
+                            "Click Sync on the Sharing tab to pull the latest.";
         }
         finally { IsBusy = false; }
-    }
-
-    /// <summary>Parse filename slug like "alice__Fernando-Garcia" → ("alice", "Fernando Garcia").</summary>
-    private static (string user, string profile) SplitOwner(string raw)
-    {
-        var parts = (raw ?? "").Split("__", 2);
-        if (parts.Length == 2) return (parts[0], parts[1].Replace('-', ' '));
-        return (raw ?? "", "");
     }
 }

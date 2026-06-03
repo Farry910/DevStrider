@@ -87,25 +87,17 @@ public class StatsService
             }
         }
 
-        // Each imported snapshot contributes its own bids in the same date window — but
-        // only snapshots attached to the active profile (others belong to peers viewed
-        // under different profiles).
-        var snapshots = await _db.ImportedSnapshots
-            .Find(s => s.ProfileId == profileId && includeOwners.Contains(s.Owner))
-            .ToListAsync();
-        foreach (var snap in snapshots)
+        // Peer contribution comes straight from the local PeerBids mirror, filtered to
+        // the owners the user wants overlaid on the chart.
+        var peerBidFilter = Builders<PeerBid>.Filter.And(
+            Builders<PeerBid>.Filter.In(b => b.OwnerUsername, includeOwners),
+            Builders<PeerBid>.Filter.Ne(b => b.Status, BidStatuses.Draft));
+        var peerBids = await _db.PeerBids.Find(peerBidFilter).ToListAsync();
+        foreach (var b in peerBids)
         {
-            try
-            {
-                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions);
-                if (payload?.Bids == null) continue;
-                foreach (var b in payload.Bids.Where(b => b.Status != BidStatuses.Draft))
-                {
-                    var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
-                    if (ts >= start && ts < end) Bump(snap.Owner, ts);
-                }
-            }
-            catch { /* skip malformed snapshot */ }
+            var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
+            if (b.AppliedAt == null && b.FirstCreatedAt == default) ts = b.CreatedAt.ToLocalTime();
+            if (ts >= start && ts < end) Bump(b.OwnerUsername, ts);
         }
 
         return slots;
@@ -116,19 +108,26 @@ public class StatsService
     {
         var rows = new List<OverviewRow> { await BuildSelfAsync(fromUtc, toUtc, selfOwner) };
 
-        var profileId = ActiveProfileId;
-        var snaps = profileId == MongoDB.Bson.ObjectId.Empty
-            ? new List<ImportedSnapshot>()
-            : await _db.ImportedSnapshots.Find(s => s.ProfileId == profileId).ToListAsync();
-        foreach (var snap in snaps)
+        // Peer rows are aggregated from the local PeerBids / PeerInterviews mirrors,
+        // grouped by OwnerUsername. Counting "links" doesn't apply to peers (URLs aren't
+        // shared), so we report 0 there.
+        var peerBids = await _db.PeerBids
+            .Find(b => b.OwnerUsername != selfOwner && b.UpdatedAt >= fromUtc && b.UpdatedAt < toUtc)
+            .ToListAsync();
+        var peerIvs = await _db.PeerInterviews
+            .Find(i => i.OwnerUsername != selfOwner && i.ScheduledDate >= fromUtc && i.ScheduledDate < toUtc)
+            .ToListAsync();
+        var byOwner = peerBids.GroupBy(b => b.OwnerUsername);
+        foreach (var grp in byOwner)
         {
-            try
-            {
-                var payload = System.Text.Json.JsonSerializer.Deserialize<SnapshotPayload>(snap.PayloadJson, SnapshotPayload.JsonOptions);
-                if (payload == null) continue;
-                rows.Add(BuildPeer(snap.Owner, payload, fromUtc, toUtc));
-            }
-            catch { /* skip */ }
+            var ivsForOwner = peerIvs.Where(i => i.OwnerUsername == grp.Key).ToList();
+            rows.Add(BuildPeerOverview(grp.Key, grp.ToList(), ivsForOwner));
+        }
+        // Owners that have interviews but no bids in window — still surface them.
+        foreach (var grp in peerIvs.GroupBy(i => i.OwnerUsername))
+        {
+            if (rows.Any(r => r.Owner == grp.Key)) continue;
+            rows.Add(BuildPeerOverview(grp.Key, new List<PeerBid>(), grp.ToList()));
         }
         return rows;
     }
@@ -151,12 +150,19 @@ public class StatsService
         return Build(selfOwner, bids, (int)links, iv);
     }
 
-    private OverviewRow BuildPeer(string owner, SnapshotPayload payload, DateTime from, DateTime to)
+    /// <summary>Peer overview row built from already-windowed PeerBid + PeerInterview lists.</summary>
+    private static OverviewRow BuildPeerOverview(string owner, List<PeerBid> peerBids, List<PeerInterview> peerIvs)
     {
-        var bids = payload.Bids.Where(b => b.UpdatedAt >= from && b.UpdatedAt < to).ToList();
-        var links = payload.Links.Count(l => l.CreatedAt >= from && l.CreatedAt < to);
-        var iv = payload.Interviews.Where(i => i.ScheduledDate >= from && i.ScheduledDate < to).ToList();
-        return Build(owner, bids, links, iv);
+        var byStatus = peerBids.GroupBy(b => b.Status).ToDictionary(g => g.Key, g => g.Count());
+        return new OverviewRow
+        {
+            Owner = owner,
+            LinksCreated = 0, // peer URLs aren't shared
+            ByStatus = byStatus,
+            InterviewsInRange = peerIvs.Count,
+            InterviewsPassed = peerIvs.Count(i => i.Status == InterviewStatuses.Passed),
+            InterviewsFailed = peerIvs.Count(i => i.Status == InterviewStatuses.Failed),
+        };
     }
 
     private static OverviewRow Build(string owner, List<UserBid> bids, int linksCreated, List<Interview> iv)

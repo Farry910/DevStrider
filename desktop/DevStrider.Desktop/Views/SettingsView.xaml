@@ -49,18 +49,23 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Shared GitHub repo (team data sync)" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Text="Repository URL (https://github.com/org/repo)"/>
-          <TextBox Text="{Binding Model.GitHubRepoUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
-                   Tag="https://github.com/your-team/devstrider-sync"/>
-          <TextBlock Text="Branch"/>
-          <TextBox Text="{Binding Model.GitHubBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
-                   Tag="main"/>
-          <TextBlock Text="Personal access token (PAT)"/>
-          <TextBox Text="{Binding GitHubTokenPlain, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,2,0,4"
-                   Tag="ghp_… (repo scope)"/>
-          <TextBlock Foreground="{StaticResource Muted}"
-                     Text="Token is encrypted with Windows DPAPI before it touches disk. Needs the 'repo' scope on the team repo."/>
+          <TextBlock Text="Peer database (shared MongoDB / Atlas)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Connection to the shared cluster that holds everyone's bid + interview summaries. Leave blank to disable peer sync. Sync runs from the Sharing tab."/>
+
+          <TextBlock Text="Connection URI"/>
+          <TextBox Text="{Binding Model.SharedMongoUri, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&amp;w=majority"/>
+
+          <TextBlock Text="Database name"/>
+          <TextBox Text="{Binding Model.SharedDatabaseName, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,4"
+                   Tag="devstrider-shared"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                     Text="Contains two collections — peerBids and peerInterviews. Other collections from older data can be dropped from the Sharing tab's Reset section."/>
+
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
             <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">
               <StackPanel Orientation="Horizontal">
@@ -68,10 +73,10 @@
                 <TextBlock Text="Save settings" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding PushTodayCommand}" Style="{StaticResource GhostButton}">
+            <Button Command="{Binding TestSharedConnectionCommand}" Style="{StaticResource GhostButton}">
               <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE898;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Push today's snapshot" VerticalAlignment="Center"/>
+                <TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Test connection" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
           </StackPanel>
@@ -138,7 +143,7 @@
         <StackPanel>
           <TextBlock Text="Sharing key (group passphrase)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Daily snapshots are encrypted with this passphrase before push (AES-GCM, key derived as SHA-256 of the string). Everyone in your local group sets the same value, exchanged out-of-band. Leave blank to push as plaintext."/>
+                     Text="Reserved for a future per-row encryption layer on peer sync. Today peer data goes over TLS to your shared cluster as plaintext; the cluster's access control is the only protection. Set the same value across the team if you plan to opt in later — the fingerprint below makes it easy to confirm a match."/>
           <TextBox Text="{Binding SharingKeyInput, UpdateSourceTrigger=PropertyChanged}"
                    FontFamily="Consolas"
                    Tag="A long, hard-to-guess passphrase your group agrees on"

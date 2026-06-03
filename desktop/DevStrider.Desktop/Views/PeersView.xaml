@@ -45,8 +45,6 @@
             <DataGridTextColumn Header="Status"   Binding="{Binding Status}"   Width="100"/>
             <DataGridTextColumn Header="UID"      Binding="{Binding ResumeId}" Width="80"/>
             <DataGridTextColumn Header="Stacks"   Binding="{Binding Stacks}"   Width="160"/>
-            <DataGridTextColumn Header="URL"      Binding="{Binding Url}"      Width="2*"/>
-            <DataGridTextColumn Header="Day"      Binding="{Binding DayKey}"   Width="100"/>
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>
@@ -68,7 +66,6 @@
             <DataGridTextColumn Header="Role"      Binding="{Binding Role}"     Width="*"/>
             <DataGridTextColumn Header="Recruiter" Binding="{Binding Recruiter}" Width="140"/>
             <DataGridTextColumn Header="UID"       Binding="{Binding ResumeId}" Width="80"/>
-            <DataGridTextColumn Header="Day"       Binding="{Binding DayKey}"   Width="100"/>
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>

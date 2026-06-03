@@ -6,19 +6,18 @@ namespace DevStrider.Desktop.Services;
 /// One-time env-var seeding for empty/default settings. Each DEVSTRIDER_* variable feeds
 /// one AppSettings or UserProfile field, but only when that field is still at its
 /// hardcoded default. After seeding, the Settings UI is the single source of truth and
-/// env vars stop mattering — clear them once you've launched the app at least once.
+/// env vars stop mattering — clear them once you've launched at least once.
 ///
 /// Supported variables:
-///   DEVSTRIDER_MONGO_URI         → AppSettings.MongoUri              (when default "mongodb://127.0.0.1:27017")
-///   DEVSTRIDER_DATABASE_NAME     → AppSettings.DatabaseName           (when default "devstrider")
-///   DEVSTRIDER_USERNAME          → UserProfile.Username               (when default "me")
-///   DEVSTRIDER_GITHUB_REPO_URL   → AppSettings.GitHubRepoUrl          (when empty)
-///   DEVSTRIDER_GITHUB_BRANCH     → AppSettings.GitHubBranch           (when default "main")
-///   DEVSTRIDER_GITHUB_PAT        → AppSettings.GitHubTokenProtected   (DPAPI-encrypted, when empty)
-///   DEVSTRIDER_LISTENER_PORT     → AppSettings.ListenerPort           (when default 8765)
-///   DEVSTRIDER_WORD_DOC_PATH     → AppSettings.WordDocPath            (when empty)
-///   DEVSTRIDER_WORD_HOTKEY       → AppSettings.WordHotkey             (when default "F9")
-///   DEVSTRIDER_SHARING_KEY       → AppSettings.SharingKey             (when empty)
+///   DEVSTRIDER_MONGO_URI         → AppSettings.MongoUri               (when default "mongodb://127.0.0.1:27017")
+///   DEVSTRIDER_DATABASE_NAME     → AppSettings.DatabaseName            (when default "devstrider")
+///   DEVSTRIDER_USERNAME          → UserProfile.Username                (when default "me" or current Windows user)
+///   DEVSTRIDER_SHARED_MONGO_URI  → AppSettings.SharedMongoUri          (when empty)
+///   DEVSTRIDER_SHARED_DATABASE   → AppSettings.SharedDatabaseName      (when default "devstrider-shared")
+///   DEVSTRIDER_LISTENER_PORT     → AppSettings.ListenerPort            (when default 8765)
+///   DEVSTRIDER_WORD_DOC_PATH     → AppSettings.WordDocPath             (when empty)
+///   DEVSTRIDER_WORD_HOTKEY       → AppSettings.WordHotkey              (when default "F9")
+///   DEVSTRIDER_SHARING_KEY       → AppSettings.SharingKey              (when empty)
 ///
 /// Note: MongoUri / DatabaseName get seeded into AppSettings here for the UI to display
 /// them, but the live MongoContext is constructed from the same env vars at startup
@@ -33,25 +32,13 @@ public static class SettingsBootstrap
         var settingsDirty = false;
         var profileDirty = false;
 
-        settingsDirty |= SeedIfMatch(settings.MongoUri,     "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",       v => settings.MongoUri = v);
-        settingsDirty |= SeedIfMatch(settings.DatabaseName, "devstrider",                "DEVSTRIDER_DATABASE_NAME",   v => settings.DatabaseName = v);
-        settingsDirty |= SeedIfEmpty(settings.GitHubRepoUrl,                              "DEVSTRIDER_GITHUB_REPO_URL", v => settings.GitHubRepoUrl = v);
-        settingsDirty |= SeedIfMatch(settings.GitHubBranch, "main",                      "DEVSTRIDER_GITHUB_BRANCH",   v => settings.GitHubBranch = v);
-        settingsDirty |= SeedIfEmpty(settings.WordDocPath,                                "DEVSTRIDER_WORD_DOC_PATH",   v => settings.WordDocPath = v);
-        settingsDirty |= SeedIfMatch(settings.WordHotkey,   "F9",                        "DEVSTRIDER_WORD_HOTKEY",     v => settings.WordHotkey = v);
-        settingsDirty |= SeedIfEmpty(settings.SharingKey,                                 "DEVSTRIDER_SHARING_KEY",     v => settings.SharingKey = v);
-
-        // PAT goes through DPAPI before it touches Mongo, so the env var only needs to be set
-        // for the first launch — afterwards, the encrypted blob in Mongo is the source.
-        if (string.IsNullOrEmpty(settings.GitHubTokenProtected))
-        {
-            var pat = ReadEnv("DEVSTRIDER_GITHUB_PAT");
-            if (pat != null)
-            {
-                settings.GitHubTokenProtected = SecretStore.Protect(pat);
-                settingsDirty = true;
-            }
-        }
+        settingsDirty |= SeedIfMatch(settings.MongoUri,           "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",        v => settings.MongoUri = v);
+        settingsDirty |= SeedIfMatch(settings.DatabaseName,       "devstrider",                "DEVSTRIDER_DATABASE_NAME",    v => settings.DatabaseName = v);
+        settingsDirty |= SeedIfEmpty(settings.SharedMongoUri,                                  "DEVSTRIDER_SHARED_MONGO_URI", v => settings.SharedMongoUri = v);
+        settingsDirty |= SeedIfMatch(settings.SharedDatabaseName, "devstrider-shared",         "DEVSTRIDER_SHARED_DATABASE",  v => settings.SharedDatabaseName = v);
+        settingsDirty |= SeedIfEmpty(settings.WordDocPath,                                     "DEVSTRIDER_WORD_DOC_PATH",    v => settings.WordDocPath = v);
+        settingsDirty |= SeedIfMatch(settings.WordHotkey,         "F9",                        "DEVSTRIDER_WORD_HOTKEY",      v => settings.WordHotkey = v);
+        settingsDirty |= SeedIfEmpty(settings.SharingKey,                                      "DEVSTRIDER_SHARING_KEY",      v => settings.SharingKey = v);
 
         // Int field — accept only well-formed integers in the listening-port range.
         if (settings.ListenerPort == 8765)

@@ -18,7 +18,6 @@ public partial class MainWindowViewModel : ViewModelBase
     public StatsViewModel Stats { get; }
     public SharingViewModel Sharing { get; }
     public SettingsViewModel Settings { get; }
-    public ImportViewModel Import { get; }
     public AboutViewModel About { get; }
     public ActivityViewModel Activity { get; }
     public ProfilesViewModel ProfilesPage { get; }
@@ -62,7 +61,6 @@ public partial class MainWindowViewModel : ViewModelBase
         StatsViewModel stats,
         SharingViewModel sharing,
         SettingsViewModel settings,
-        ImportViewModel import,
         AboutViewModel about,
         ActivityViewModel activity,
         ProfilesViewModel profilesPage,
@@ -76,7 +74,6 @@ public partial class MainWindowViewModel : ViewModelBase
         Stats = stats;
         Sharing = sharing;
         Settings = settings;
-        Import = import;
         About = about;
         Activity = activity;
         ProfilesPage = profilesPage;
@@ -96,7 +93,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowStats() => Current = Stats;
     [RelayCommand] private void ShowSharing() => Current = Sharing;
     [RelayCommand] private void ShowSettings() => Current = Settings;
-    [RelayCommand] private void ShowImport() => Current = Import;
     [RelayCommand] private void ShowAbout() => Current = About;
     [RelayCommand] private void ShowActivity() => Current = Activity;
     [RelayCommand] private void ShowProfiles() => Current = ProfilesPage;

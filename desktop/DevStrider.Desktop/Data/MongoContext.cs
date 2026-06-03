@@ -53,14 +53,16 @@ public class MongoContext
     public IMongoCollection<AppSettings> Settings =>
         Database.GetCollection<AppSettings>("settings");
 
-    public IMongoCollection<ImportedSnapshot> ImportedSnapshots =>
-        Database.GetCollection<ImportedSnapshot>("importedSnapshots");
-
     public IMongoCollection<Resume> Resumes =>
         Database.GetCollection<Resume>("resumes");
 
-    public IMongoCollection<UploadLog> UploadLogs =>
-        Database.GetCollection<UploadLog>("uploadLogs");
+    /// <summary>Local mirror of peer bids pulled from the shared Atlas cluster.</summary>
+    public IMongoCollection<PeerBid> PeerBids =>
+        Database.GetCollection<PeerBid>("peerBids");
+
+    /// <summary>Local mirror of peer interviews pulled from the shared Atlas cluster.</summary>
+    public IMongoCollection<PeerInterview> PeerInterviews =>
+        Database.GetCollection<PeerInterview>("peerInterviews");
 
     /// <summary>
     /// Camel-case + ignore-unknown-fields so we can round-trip JSON payloads (export/import)
@@ -101,17 +103,16 @@ public class MongoContext
                 .Ascending(x => x.PeriodKey),
             new CreateIndexOptions { Unique = true }));
 
-        await ImportedSnapshots.Indexes.CreateOneAsync(new CreateIndexModel<ImportedSnapshot>(
-            Builders<ImportedSnapshot>.IndexKeys.Ascending(x => x.SourceSha),
-            new CreateIndexOptions { Unique = true, Sparse = true }));
-
         await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
             Builders<Resume>.IndexKeys.Ascending(x => x.Uid)));
         await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
             Builders<Resume>.IndexKeys.Descending(x => x.UploadedAt)));
 
-        await UploadLogs.Indexes.CreateOneAsync(new CreateIndexModel<UploadLog>(
-            Builders<UploadLog>.IndexKeys.Descending(x => x.PushedAt)));
+        // Peer mirror — index by Owner + Updated for the Peers tab's date+owner filters.
+        await PeerBids.Indexes.CreateOneAsync(new CreateIndexModel<PeerBid>(
+            Builders<PeerBid>.IndexKeys.Ascending(x => x.OwnerUsername).Descending(x => x.UpdatedAt)));
+        await PeerInterviews.Indexes.CreateOneAsync(new CreateIndexModel<PeerInterview>(
+            Builders<PeerInterview>.IndexKeys.Ascending(x => x.OwnerUsername).Ascending(x => x.ScheduledDate)));
 
         // Per-profile filtering hits these indexes for every Bid board / Interview load.
         await Links.Indexes.CreateOneAsync(new CreateIndexModel<GroupLink>(

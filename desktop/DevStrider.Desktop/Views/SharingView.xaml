@@ -1,48 +1,102 @@
 <UserControl x:Class="DevStrider.Desktop.Views.SharingView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <DockPanel>
-    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="Sharing" Style="{StaticResource H1}" VerticalAlignment="Center"/>
-      <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0,0,0" Foreground="{StaticResource Muted}"/>
-      <Button Grid.Column="2"
-              Command="{Binding LoadCommand}"
-              Style="{StaticResource IconButton}"
-              ToolTip="Refresh"
-              Content="&#xE72C;"
-              Margin="0,0,8,0"/>
-      <Button Grid.Column="3" Command="{Binding PushTodayCommand}">
-        <StackPanel Orientation="Horizontal">
-          <TextBlock Text="&#xE898;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-          <TextBlock Text="Push today's snapshot" VerticalAlignment="Center"/>
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel MaxWidth="760" HorizontalAlignment="Left">
+      <TextBlock Text="Peer sync" Style="{StaticResource H1}"/>
+      <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,4,0,12"/>
+
+      <!-- Sync card -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Sync with shared cluster" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Sync uploads your bids + interviews updated since the last run, and downloads everyone else's. Only company / role / status / stacks / dates are shared — URLs, JDs, GPT content, and comments stay private to you."/>
+
+          <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="140"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Last sync" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="1" Text="{Binding LastSyncDisplay}" FontFamily="Consolas" VerticalAlignment="Center"/>
+          </Grid>
+
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding SyncCommand}"
+                    IsEnabled="{Binding IsConfigured}"
+                    Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Sync now" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding LoadCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Refresh status" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
         </StackPanel>
-      </Button>
-    </Grid>
+      </Border>
 
-    <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
-      <StackPanel>
-        <TextBlock Text="Today" FontWeight="SemiBold" Margin="0,0,0,4"/>
-        <TextBlock Text="{Binding TodayStatus}" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
-        <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" TextWrapping="Wrap"
-                   Text="Pushes go to YYYY-MM-DD/{username}.json in the team repo. When a sharing key is set in Settings, the snapshot is AES-GCM-encrypted before push; peers decrypt with the same key on import."/>
-      </StackPanel>
-    </Border>
+      <!-- Reset card -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Reset shared database" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Tick anything left over from the old web app and drop it. peerBids and peerInterviews are protected — DevStrider needs them."/>
 
-    <DataGrid ItemsSource="{Binding Items}">
-      <DataGrid.Columns>
-        <DataGridTextColumn Header="Day"        Binding="{Binding DayKey}" Width="120"/>
-        <DataGridTextColumn Header="Pushed at"  Binding="{Binding PushedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}" Width="180"/>
-        <DataGridTextColumn Header="Path"       Binding="{Binding RepoPath}" Width="2*"/>
-        <DataGridTextColumn Header="Encrypted" Binding="{Binding Encrypted}" Width="100"/>
-        <DataGridTextColumn Header="Success"    Binding="{Binding Success}" Width="80"/>
-        <DataGridTextColumn Header="Message"    Binding="{Binding Message}" Width="*"/>
-      </DataGrid.Columns>
-    </DataGrid>
-  </DockPanel>
+          <DataGrid ItemsSource="{Binding RemoteCollections}"
+                    AutoGenerateColumns="False"
+                    CanUserAddRows="False"
+                    CanUserDeleteRows="False"
+                    HeadersVisibility="Column"
+                    Margin="0,0,0,8"
+                    MaxHeight="280">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Header="" Width="40" CanUserSort="False">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox IsChecked="{Binding SelectedForDrop, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center">
+                      <CheckBox.Style>
+                        <Style TargetType="CheckBox">
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsKept}" Value="True">
+                              <Setter Property="IsEnabled" Value="False"/>
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </CheckBox.Style>
+                    </CheckBox>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Collection" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
+              <DataGridTextColumn Header="Docs"       Binding="{Binding DocumentCount}" Width="100" IsReadOnly="True"/>
+              <DataGridTextColumn Header="Protected"  Binding="{Binding IsKept}" Width="100" IsReadOnly="True"/>
+            </DataGrid.Columns>
+          </DataGrid>
+
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding LoadRemoteCollectionsCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Refresh list" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding DropSelectedCollectionsCommand}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Danger}"/>
+                <TextBlock Text="Drop selected" VerticalAlignment="Center" Foreground="{StaticResource Danger}"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
 </UserControl>

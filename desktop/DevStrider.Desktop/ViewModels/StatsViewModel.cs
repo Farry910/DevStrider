@@ -64,10 +64,11 @@ public partial class StatsViewModel : ViewModelBase
         if (OwnerFilter.All(o => o.Owner != self))
             OwnerFilter.Insert(0, new OwnerFilterItem(self, isSelf: true));
 
-        var imported = await _db.ImportedSnapshots
-            .Find(MongoDB.Driver.FilterDefinition<ImportedSnapshot>.Empty)
+        // Distinct peer usernames currently in our local mirror of the shared cluster.
+        var peerOwners = await _db.PeerBids
+            .Distinct<string>("ownerUsername", MongoDB.Driver.FilterDefinition<PeerBid>.Empty)
             .ToListAsync();
-        foreach (var name in imported.Select(s => s.Owner).Distinct())
+        foreach (var name in peerOwners.Where(n => !string.IsNullOrEmpty(n) && n != self).Distinct())
         {
             if (OwnerFilter.All(o => o.Owner != name))
                 OwnerFilter.Add(new OwnerFilterItem(name, isSelf: false));
