@@ -115,14 +115,30 @@ public sealed class ThemeService
 
     private void Apply()
     {
+        if (Application.Current is null) return;
+        var dispatcher = Application.Current.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            // Resource mutation must happen on the UI thread. The async chain in
+            // SetPreferenceAsync resumes on whichever context Mongo's I/O happened on;
+            // bounce here defensively.
+            dispatcher.BeginInvoke(new Action(Apply));
+            return;
+        }
+
         var effective = _userPreference == ThemePreference.System ? GetSystemTheme() : _userPreference;
         var palette = effective == ThemePreference.Dark ? DarkPalette : LightPalette;
-        if (Application.Current is null) return;
+
+        // Theme.xaml binds each SolidColorBrush.Color via DynamicResource to a sibling
+        // Color resource keyed "<X>Color". We rewrite those Color values; the brushes
+        // pick the change up via DynamicResource, raise their own Changed event, and
+        // every visual using them invalidates and redraws.
         foreach (var (key, color) in palette)
         {
-            if (Application.Current.Resources[key] is SolidColorBrush brush && !brush.IsFrozen)
-                brush.Color = color;
+            Application.Current.Resources[key + "Color"] = color;
         }
+        System.Diagnostics.Debug.WriteLine(
+            $"[ThemeService] applied effective={effective} (user pref={_userPreference})");
     }
 
     private static ThemePreference GetSystemTheme()

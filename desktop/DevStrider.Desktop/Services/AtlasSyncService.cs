@@ -143,7 +143,7 @@ public sealed class AtlasSyncService
         catch (Exception ex)
         {
             _activity.Error("Atlas", "Sync failed", ex.Message);
-            return $"Sync failed: {ex.Message}";
+            return "Sync failed — see Activity for details.";
         }
     }
 

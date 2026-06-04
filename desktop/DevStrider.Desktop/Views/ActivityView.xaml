@@ -48,7 +48,10 @@
               IsReadOnly="True"
               CanUserAddRows="False"
               CanUserDeleteRows="False"
-              HeadersVisibility="Column">
+              HeadersVisibility="Column"
+              SelectionMode="Extended"
+              SelectionUnit="CellOrRowHeader"
+              ClipboardCopyMode="IncludeHeader">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Time"    Binding="{Binding At, StringFormat='{}{0:HH:mm:ss}'}" Width="80" SortMemberPath="At"/>
         <DataGridTemplateColumn Header="Level" Width="80" SortMemberPath="Level">

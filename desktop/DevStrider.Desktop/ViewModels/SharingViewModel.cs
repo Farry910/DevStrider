@@ -62,7 +62,7 @@ public partial class SharingViewModel : ViewModelBase
         if (IsConfigured)
         {
             try { await LoadRemoteCollectionsAsync(); }
-            catch (Exception ex) { StatusMessage = $"Couldn't reach shared DB: {ex.Message}"; }
+            catch { /* details logged to Activity; keep the tab clean */ }
         }
         else
         {
@@ -111,7 +111,7 @@ public partial class SharingViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Legacy import failed: {ex.Message}";
+            StatusMessage = "Legacy import failed — see Activity for details.";
             _activity.Error("Migration", "Legacy import crashed", ex.Message);
         }
         finally { IsBusy = false; }
@@ -147,7 +147,9 @@ public partial class SharingViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't list collections: {ex.Message}";
+            // Full detail goes to Activity (where rows are copyable). The Sharing tab
+            // intentionally stays free of stack-trace clutter.
+            StatusMessage = "";
             _activity.Error("Atlas", "List collections failed", ex.Message);
         }
         finally { IsBusy = false; }
@@ -185,7 +187,7 @@ public partial class SharingViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Drop failed: {ex.Message}";
+            StatusMessage = "Drop failed — see Activity for details.";
             _activity.Error("Atlas", "Drop collection failed", ex.Message);
         }
         finally { IsBusy = false; }
