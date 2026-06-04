@@ -139,6 +139,24 @@
         </StackPanel>
       </Border>
 
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Appearance" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Theme" Margin="0,0,0,2"/>
+          <ComboBox SelectedValue="{Binding ThemeChoice, Mode=TwoWay}"
+                    SelectedValuePath="Tag"
+                    MinWidth="180"
+                    HorizontalAlignment="Left"
+                    Margin="0,2,0,4">
+            <ComboBoxItem Content="System (follow Windows)" Tag="System"/>
+            <ComboBoxItem Content="Light"                   Tag="Light"/>
+            <ComboBoxItem Content="Dark"                    Tag="Dark"/>
+          </ComboBox>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                     Text="'System' tracks Windows' light/dark mode (Settings → Personalization → Colors) and live-updates when you switch it there. 'Light' and 'Dark' override the system setting."/>
+        </StackPanel>
+      </Border>
+
     </StackPanel>
   </ScrollViewer>
 </UserControl>

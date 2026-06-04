@@ -63,6 +63,7 @@ public partial class App : Application
             services.AddSingleton<AtlasContext>();
             services.AddSingleton<AtlasSyncService>();
             services.AddSingleton<LegacyMigrationService>();
+            services.AddSingleton<ThemeService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -140,6 +141,13 @@ public partial class App : Application
                     activity.Error("Listener", "Listener boot crashed", ex.Message);
                 }
             });
+
+            // Theme: apply system-derived light/dark BEFORE the window paints so a dark-mode
+            // user doesn't see a light flash on startup. The saved override (if any) loads
+            // later from Mongo via ThemeService.InitAsync.
+            var theme = Services.GetRequiredService<ThemeService>();
+            theme.ApplySystemDefault();
+            _ = theme.InitAsync();
 
             var window = new MainWindow
             {

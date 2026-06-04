@@ -33,6 +33,13 @@ public class AppSettings
     public DateTime LegacyMigratedAt { get; set; } = DateTime.MinValue;
 
     /// <summary>
+    /// User-picked color theme: <c>"System"</c> follows Windows' AppsUseLightTheme registry
+    /// value (and live-updates when the user toggles it in Settings → Personalization → Colors);
+    /// <c>"Light"</c> / <c>"Dark"</c> override it explicitly.
+    /// </summary>
+    public string ThemePreference { get; set; } = "System";
+
+    /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
     /// sync with the Chrome extension's configured base URL. Localhost binding means no
     /// authentication is required.

@@ -10,6 +10,9 @@
         <ResourceDictionary Source="Themes/Theme.xaml"/>
       </ResourceDictionary.MergedDictionaries>
 
+      <!-- Shared converters used across views. -->
+      <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+
       <!-- DataTemplates wire the right View to each ViewModel as Content of the shell ContentControl. -->
       <DataTemplate DataType="{x:Type vm:BidBoardViewModel}">
         <views:BidBoardView/>

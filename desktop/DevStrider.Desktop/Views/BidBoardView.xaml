@@ -72,8 +72,52 @@
       </Grid>
     </Border>
 
+    <!-- Bulk-actions toolbar — slides in when ≥1 row is selected in the grid below.
+         Reads SelectedItems off the grid directly so the VM stays free of WPF types. -->
+    <Border DockPanel.Dock="Top"
+            Background="{StaticResource PrimarySoft}"
+            CornerRadius="6"
+            Padding="12,6"
+            Margin="0,0,0,8"
+            Visibility="{Binding HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}">
+      <StackPanel Orientation="Horizontal">
+        <TextBlock VerticalAlignment="Center">
+          <Run Text="{Binding SelectedCount, Mode=OneWay}"/>
+          <Run Text=" selected"/>
+        </TextBlock>
+        <TextBlock Text="·" Foreground="{StaticResource Muted}" Margin="10,0" VerticalAlignment="Center"/>
+        <TextBlock Text="Set status to" VerticalAlignment="Center" Margin="0,0,8,0"/>
+        <ComboBox SelectedItem="{Binding BulkStatus, Mode=TwoWay}"
+                  ItemsSource="{Binding AllBidStatuses}"
+                  MinWidth="140"
+                  VerticalAlignment="Center"/>
+        <Button Command="{Binding BulkApplyStatusCommand}"
+                CommandParameter="{Binding ElementName=BidGrid, Path=SelectedItems}"
+                Margin="8,0,0,0"
+                Style="{StaticResource GhostButton}">
+          Apply
+        </Button>
+        <TextBlock Text="·" Foreground="{StaticResource Muted}" Margin="10,0" VerticalAlignment="Center"/>
+        <Button Command="{Binding BulkDeleteCommand}"
+                CommandParameter="{Binding ElementName=BidGrid, Path=SelectedItems}"
+                Style="{StaticResource GhostButton}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                       VerticalAlignment="Center" Margin="0,0,8,0"
+                       Foreground="{StaticResource Danger}"/>
+            <TextBlock Text="Delete" VerticalAlignment="Center"
+                       Foreground="{StaticResource Danger}"/>
+          </StackPanel>
+        </Button>
+      </StackPanel>
+    </Border>
+
     <!-- Rows -->
-    <DataGrid ItemsSource="{Binding Rows}" SelectionUnit="FullRow">
+    <DataGrid x:Name="BidGrid"
+              ItemsSource="{Binding Rows}"
+              SelectionUnit="FullRow"
+              SelectionMode="Extended"
+              SelectionChanged="OnBidGridSelectionChanged">
       <DataGrid.Columns>
         <DataGridTemplateColumn Header="URL" Width="2*" SortMemberPath="Link.Url">
           <DataGridTemplateColumn.CellTemplate>

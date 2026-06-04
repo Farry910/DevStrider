@@ -72,6 +72,17 @@ public partial class BidBoardView : UserControl
     }
 
     /// <summary>
+    /// Push the grid's selection count into the VM so the bulk-actions toolbar's
+    /// <c>Visibility</c> trigger (bound to <c>HasSelection</c>) and the "N selected" label
+    /// can update without the VM needing a reference to the WPF control.
+    /// </summary>
+    private void OnBidGridSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Vm != null && sender is DataGrid grid)
+            Vm.SelectedCount = grid.SelectedItems.Count;
+    }
+
+    /// <summary>
     /// Schedule a new interview off this bid. The new Interview captures the bid's
     /// <c>ResumeId</c> + <c>JobDescription</c> so the user has both ready at interview time.
     /// </summary>
