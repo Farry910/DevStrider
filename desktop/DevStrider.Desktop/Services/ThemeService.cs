@@ -1,6 +1,10 @@
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
+// Disambiguate from System.Drawing.Color, which lands in implicit usings via
+// UseWindowsForms=true (the tray icon's NotifyIcon lives there).
+using Color = System.Windows.Media.Color;
+using SolidColorBrush = System.Windows.Media.SolidColorBrush;
 
 namespace DevStrider.Desktop.Services;
 
