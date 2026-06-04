@@ -181,6 +181,16 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Watchdog: if cleanup itself hangs (slow Mongo write, stuck FileSystemWatcher
+        // dispose, etc.), force-terminate after 3 seconds. Runs on a thread-pool thread
+        // so the timer fires even if the UI thread is stuck inside StopAsync.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            try { System.Diagnostics.Process.GetCurrentProcess().Kill(); }
+            catch { /* already exiting */ }
+        });
+
         try
         {
             var server = Services?.GetService(typeof(LocalApiServer)) as LocalApiServer;
@@ -196,11 +206,10 @@ public partial class App : Application
         Tray = null;
         base.OnExit(e);
 
-        // Belt-and-braces: WPF's Shutdown() unwinds the dispatcher but leaves background
-        // threads (LiveCharts/SkiaSharp render thread, MongoClient's connection pool, the
-        // FileSystemWatcher in ResumeAutoIngestService, etc.) alive. Without this the
-        // tray icon disappears but DevStrider.exe lingers in Task Manager, which then
-        // blocks the next `dotnet run` with a file-lock on bin\…\DevStrider.exe.
-        Environment.Exit(e.ApplicationExitCode);
+        // Hard-kill instead of Environment.Exit — the latter waits on managed finalizers
+        // (SkiaSharp's GL context, MongoClient's TCP pool, native COM teardown) and can
+        // hang indefinitely. Kill() terminates the process immediately, no finalizer wait.
+        // This is the normal path; the watchdog above is the safety net for the unhappy one.
+        System.Diagnostics.Process.GetCurrentProcess().Kill();
     }
 }
