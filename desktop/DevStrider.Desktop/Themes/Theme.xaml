@@ -2,46 +2,27 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
   <!-- ============================================================
-       Palette — defined as Color resources first, then wrapped in
-       SolidColorBrush via DynamicResource. ThemeService swaps the
-       Color values at runtime; the brushes' Color property updates
-       through DynamicResource and the change propagates to every
-       visual that consumes the brush (StaticResource consumers
-       included — the brush *instance* is unchanged, only its Color).
+       Palette — light, modern, Win11-ish.
+       Edit these brushes to retheme the whole app.
        ============================================================ -->
-  <Color x:Key="BgColor">#F8FAFC</Color>
-  <Color x:Key="SurfaceColor">#FFFFFF</Color>
-  <Color x:Key="SurfaceAltColor">#F1F5F9</Color>
-  <Color x:Key="BorderColor">#E5E7EB</Color>
-  <Color x:Key="BorderSoftColor">#EEF2F6</Color>
-  <Color x:Key="TextColor">#0F172A</Color>
-  <Color x:Key="MutedColor">#64748B</Color>
-  <Color x:Key="PrimaryColor">#2563EB</Color>
-  <Color x:Key="PrimaryHvColor">#1D4ED8</Color>
-  <Color x:Key="PrimaryPrColor">#1E40AF</Color>
-  <Color x:Key="PrimarySoftColor">#DBEAFE</Color>
-  <Color x:Key="WarningColor">#F59E0B</Color>
-  <Color x:Key="DangerColor">#DC2626</Color>
-  <Color x:Key="OKColor">#16A34A</Color>
-  <Color x:Key="ChromeHvColor">#E5E7EB</Color>
-  <Color x:Key="ChromeCloseColor">#E81123</Color>
+  <SolidColorBrush x:Key="Bg"          Color="#F8FAFC"/>  <!-- window -->
+  <SolidColorBrush x:Key="Surface"     Color="#FFFFFF"/>  <!-- card -->
+  <SolidColorBrush x:Key="SurfaceAlt"  Color="#F1F5F9"/>  <!-- hover / subtle row -->
+  <SolidColorBrush x:Key="Border"      Color="#E5E7EB"/>
+  <SolidColorBrush x:Key="BorderSoft"  Color="#EEF2F6"/>
+  <SolidColorBrush x:Key="Text"        Color="#0F172A"/>
+  <SolidColorBrush x:Key="Muted"       Color="#64748B"/>
+  <SolidColorBrush x:Key="Primary"     Color="#2563EB"/>
+  <SolidColorBrush x:Key="PrimaryHv"   Color="#1D4ED8"/>
+  <SolidColorBrush x:Key="PrimaryPr"   Color="#1E40AF"/>
+  <SolidColorBrush x:Key="PrimarySoft" Color="#DBEAFE"/>  <!-- selected nav bg -->
+  <SolidColorBrush x:Key="Warning"     Color="#F59E0B"/>
+  <SolidColorBrush x:Key="Danger"      Color="#DC2626"/>
+  <SolidColorBrush x:Key="OK"          Color="#16A34A"/>
 
-  <SolidColorBrush x:Key="Bg"          Color="{DynamicResource BgColor}"/>
-  <SolidColorBrush x:Key="Surface"     Color="{DynamicResource SurfaceColor}"/>
-  <SolidColorBrush x:Key="SurfaceAlt"  Color="{DynamicResource SurfaceAltColor}"/>
-  <SolidColorBrush x:Key="Border"      Color="{DynamicResource BorderColor}"/>
-  <SolidColorBrush x:Key="BorderSoft"  Color="{DynamicResource BorderSoftColor}"/>
-  <SolidColorBrush x:Key="Text"        Color="{DynamicResource TextColor}"/>
-  <SolidColorBrush x:Key="Muted"       Color="{DynamicResource MutedColor}"/>
-  <SolidColorBrush x:Key="Primary"     Color="{DynamicResource PrimaryColor}"/>
-  <SolidColorBrush x:Key="PrimaryHv"   Color="{DynamicResource PrimaryHvColor}"/>
-  <SolidColorBrush x:Key="PrimaryPr"   Color="{DynamicResource PrimaryPrColor}"/>
-  <SolidColorBrush x:Key="PrimarySoft" Color="{DynamicResource PrimarySoftColor}"/>
-  <SolidColorBrush x:Key="Warning"     Color="{DynamicResource WarningColor}"/>
-  <SolidColorBrush x:Key="Danger"      Color="{DynamicResource DangerColor}"/>
-  <SolidColorBrush x:Key="OK"          Color="{DynamicResource OKColor}"/>
-  <SolidColorBrush x:Key="ChromeHv"    Color="{DynamicResource ChromeHvColor}"/>
-  <SolidColorBrush x:Key="ChromeClose" Color="{DynamicResource ChromeCloseColor}"/>
+  <!-- Title-bar control colour scheme (subtle, only colour on hover). -->
+  <SolidColorBrush x:Key="ChromeHv"     Color="#E5E7EB"/>
+  <SolidColorBrush x:Key="ChromeClose"  Color="#E81123"/>
 
   <!-- ============================================================
        Typography

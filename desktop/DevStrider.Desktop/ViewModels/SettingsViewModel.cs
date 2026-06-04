@@ -12,7 +12,6 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ActivityLogService _activity;
     private readonly RegistrySyncService _registrySync;
     private readonly AtlasContext _atlas;
-    private readonly ThemeService _themeService;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -22,8 +21,7 @@ public partial class SettingsViewModel : ViewModelBase
         LocalApiServer localApi,
         ActivityLogService activity,
         RegistrySyncService registrySync,
-        AtlasContext atlas,
-        ThemeService themeService)
+        AtlasContext atlas)
     {
         _settings = settings;
         _profiles = profiles;
@@ -31,22 +29,6 @@ public partial class SettingsViewModel : ViewModelBase
         _activity = activity;
         _registrySync = registrySync;
         _atlas = atlas;
-        _themeService = themeService;
-    }
-
-    /// <summary>"System", "Light", or "Dark" — applies live on change, persists on next Save (but the active palette swap is immediate so Save isn't required just to preview).</summary>
-    private string _themeChoice = "System";
-    public string ThemeChoice
-    {
-        get => _themeChoice;
-        set
-        {
-            if (SetProperty(ref _themeChoice, value) &&
-                Enum.TryParse<ThemePreference>(value, ignoreCase: true, out var pref))
-            {
-                _ = _themeService.SetPreferenceAsync(pref);
-            }
-        }
     }
 
     private AppSettings _model = new();
@@ -65,9 +47,6 @@ public partial class SettingsViewModel : ViewModelBase
             Model = await _settings.GetAsync();
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
-            // Direct field-set so the SetPreferenceAsync side-effect doesn't fire on load.
-            _themeChoice = string.IsNullOrWhiteSpace(Model.ThemePreference) ? "System" : Model.ThemePreference;
-            OnPropertyChanged(nameof(ThemeChoice));
         }
         finally { IsBusy = false; }
     }
