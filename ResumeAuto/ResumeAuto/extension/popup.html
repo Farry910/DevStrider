@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 250px;
+            padding: 15px;
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+        }
+        h3 {
+            margin-top: 0;
+            color: #333;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        .status {
+            text-align: center;
+            padding: 8px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .status.connected { background-color: #d4edda; color: #155724; }
+        .status.disconnected { background-color: #f8d7da; color: #721c24; }
+        .status.connecting { background-color: #fff3cd; color: #856404; }
+        
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .btn-connect { background-color: #007bff; color: white; }
+        .btn-connect:hover:not(:disabled) { background-color: #0056b3; }
+        
+        .btn-reload-ext { background-color: #6c757d; color: white; }
+        .btn-reload-ext:hover:not(:disabled) { background-color: #5a6268; }
+        
+        .btn-reload-page { background-color: #28a745; color: white; }
+        .btn-reload-page:hover:not(:disabled) { background-color: #218838; }
+        
+        .disabled-msg {
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h3>Job Automator</h3>
+    <div id="status" class="status disconnected">Disconnected</div>
+    
+    <div id="controls">
+        <button id="btn-connect" class="btn-connect">Connect to Server</button>
+        <button id="btn-reload-ext" class="btn-reload-ext">Reload Extension</button>
+        <button id="btn-reload-page" class="btn-reload-page">Reload Current Page</button>
+    </div>
+    
+    <div id="disabled-msg" class="disabled-msg" style="display: none;">
+        Please open this popup on a ChatGPT page.
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

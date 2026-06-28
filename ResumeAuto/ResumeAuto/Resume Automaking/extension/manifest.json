@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Job to ChatGPT Automator",
+  "version": "1.0",
+  "description": "Automates extracting job descriptions and prompting ChatGPT.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "clipboardRead",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Job Automator"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "current_profile": "Joseph",
+  "generate_for_all": false,
+  "max_retry_rounds": 2,
+  "check_duplicates_across_dates": false,
+  "auto_backup_on_startup": true
+}
