@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
@@ -102,6 +105,92 @@ public partial class ProfilesViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Default resume prompt that emits both markers the pipeline needs.</summary>
+    public const string DefaultResumePrompt =
+        "Act as an expert resume writer. Tailor my resume to the job description below.\n" +
+        "\n" +
+        "Output ONLY the finished resume text. After the resume, append exactly these two lines:\n" +
+        "[FolderName]: <short_filename_for_this_company>\n" +
+        "<UID>, <Company>, <Role>, <Stack1>, <Stack2>, <Stack3>\n" +
+        "\n" +
+        "Where <UID> is a 5-character id you invent for this resume, <Company> and <Role> come " +
+        "from the job description, and the stacks are the 3-5 most important technologies.";
+
+    [RelayCommand]
+    public void UseDefaultPrompt()
+    {
+        if (Selected == null) return;
+        Selected.ResumePrompt = DefaultResumePrompt;
+        OnPropertyChanged(nameof(Selected));
+    }
+
+    /// <summary>
+    /// Import ResumeAuto's <c>profiles.json</c> (user picks the file). For each entry: read the
+    /// <c>prompt_path</c> file's contents into <see cref="Profile.ResumePrompt"/>, copy
+    /// <c>docm_path</c> → WordDocPath and <c>macro_name</c> → MacroName. Matches local profiles
+    /// by name (case-insensitive); creates missing ones.
+    /// </summary>
+    [RelayCommand]
+    public async Task ImportFromResumeAutoAsync()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Select ResumeAuto profiles.json",
+            Filter = "profiles.json|profiles.json|JSON files (*.json)|*.json|All files (*.*)|*.*",
+            FilterIndex = 1,
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(dlg.FileName);
+            var baseDir = Path.GetDirectoryName(dlg.FileName) ?? "";
+            var entries = JsonSerializer.Deserialize<List<ResumeAutoProfile>>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+
+            int created = 0, updated = 0;
+            foreach (var e in entries)
+            {
+                var name = (e.Name ?? "").Trim();
+                if (name.Length == 0 || string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase)) continue;
+
+                // Resolve + read the prompt file (relative paths resolved against profiles.json's folder).
+                var prompt = "";
+                var promptPath = (e.PromptPath ?? "").Trim();
+                if (promptPath.Length > 0)
+                {
+                    if (!Path.IsPathRooted(promptPath)) promptPath = Path.Combine(baseDir, promptPath);
+                    if (File.Exists(promptPath))
+                        try { prompt = await File.ReadAllTextAsync(promptPath); } catch { /* leave blank */ }
+                }
+
+                var existing = _context.All.FirstOrDefault(p =>
+                    string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (existing == null)
+                {
+                    existing = await _service.CreateAsync(name);
+                    created++;
+                }
+                else updated++;
+
+                existing.WordDocPath = (e.DocmPath ?? "").Trim();
+                existing.MacroName = (e.MacroName ?? "").Trim();
+                if (prompt.Length > 0) existing.ResumePrompt = prompt;
+                await _service.UpdateAsync(existing);
+            }
+
+            await _context.RefreshListAsync();
+            Selected = _context.Current;
+            StatusMessage = $"Imported ResumeAuto profiles: {created} created, {updated} updated.";
+            _activity.Success("Profiles", "ResumeAuto import", $"{created} created, {updated} updated.");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Import failed: {ex.Message}";
+            _activity.Error("Profiles", "ResumeAuto import failed", ex.Message);
+        }
+    }
+
     [RelayCommand]
     public async Task SetActiveAsync()
     {
@@ -153,5 +242,14 @@ public partial class ProfilesViewModel : ViewModelBase
         Selected = _context.Current;
         StatusMessage = $"Deleted profile '{deletedName}'.";
         _activity.Success("Profiles", "Profile deleted", deletedName);
+    }
+
+    /// <summary>Wire shape of one entry in ResumeAuto's profiles.json (snake_case keys).</summary>
+    private sealed class ResumeAutoProfile
+    {
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("prompt_path")] public string? PromptPath { get; set; }
+        [JsonPropertyName("docm_path")] public string? DocmPath { get; set; }
+        [JsonPropertyName("macro_name")] public string? MacroName { get; set; }
     }
 }

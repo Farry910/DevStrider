@@ -115,6 +115,7 @@ public partial class MainWindow : Window
         await TryAsync("Overview",    () => vm.Overview.ReloadAsync());
         await TryAsync("Stats",       () => vm.Stats.ReloadAsync());
         await TryAsync("Peers",       () => vm.Peers.LoadAsync());
+        await TryAsync("Resume",      () => vm.Resume.ReloadAsync());
 
         async Task TryAsync(string label, Func<Task> work)
         {

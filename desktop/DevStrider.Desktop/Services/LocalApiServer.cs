@@ -27,6 +27,8 @@ public sealed partial class LocalApiServer : ObservableObject
     private readonly SettingsService _settingsService;
     private readonly ActivityLogService _activity;
     private readonly ProfileContext _profileContext;
+    private readonly ResumeQueueService _resumeQueue;
+    private readonly WordMacroService _wordMacro;
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -42,12 +44,20 @@ public sealed partial class LocalApiServer : ObservableObject
     /// </summary>
     public event Action? OnExtensionBidRecorded;
 
-    public LocalApiServer(BidBoardService bids, SettingsService settingsService, ActivityLogService activity, ProfileContext profileContext)
+    public LocalApiServer(
+        BidBoardService bids,
+        SettingsService settingsService,
+        ActivityLogService activity,
+        ProfileContext profileContext,
+        ResumeQueueService resumeQueue,
+        WordMacroService wordMacro)
     {
         _bids = bids;
         _settingsService = settingsService;
         _activity = activity;
         _profileContext = profileContext;
+        _resumeQueue = resumeQueue;
+        _wordMacro = wordMacro;
     }
 
     public void Start(int port)
@@ -153,6 +163,23 @@ public sealed partial class LocalApiServer : ObservableObject
             if (ctx.Request.HttpMethod == "POST" && path == "/refresh-word")
             {
                 await HandleRefreshWordAsync(ctx);
+                return;
+            }
+
+            // ----- Resume auto-generation queue (extension polls these) -----
+            if (ctx.Request.HttpMethod == "GET" && path == "/resume/next-job")
+            {
+                await HandleResumeNextJobAsync(ctx);
+                return;
+            }
+            if (ctx.Request.HttpMethod == "POST" && path == "/resume/result")
+            {
+                await HandleResumeResultAsync(ctx);
+                return;
+            }
+            if (ctx.Request.HttpMethod == "POST" && path == "/resume/fail")
+            {
+                await HandleResumeFailAsync(ctx);
                 return;
             }
 
@@ -278,6 +305,156 @@ public sealed partial class LocalApiServer : ObservableObject
             joinedExistingLink,
             fastFeedApplied = parsed != null
         });
+    }
+
+    // ========================================================================
+    // RESUME QUEUE ENDPOINTS
+    // ========================================================================
+
+    /// <summary>
+    /// Hand the extension the next queued job for the active profile, plus that profile's
+    /// resume prompt. 204 when the batch is stopped or nothing's queued. The job flips to
+    /// Generating so it isn't handed out twice.
+    /// </summary>
+    private async Task HandleResumeNextJobAsync(HttpListenerContext ctx)
+    {
+        var job = await _resumeQueue.ClaimNextAsync();
+        if (job == null)
+        {
+            ctx.Response.StatusCode = 204;
+            ctx.Response.Close();
+            return;
+        }
+        var prompt = (_profileContext.Current?.ResumePrompt ?? "").Trim();
+        _activity.Info(ExtensionSource, "Resume job dispatched", job.Url, silent: true);
+        await WriteJsonAsync(ctx, 200, new
+        {
+            jobId = job.Id.ToString(),
+            url = job.Url,
+            prompt
+        });
+    }
+
+    /// <summary>
+    /// The extension delivers the ChatGPT output for a job. We split off the trailing
+    /// fast-feed line (UID, Company, Role, stacks), run the profile's Word macro on the
+    /// resume body, auto-record the bid, and mark the job Done.
+    /// </summary>
+    private async Task HandleResumeResultAsync(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
+        var body = await reader.ReadToEndAsync();
+        ResumeResultRequest? req;
+        try
+        {
+            req = JsonSerializer.Deserialize<ResumeResultRequest>(body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            await WriteJsonAsync(ctx, 400, new { error = $"Invalid JSON: {ex.Message}" });
+            return;
+        }
+        if (req == null || string.IsNullOrWhiteSpace(req.JobId) || !ObjectId.TryParse(req.JobId, out var jobId))
+        {
+            await WriteJsonAsync(ctx, 400, new { error = "jobId is required" });
+            return;
+        }
+
+        var job = await _resumeQueue.GetAsync(jobId);
+        if (job == null)
+        {
+            await WriteJsonAsync(ctx, 404, new { error = "Unknown job" });
+            return;
+        }
+
+        await _resumeQueue.SetStatusAsync(jobId, ResumeJobStatuses.ResumeReceived);
+
+        // 1) Split the trailing "UID, Company, Role, stacks" line off the resume body.
+        var split = FastFeed.SplitTrailing(req.ResumeText ?? "");
+        var resumeBody = split.ResumePart;   // still carries any [FolderName]: line the macro reads
+        var parsed = split.Parsed;
+        var filename1 = parsed?.ResumeId ?? "";
+
+        // 2) Run the active profile's Word macro on the resume body (background, no clipboard).
+        var profile = _profileContext.Current;
+        var docm = (profile?.WordDocPath ?? "").Trim();
+        var macro = (profile?.MacroName ?? "").Trim();
+        WordMacroService.Result macroResult;
+        if (string.IsNullOrEmpty(docm) || string.IsNullOrEmpty(macro))
+        {
+            macroResult = new WordMacroService.Result(false,
+                $"Profile '{profile?.Name}' needs a Word doc path + macro name (Profiles tab).");
+            _activity.Warning("Resume", "Macro skipped", macroResult.Message);
+        }
+        else
+        {
+            macroResult = await _wordMacro.RunAsync(resumeBody, docm, macro, profile!.Name);
+            if (macroResult.Success) _activity.Success("Resume", "Resume generated", $"{job.Url}");
+            else _activity.Error("Resume", "Macro failed", macroResult.Message);
+        }
+
+        // 3) Auto-record the bid for this URL under the active profile.
+        try
+        {
+            var existing = await _bids.FindLinkByNormalizedUrlAsync(job.Url);
+            var link = existing ?? await _bids.AddLinkAsync(job.Url, req.JobDescription ?? "");
+            var bid = await _bids.UpsertBidAsync(link.Id, b =>
+            {
+                if (!string.IsNullOrEmpty(req.JobDescription)) b.JobDescription = req.JobDescription;
+                if (!string.IsNullOrEmpty(resumeBody)) b.GptResumeContent = resumeBody;
+                b.Origin = "Resume Auto";
+                if (parsed != null)
+                {
+                    b.ResumeId = parsed.ResumeId;
+                    b.Company = parsed.Company;
+                    b.Role = parsed.Role;
+                    b.PrimaryStacks = parsed.PrimaryStacks.ToList();
+                    b.Status = BidStatuses.Applied;
+                }
+            });
+            var label = parsed != null ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·') : job.Url;
+            _activity.Success("Resume", "Bid recorded", label);
+            try { OnExtensionBidRecorded?.Invoke(); } catch { /* ignore */ }
+        }
+        catch (Exception ex)
+        {
+            _activity.Error("Resume", "Bid record failed", ex.Message);
+        }
+
+        // 4) Finalize the job. Done even if the macro failed but the bid recorded — the
+        //    resume file is the only casualty, and the Activity log captured why.
+        if (macroResult.Success)
+            await _resumeQueue.CompleteAsync(jobId, req.JobDescription ?? "", resumeBody, split.FastFeedLine, filename1, "");
+        else
+            await _resumeQueue.FailAsync(jobId, macroResult.Message);
+
+        await WriteJsonAsync(ctx, 200, new { ok = true, macro = macroResult.Success, fastFeedApplied = parsed != null });
+    }
+
+    private async Task HandleResumeFailAsync(HttpListenerContext ctx)
+    {
+        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
+        var body = await reader.ReadToEndAsync();
+        ResumeFailRequest? req;
+        try
+        {
+            req = JsonSerializer.Deserialize<ResumeFailRequest>(body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            await WriteJsonAsync(ctx, 400, new { error = $"Invalid JSON: {ex.Message}" });
+            return;
+        }
+        if (req == null || string.IsNullOrWhiteSpace(req.JobId) || !ObjectId.TryParse(req.JobId, out var jobId))
+        {
+            await WriteJsonAsync(ctx, 400, new { error = "jobId is required" });
+            return;
+        }
+        await _resumeQueue.FailAsync(jobId, string.IsNullOrWhiteSpace(req.Error) ? "Extension reported failure." : req.Error!);
+        _activity.Warning(ExtensionSource, "Resume job failed", req.Error ?? "", silent: true);
+        await WriteJsonAsync(ctx, 200, new { ok = true });
     }
 
     /// <summary>
@@ -440,5 +617,20 @@ public sealed partial class LocalApiServer : ObservableObject
         public string? SharedJobDescription { get; set; }
         public string? Comment { get; set; }
         public string? Origin { get; set; }
+    }
+
+    /// <summary>Body the extension POSTs to <c>/resume/result</c> after ChatGPT finishes a job.</summary>
+    public class ResumeResultRequest
+    {
+        public string JobId { get; set; } = "";
+        public string? JobDescription { get; set; }
+        public string? ResumeText { get; set; }
+    }
+
+    /// <summary>Body the extension POSTs to <c>/resume/fail</c> when a job can't be processed.</summary>
+    public class ResumeFailRequest
+    {
+        public string JobId { get; set; } = "";
+        public string? Error { get; set; }
     }
 }

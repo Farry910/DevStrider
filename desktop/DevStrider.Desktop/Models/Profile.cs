@@ -26,6 +26,21 @@ public class Profile
     /// <summary>Per-profile Word .docm with that profile's resume macro.</summary>
     public string WordDocPath { get; set; } = "";
 
+    /// <summary>
+    /// Per-profile resume-generation prompt sent to ChatGPT ahead of the job description.
+    /// Migrated from ResumeAuto's <c>profiles.json</c> <c>prompt_path</c> (the file's contents,
+    /// not the path). The prompt instructs ChatGPT to emit the resume body followed by a
+    /// trailing fast-feed line: <c>UID, Company, Role, Stack1, Stack2, …</c>.
+    /// </summary>
+    public string ResumePrompt { get; set; } = "";
+
+    /// <summary>
+    /// Name of the VBA macro inside <see cref="WordDocPath"/> to invoke via COM
+    /// (e.g. "UpdateResumeAndSwitchOriginal"). Migrated from ResumeAuto's <c>macro_name</c>.
+    /// Empty = fall back to the legacy F9-hotkey trigger.
+    /// </summary>
+    public string MacroName { get; set; } = "";
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

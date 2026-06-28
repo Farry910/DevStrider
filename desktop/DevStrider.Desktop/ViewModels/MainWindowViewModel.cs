@@ -22,6 +22,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ActivityViewModel Activity { get; }
     public ProfilesViewModel ProfilesPage { get; }
     public PeersViewModel Peers { get; }
+    public ResumeViewModel Resume { get; }
 
     public ProfileContext ProfileContext { get; }
 
@@ -65,6 +66,7 @@ public partial class MainWindowViewModel : ViewModelBase
         ActivityViewModel activity,
         ProfilesViewModel profilesPage,
         PeersViewModel peers,
+        ResumeViewModel resume,
         ProfileContext profileContext)
     {
         Bids = bids;
@@ -78,6 +80,7 @@ public partial class MainWindowViewModel : ViewModelBase
         Activity = activity;
         ProfilesPage = profilesPage;
         Peers = peers;
+        Resume = resume;
         ProfileContext = profileContext;
         Current = bids;
 
@@ -97,4 +100,5 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowActivity() => Current = Activity;
     [RelayCommand] private void ShowProfiles() => Current = ProfilesPage;
     [RelayCommand] private void ShowPeers() => Current = Peers;
+    [RelayCommand] private void ShowResume() => Current = Resume;
 }

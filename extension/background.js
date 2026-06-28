@@ -1,10 +1,13 @@
 "use strict";
 
-// DevStrider is now a local desktop app — no web service, no JWT, no groupId.
-// The extension talks directly to the WPF listener at 127.0.0.1:8765, which absorbs
-// what BidAssistantApp used to do (paste-submit, refresh-word, browse-word, record-bid).
+// DevStrider local desktop app listener. The extension talks to it over loopback HTTP.
+// Two flows live here:
+//   • Manual (floating buttons): START_GENERATE injects a JD into ChatGPT; REFRESH_WORD runs
+//     the Word macro + records one bid.
+//   • Batch (Resume tab): the ChatGPT content script polls the app and drives generation; this
+//     worker only scrapes job descriptions in throwaway background tabs (RESUME_SCRAPE_JD).
 const APP_URL = "http://127.0.0.1:8765";
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 15000;
 
 function fetchWithTimeout(url, options, timeoutMs) {
   var controller = new AbortController();
@@ -13,354 +16,136 @@ function fetchWithTimeout(url, options, timeoutMs) {
     .finally(function () { clearTimeout(id); });
 }
 
-function setStatus(msg) {
-  try {
-    chrome.storage.local.set({ lastStatus: msg });
-  } catch (e) {
-    if (typeof console !== 'undefined' && console.warn) console.warn('[Bid Assistant] setStatus failed:', e);
-  }
-}
-
-function focusChatInput(tabId, cb) {
-  chrome.scripting.executeScript(
-    {
-      target: { tabId: tabId },
-      func: function () {
-        var selectors = [
-          'textarea[data-id="root"]',
-          'div#prompt-textarea.ProseMirror',
-          'textarea#prompt-textarea',
-          'form[data-type="unified-composer"] [contenteditable="true"]',
-          'form[data-type="unified-composer"] .ProseMirror',
-          'textarea[placeholder*="Message"]',
-          'textarea[placeholder*="Ask"]',
-          'div[contenteditable="true"][role="textbox"]',
-          'form textarea',
-          'textarea'
-        ];
-        
-        for (var i = 0; i < selectors.length; i++) {
-          try {
-            var input = document.querySelector(selectors[i]);
-            if (input && input.offsetParent) {
-              input.scrollIntoView({ behavior: 'instant', block: 'center' });
-              input.focus();
-              input.click();
-              
-              if (document.activeElement === input) {
-                return { success: true, selector: selectors[i] };
-              }
-            }
-          } catch (e) {
-            continue;
-          }
-        }
-        
-        return { success: false, selector: null };
-      },
-    },
-    function (results) {
-      if (chrome.runtime.lastError || !results || !results[0]) return cb(false);
-      var result = results[0].result;
-      if (result && result.success && typeof console !== 'undefined' && console.log) {
-        console.log('[Bid Assistant] Focused input using:', result.selector);
-      }
-      cb(result && result.success === true);
-    },
-  );
-}
-
 function findChatGPTTab(cb) {
   chrome.tabs.query(
     { url: ["*://*.openai.com/*", "*://chatgpt.com/*", "*://*.chatgpt.com/*", "*://chat.com/*", "*://*.chat.com/*"] },
     function (tabs) {
-      if (tabs && tabs.length) {
-        tabs.sort(function (a, b) {
-          return (b.lastAccessed || 0) - (a.lastAccessed || 0);
-        }); 
-        return cb(tabs[0].id);
-      }
+      if (tabs && tabs.length) { tabs.sort(function (a, b) { return (b.lastAccessed || 0) - (a.lastAccessed || 0); }); return cb(tabs[0].id); }
       cb(null);
-    },
+    }
   );
 }
 
-/**
- * Record the URL + JD + GPT resume in the local DevStrider desktop app.
- * Loopback-only POST to /record-bid; no JWT, no groupId. The WPF listener applies
- * the same fast-feed parsing rules the web backend used.
- */
+// --- Background-tab JD scrape (batch engine asks for this) -----------------
+async function scrapeJobDescription(url) {
+  var tab = await chrome.tabs.create({ url: url, active: false });
+  var tabId = tab.id;
+  try {
+    await waitForComplete(tabId, 30000);
+    var results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: extractJdInPage
+    });
+    return (results && results[0] && results[0].result) || "";
+  } finally {
+    try { await chrome.tabs.remove(tabId); } catch (e) { /* ignore */ }
+  }
+}
+
+function waitForComplete(tabId, timeoutMs) {
+  return new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () { if (!done) { done = true; chrome.tabs.onUpdated.removeListener(listener); resolve(); } }, timeoutMs || 30000);
+    function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
+        if (done) return;
+        done = true; clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener);
+        // Give SPA job boards a beat to render the description.
+        setTimeout(resolve, 1500);
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+// Runs IN the job page (isolated world). Self-contained — no outer references.
+function extractJdInPage() {
+  function txt(el) { return el ? (el.innerText || el.textContent || "").trim() : ""; }
+  var selectors = [
+    ".jobs-description__content", ".jobs-description", "#jobDescriptionText",
+    "#job-description-container", ".jobsearch-JobComponent-description",
+    ".job-post", ".job__description", "#job-description", ".job-description",
+    "[class*='job-description']", "[class*='JobDescription']", ".posting-page",
+    "[id*='requisitionDescription']", "article", "[role='main']", "main"
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    try {
+      var els = document.querySelectorAll(selectors[i]);
+      for (var j = 0; j < els.length; j++) { var t = txt(els[j]); if (t.length >= 200) return t; }
+    } catch (e) { /* ignore */ }
+  }
+  var body = (document.body && (document.body.innerText || document.body.textContent)) || "";
+  return body.trim();
+}
+
+// --- Manual: run Word macro + record one bid (purple button) ----------------
 function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
   var pending = st && st.devstriderPending;
-  if (!pending || !pending.url) {
-    callback({
-      ok: false,
-      error: "No job context saved. On a job posting page, click Generate first.",
-    });
-    return;
-  }
-  var gpt =
-    gptResumeContent != null && String(gptResumeContent) ? String(gptResumeContent).trim() : "";
-  var ff =
-    fastFeedInput != null && String(fastFeedInput).trim()
-      ? String(fastFeedInput).trim()
-      : "";
+  if (!pending || !pending.url) { callback({ ok: false, error: "No job context. Use the blue button on a job page first." }); return; }
   var bodyObj = {
     url: pending.url,
     jobDescription: pending.jobDescription || "",
-    gptResumeContent: gpt,
-    origin: "Bid Assistant",
+    gptResumeContent: gptResumeContent ? String(gptResumeContent).trim() : "",
+    origin: "Bid Assistant"
   };
-  if (ff) bodyObj.fastFeedInput = ff;
-  var body = JSON.stringify(bodyObj);
+  if (fastFeedInput && String(fastFeedInput).trim()) bodyObj.fastFeedInput = String(fastFeedInput).trim();
 
-  fetchWithTimeout(APP_URL + "/record-bid", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body,
-  }, 120000)
+  fetchWithTimeout(APP_URL + "/record-bid", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bodyObj) }, 120000)
+    .then(function (r) { return r.text().then(function (text) { return { status: r.status, text: text }; }); })
     .then(function (r) {
-      return r.text().then(function (text) {
-        return { status: r.status, text: text };
-      });
+      var data; try { data = JSON.parse(r.text); } catch (e) { callback({ ok: false, error: "Invalid JSON from app" }); return; }
+      if (r.status >= 200 && r.status < 300) callback({ ok: true, data: data });
+      else callback({ ok: false, error: (data && data.error) || String(r.status) });
     })
-    .then(function (r) {
-      var data;
-      try { data = JSON.parse(r.text); }
-      catch (e) { callback({ ok: false, error: "Invalid JSON from DevStrider app" }); return; }
-      if (r.status >= 200 && r.status < 300) {
-        chrome.storage.local.set({
-          bidAssistantSessionCache: {
-            url: pending.url,
-            jobDescription: pending.jobDescription || "",
-            gptResumeContent: gpt,
-            updatedAt: Date.now(),
-          },
-        });
-        callback({ ok: true, data: data });
-      } else {
-        var err =
-          (data && (data.error || (data.errors && data.errors[0] && data.errors[0].msg))) ||
-          String(r.status);
-        callback({ ok: false, error: String(err) });
-      }
-    })
-    .catch(function (err) {
-      if (typeof console !== "undefined" && console.error)
-        console.error("[Bid Assistant] DevStrider record failed:", err);
-      callback({
-        ok: false,
-        error: "Network error — is the DevStrider desktop app running?",
-      });
-    });
+    .catch(function () { callback({ ok: false, error: "App not running?" }); });
 }
 
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-  if (message.type === "REFRESH_WORD") {
-    setStatus("Switching to job tab...");
-    var gptFromPage =
-      message.gptResumeContent != null && message.gptResumeContent !== undefined
-        ? String(message.gptResumeContent)
-        : "";
-    var fastFeedInput =
-      message.fastFeedInput != null && message.fastFeedInput !== undefined
-        ? String(message.fastFeedInput)
-        : "";
-    chrome.storage.local.get(
-      ["lastJobTabId", "devstriderPending"],
-      function (st) {
-        var jobTabId = st && st.lastJobTabId;
-        function afterWordSuccess() {
-          setStatus("Word updated — syncing DevStrider…");
-          submitDevStriderRecord(st, gptFromPage, fastFeedInput, function (ds) {
-            // Fire-and-forget: report outcome to BAA dashboard
-            var outcomePayload = JSON.stringify({
-              phase: "after_word",
-              code: ds.ok ? "ok" : "error",
-              detail: ds.ok ? "" : (ds.error || "failed"),
-              ts: Date.now(),
-            });
-            try {
-              fetch(APP_URL + "/client/devstrider-outcome", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: outcomePayload,
-              }).catch(function () {});
-            } catch (e) {}
-
-            if (ds.ok) {
-              setStatus("Word updated & DevStrider recorded!");
-              sendResponse({ ok: true, devStrider: { ok: true, data: ds.data } });
-            } else {
-              setStatus("Word OK; DevStrider: " + (ds.error || "failed"));
-              sendResponse({ ok: true, devStrider: { ok: false, error: ds.error } });
-            }
-          });
-        }
-        function doRefreshWord() {
-          setStatus("Refreshing Word document...");
-          // Word path + hotkey live in DevStrider · Settings; the extension just triggers.
-          fetchWithTimeout(APP_URL + "/refresh-word", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: "{}",
-          })
-            .then(function (r) {
-              return r.text();
-            })
-            .then(function (text) {
-              var data;
-              try {
-                data = JSON.parse(text);
-              } catch (e) {
-                setStatus("Error: Invalid response from app");
-                sendResponse({
-                  ok: false,
-                  error:
-                    "Invalid response from app. Ensure the Bid Assistant app is running and responding correctly.",
-                });
-                return;
-              }
-              if (data && data.success) {
-                afterWordSuccess();
-              } else {
-                setStatus("Error: " + (data && data.error ? data.error : "Unknown error"));
-                sendResponse({ ok: false, error: (data && data.error) || "Failed to refresh Word" });
-              }
-            })
-            .catch(function (err) {
-              if (typeof console !== "undefined" && console.error)
-                console.error("[Bid Assistant] refresh-word fetch failed:", err);
-              setStatus("Error: App not reachable");
-              sendResponse({
-                ok: false,
-                error: "App not reachable. Make sure the Bid Assistant app is running.",
-              });
-            });
-        }
-        if (jobTabId) {
-          chrome.tabs.get(jobTabId, function (tab) {
-            if (chrome.runtime.lastError || !tab) {
-              doRefreshWord();
-              return;
-            }
-            chrome.tabs.update(jobTabId, { active: true }, function () {
-              if (chrome.runtime.lastError) {
-                console.warn(
-                  "[Bid Assistant] Could not switch to job tab:",
-                  chrome.runtime.lastError.message
-                );
-              }
-              doRefreshWord();
-            });
-          });
-        } else {
-          doRefreshWord();
-        }
-      }
-    );
+  // ---- Batch: scrape a JD in a throwaway tab ----
+  if (message && message.type === "RESUME_SCRAPE_JD") {
+    scrapeJobDescription(message.url)
+      .then(function (jd) { sendResponse({ ok: true, jd: jd }); })
+      .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
     return true;
   }
 
-  if (message.type !== "START_GENERATE") return;
-
-  if (sender && sender.tab && sender.tab.id) {
-    chrome.storage.local.set({ lastJobTabId: sender.tab.id });
-  }
-
-  setStatus("Starting…");
-
-  var MIN_JD_LENGTH = 200;
-
-  if (
-    message.jd &&
-    typeof message.jd === "string" &&
-    message.jd.trim().length >= MIN_JD_LENGTH &&
-    sender &&
-    sender.tab &&
-    sender.tab.url &&
-    /^https?:\/\//i.test(sender.tab.url)
-  ) {
-    chrome.storage.local.set({
-      devstriderPending: {
-        url: sender.tab.url,
-        jobDescription: message.jd.trim(),
-        savedAt: Date.now(),
-      },
-    });
-  }
-  var MANUAL_FALLBACK_MSG = "Couldn't extract job description. Paste the JD into ChatGPT manually.";
-
-  var jdDone = false;
-  var jdErr = null;
-  var chatDone = false;
-  var chatTabIdVal = null;
-
-  if (message.jd && typeof message.jd === "string" && message.jd.trim().length >= MIN_JD_LENGTH) {
-    jdDone = true;
-    jdErr = null;
-    maybeContinue();
-  } else {
-    jdDone = true;
-    jdErr = new Error(MANUAL_FALLBACK_MSG);
-    maybeContinue();
-  }
-
-  function maybeContinue() {
-    if (!jdDone || !chatDone) return;
-    if (jdErr) {
-      setStatus("Error: " + (jdErr.message || "Could not extract job description"));
-      sendResponse({ ok: false, error: jdErr.message });
-      return;
-    }
-    if (!chatTabIdVal) {
-      setStatus("Open a ChatGPT tab first");
-      sendResponse({ ok: false, error: "Open a ChatGPT tab first" });
-      return;
-    }
-    const chatTabId = chatTabIdVal;
-    
-    // FIXED: Switch to ChatGPT FIRST, then call app
-    setStatus("Switching to ChatGPT…");
-    chrome.tabs.update(chatTabId, { active: true }, function (tab) {
-      if (tab && tab.windowId) chrome.windows.update(tab.windowId, { focused: true });
-      
-      // Focus input, then immediately tell C# app to Ctrl+V + Enter
-      focusChatInput(chatTabId, function (focused) {
-        if (!focused) {
-          setStatus("Couldn't focus input. Press Ctrl+V manually.");
-          sendResponse({ ok: false, error: "Press Ctrl+V manually.", needManual: true });
-          return;
-        }
-
-        setStatus("Pasting…");
-        fetchWithTimeout(APP_URL + "/trigger-paste-submit", { method: "POST" })
-          .then(function (r) { return r.text(); })
-          .then(function (text) {
-            var data;
-            try { data = JSON.parse(text); } catch (e) { data = { success: false }; }
-            if (data && data.success) {
-              setStatus("JD pasted into ChatGPT!");
-              sendResponse({ ok: true });
-            } else {
-              setStatus("App not responding. Press Ctrl+V manually.");
-              sendResponse({ ok: false, error: "Press Ctrl+V manually." });
-            }
-          })
-          .catch(function (err) {
-            if (typeof console !== 'undefined' && console.error) console.error('[Bid Assistant] paste-submit fetch failed:', err);
-            setStatus("App not running. Press Ctrl+V manually.");
-            sendResponse({ ok: false, error: "App not running. Press Ctrl+V manually." });
-          });
+  // ---- Manual: send a JD into ChatGPT via DOM injection (no clipboard) ----
+  if (message && message.type === "START_GENERATE") {
+    var jd = message.jd ? String(message.jd) : "";
+    findChatGPTTab(function (chatTabId) {
+      if (!chatTabId) { sendResponse({ ok: false, error: "Open a logged-in ChatGPT tab first" }); return; }
+      chrome.tabs.update(chatTabId, { active: true }, function (tab) {
+        if (tab && tab.windowId) chrome.windows.update(tab.windowId, { focused: true });
+        chrome.tabs.sendMessage(chatTabId, { type: "INJECT_TEXT", text: jd }, function (resp) {
+          if (chrome.runtime.lastError) sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          else sendResponse(resp || { ok: false, error: "No response from ChatGPT tab" });
+        });
       });
     });
+    return true;
   }
 
-  findChatGPTTab(function (id) {
-    chatDone = true;
-    chatTabIdVal = id;
-    maybeContinue();
-  });
-
-  return true;
+  // ---- Manual: run the Word macro (hotkey path) then record the bid ----
+  if (message && message.type === "REFRESH_WORD") {
+    var gpt = message.gptResumeContent ? String(message.gptResumeContent) : "";
+    var ff = message.fastFeedInput ? String(message.fastFeedInput) : "";
+    chrome.storage.local.get(["devstriderPending"], function (st) {
+      fetchWithTimeout(APP_URL + "/refresh-word", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+        .then(function (r) { return r.text(); })
+        .then(function (text) {
+          var data; try { data = JSON.parse(text); } catch (e) { sendResponse({ ok: false, error: "Invalid response from app" }); return; }
+          if (data && data.success) {
+            submitDevStriderRecord(st, gpt, ff, function (ds) {
+              sendResponse({ ok: true, devStrider: ds.ok ? { ok: true, data: ds.data } : { ok: false, error: ds.error } });
+            });
+          } else {
+            sendResponse({ ok: false, error: (data && data.error) || "Failed to refresh Word" });
+          }
+        })
+        .catch(function () { sendResponse({ ok: false, error: "App not reachable. Is DevStrider running?" }); });
+    });
+    return true;
+  }
 });
+
+console.log("[DevStrider] Background worker loaded.");

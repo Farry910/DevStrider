@@ -63,6 +63,8 @@ public partial class App : Application
             services.AddSingleton<AtlasContext>();
             services.AddSingleton<AtlasSyncService>();
             services.AddSingleton<LegacyMigrationService>();
+            services.AddSingleton<WordMacroService>();
+            services.AddSingleton<ResumeQueueService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -77,6 +79,7 @@ public partial class App : Application
             services.AddSingleton<ActivityViewModel>();
             services.AddSingleton<ProfilesViewModel>();
             services.AddSingleton<PeersViewModel>();
+            services.AddSingleton<ResumeViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();
