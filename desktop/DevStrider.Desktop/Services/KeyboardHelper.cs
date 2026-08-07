@@ -27,7 +27,7 @@ internal static class KeyboardHelper
     private const int WINDOW_RESTORE_TIMEOUT_MS = 1000;
     private const int FOREGROUND_TIMEOUT_MS = 2000;
     private const int WORD_OPEN_TIMEOUT_MS = 15000;
-    public const int WORD_CLOSE_TIMEOUT_SECONDS = 10;
+    public const int WORD_CLOSE_TIMEOUT_SECONDS = 15;
     private const int POLL_INTERVAL_MS = 50;
     private const int WORD_CLOSE_CHECK_INTERVAL_MS = 100;
 

@@ -29,6 +29,14 @@ public sealed partial class LocalApiServer : ObservableObject
     private readonly ProfileContext _profileContext;
     private readonly ResumeQueueService _resumeQueue;
     private readonly WordMacroService _wordMacro;
+
+    /// <summary>
+    /// Serializes <see cref="HandleRefreshWordAsync"/> end to end. Opening an already-open
+    /// .docm just reactivates the same Word window, so two Chrome windows triggering a refresh
+    /// at once would otherwise retrigger the same macro mid-run and stomp each other's edits.
+    /// </summary>
+    private readonly SemaphoreSlim _refreshWordLock = new(1, 1);
+
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -471,6 +479,13 @@ public sealed partial class LocalApiServer : ObservableObject
     /// Open the user's Word doc, send the configured hotkey to trigger its macro, wait for
     /// Word to close (the macro's last action), restore focus to Chrome. Path + hotkey are
     /// read from <see cref="AppSettings"/> — the extension just POSTs an empty trigger.
+    ///
+    /// <para>
+    /// The actual automation is serialized behind <see cref="_refreshWordLock"/> — see that
+    /// field's doc comment. <c>chromeHwnd</c> is captured before the lock wait (not after) so
+    /// a request queued behind another still restores focus to the window that actually
+    /// clicked purple, rather than whatever happens to be focused once its turn comes up.
+    /// </para>
     /// </summary>
     private async Task HandleRefreshWordAsync(HttpListenerContext ctx)
     {
@@ -478,6 +493,8 @@ public sealed partial class LocalApiServer : ObservableObject
         // some HttpListener clients waiting for the response.
         using (var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding))
             await reader.ReadToEndAsync();
+
+        var chromeHwnd = KeyboardHelper.GetForegroundWindow();
 
         var s = await _settingsService.GetAsync();
         var profile = _profileContext.Current;
@@ -509,10 +526,12 @@ public sealed partial class LocalApiServer : ObservableObject
             return;
         }
 
+        if (_refreshWordLock.CurrentCount == 0)
+            _activity.Info(ExtensionSource, "Word refresh queued", "Waiting for a previous refresh to finish.", silent: true);
+        await _refreshWordLock.WaitAsync();
         try
         {
             var (mods, keyVk) = parsed.Value;
-            var chromeHwnd = KeyboardHelper.GetForegroundWindow();
             var wordHwnd = KeyboardHelper.OpenWordDocument(wordPath);
             if (wordHwnd == IntPtr.Zero)
             {
@@ -525,7 +544,7 @@ public sealed partial class LocalApiServer : ObservableObject
             // Fast path: no modifiers → PostMessage straight to the window without focus juggling.
             if (mods.Count == 0 && KeyboardHelper.PostSingleKeyToWindow(wordHwnd, mods, keyVk))
             {
-                if (KeyboardHelper.WaitForWordClose(5))
+                if (KeyboardHelper.WaitForWordClose(8))
                 {
                     KeyboardHelper.ReturnToChrome(chromeHwnd);
                     _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
@@ -563,6 +582,10 @@ public sealed partial class LocalApiServer : ObservableObject
         {
             _activity.Error(ExtensionSource, "Refresh Word crashed", ex.Message);
             await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
+        }
+        finally
+        {
+            _refreshWordLock.Release();
         }
     }
 

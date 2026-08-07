@@ -125,24 +125,35 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return true;
   }
 
-  // ---- Manual: run the Word macro (hotkey path) then record the bid ----
+  // ---- Manual: run the Word macro (hotkey path) and record the bid ----
+  // These two are independent: a slow/failed Word refresh (e.g. queued behind another
+  // Chrome window's refresh) must never prevent the bid from being recorded in DevStrider,
+  // so both run in parallel and report their outcomes separately.
   if (message && message.type === "REFRESH_WORD") {
     var gpt = message.gptResumeContent ? String(message.gptResumeContent) : "";
     var ff = message.fastFeedInput ? String(message.fastFeedInput) : "";
     chrome.storage.local.get(["devstriderPending"], function (st) {
-      fetchWithTimeout(APP_URL + "/refresh-word", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+      var wordDone = fetchWithTimeout(APP_URL + "/refresh-word", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, 90000)
         .then(function (r) { return r.text(); })
         .then(function (text) {
-          var data; try { data = JSON.parse(text); } catch (e) { sendResponse({ ok: false, error: "Invalid response from app" }); return; }
-          if (data && data.success) {
-            submitDevStriderRecord(st, gpt, ff, function (ds) {
-              sendResponse({ ok: true, devStrider: ds.ok ? { ok: true, data: ds.data } : { ok: false, error: ds.error } });
-            });
-          } else {
-            sendResponse({ ok: false, error: (data && data.error) || "Failed to refresh Word" });
-          }
+          var data; try { data = JSON.parse(text); } catch (e) { return { ok: false, error: "Invalid response from app" }; }
+          if (data && data.success) return { ok: true };
+          return { ok: false, error: (data && data.error) || "Failed to refresh Word" };
         })
-        .catch(function () { sendResponse({ ok: false, error: "App not reachable. Is DevStrider running?" }); });
+        .catch(function () { return { ok: false, error: "App not reachable. Is DevStrider running?" }; });
+
+      var recordDone = new Promise(function (resolve) {
+        submitDevStriderRecord(st, gpt, ff, function (ds) { resolve(ds); });
+      });
+
+      Promise.all([wordDone, recordDone]).then(function (results) {
+        var word = results[0], ds = results[1];
+        sendResponse({
+          ok: true,
+          word: word,
+          devStrider: ds.ok ? { ok: true, data: ds.data } : { ok: false, error: ds.error }
+        });
+      });
     });
     return true;
   }

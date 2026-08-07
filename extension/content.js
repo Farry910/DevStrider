@@ -397,12 +397,25 @@
       { type: 'REFRESH_WORD', gptResumeContent: split.resumePart, fastFeedInput: split.fastFeedLine },
       function (response) {
         setButtonStates();
-        if (chrome.runtime.lastError) updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
-        else if (response && response.ok) {
-          var ds = response.devStrider;
-          if (ds && ds.ok === false) updatePurpleStatus(('Word OK · DevStrider: ' + (ds.error || 'failed')).slice(0, 44), 'xmark', 'rgba(255,193,7,0.95)');
-          else updatePurpleStatus('Word + DevStrider OK!', 'check', 'rgba(255,255,255,0.95)');
-        } else updatePurpleStatus('Error: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
+        if (chrome.runtime.lastError) {
+          updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
+        } else if (response && response.ok) {
+          // Word refresh and DevStrider recording are independent now — report both outcomes.
+          // The DevStrider write is the one that matters most: it's never gated on Word.
+          var word = response.word || { ok: false };
+          var ds = response.devStrider || { ok: false };
+          if (word.ok && ds.ok) {
+            updatePurpleStatus('Word + DevStrider OK!', 'check', 'rgba(255,255,255,0.95)');
+          } else if (ds.ok) {
+            updatePurpleStatus(('DevStrider OK · Word: ' + (word.error || 'failed')).slice(0, 44), 'xmark', 'rgba(255,193,7,0.95)');
+          } else if (word.ok) {
+            updatePurpleStatus(('Word OK · DevStrider: ' + (ds.error || 'failed')).slice(0, 44), 'xmark', 'rgba(255,193,7,0.95)');
+          } else {
+            updatePurpleStatus(('Word: ' + (word.error || 'failed') + ' · DevStrider: ' + (ds.error || 'failed')).slice(0, 60), 'xmark', 'rgba(255,255,255,0.5)');
+          }
+        } else {
+          updatePurpleStatus('Error: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
+        }
         setTimeout(function () { updatePurpleStatus('Update Word & record bid in DevStrider', 'fileWord', 'rgba(255,255,255,0.9)'); }, 3500);
       }
     );
