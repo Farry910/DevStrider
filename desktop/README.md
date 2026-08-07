@@ -4,8 +4,8 @@ A local-first, Windows desktop app (.NET 8 / WPF) for tracking job **bids** and 
 auto-generating tailored **resumes** through ChatGPT, and sharing daily status with a team via a
 shared MongoDB/Atlas cluster.
 
-- **Desktop app version:** 3.4.0
-- **Chrome extension version:** 2.3.0 (the "Bid Assistant")
+- **Desktop app version:** 3.5.0
+- **Chrome extension version:** 2.4.0 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word COM automation, DPAPI, the system tray, and Win32 interop)
 
 ---
@@ -62,7 +62,7 @@ dotnet publish DevStrider.Desktop -c Release -r win-x64 `
 > **Do not** add `-p:PublishTrimmed=true` — WPF's reflection breaks under the trimmer.
 
 On first launch DevStrider creates the `devstrider` database, seeds a default profile + settings,
-and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v3.4.0`)
+and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v3.5.0`)
 so you can confirm a fresh build was picked up.
 
 ### Closing the app
@@ -177,6 +177,12 @@ The extension drives the app through these endpoints on `http://127.0.0.1:8765`:
 | `POST` | `/resume/result` | Deliver ChatGPT output → macro + auto-bid |
 | `POST` | `/resume/fail` | Mark a resume job failed |
 | `GET`  | `/browse-word` | Native file picker for the .docm path |
+
+`/refresh-word` is **serialized app-wide**: Word only ever has one instance of the .docm open, so
+concurrent calls (multiple Chrome profiles/windows bidding at once) queue behind each other rather
+than retriggering the macro mid-run. Each caller's Chrome window handle is captured *before* it
+waits its turn, so focus returns to the window that actually clicked. Callers should allow up to
+~90s and must not gate their own work on the response — the extension records the bid in parallel.
 
 ---
 

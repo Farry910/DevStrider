@@ -14,6 +14,25 @@ public partial class BidBoardViewModel : ViewModelBase
     private readonly ProfileService _profiles;
     private readonly InterviewService? _interviews;
 
+    /// <summary>
+    /// Debounce for externally-triggered reloads (extension records a bid, profile switches).
+    /// A batch run across several Chrome profiles fires <c>OnExtensionBidRecorded</c> once per
+    /// bid, and each reload rebuilds the whole board and repopulates <see cref="Rows"/> on the
+    /// UI thread — so a burst of ten bids used to mean ten full rebuilds and a visibly janky
+    /// grid. One rebuild after the burst settles shows the same end state.
+    /// </summary>
+    private readonly System.Windows.Threading.DispatcherTimer? _reloadDebounce;
+    private static readonly TimeSpan ReloadDebounceInterval = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// Guards against overlapping rebuilds: <see cref="ReloadAsync"/> clears and refills
+    /// <see cref="Rows"/>, so two interleaved runs can publish a half-built board. A request
+    /// arriving mid-flight sets <see cref="_reloadPending"/> and is served by one more pass
+    /// afterwards rather than being dropped. UI-thread only — no locking needed.
+    /// </summary>
+    private bool _reloadInFlight;
+    private bool _reloadPending;
+
     public ObservableCollection<BoardRow> Rows { get; } = new();
 
     /// <summary>
@@ -95,17 +114,71 @@ public partial class BidBoardViewModel : ViewModelBase
         _profiles = profiles;
         _interviews = interviews;
 
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null)
+        {
+            _reloadDebounce = new System.Windows.Threading.DispatcherTimer(
+                System.Windows.Threading.DispatcherPriority.Background, dispatcher)
+            {
+                Interval = ReloadDebounceInterval
+            };
+            _reloadDebounce.Tick += async (_, _) =>
+            {
+                _reloadDebounce!.Stop();
+                await RunCoalescedReloadAsync();
+            };
+        }
+
         // Auto-refresh when the extension records a bid via the listener — otherwise the
         // user sees the Activity balloon but the Bid board stays stale until they click refresh.
         // Event fires on a thread-pool thread, so marshal back to the UI thread.
-        localApi.OnExtensionBidRecorded += () =>
-            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
-                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
+        localApi.OnExtensionBidRecorded += RequestReloadDebounced;
 
         // Reload when active profile changes — workspace data is profile-scoped.
-        profileContext.ProfileChanged += () =>
-            System.Windows.Application.Current?.Dispatcher.BeginInvoke(
-                new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
+        profileContext.ProfileChanged += RequestReloadDebounced;
+    }
+
+    /// <summary>
+    /// Ask for a reload without committing to one per call — see <see cref="_reloadDebounce"/>.
+    /// Safe to call from any thread; the timer is restarted on the UI thread so a steady stream
+    /// of events keeps pushing the rebuild out until the stream stops.
+    /// </summary>
+    private void RequestReloadDebounced()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null || _reloadDebounce == null)
+        {
+            // No dispatcher (design-time / headless): fall back to reloading directly.
+            _ = RunCoalescedReloadAsync();
+            return;
+        }
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            _reloadDebounce.Stop();
+            _reloadDebounce.Start();
+        }));
+    }
+
+    /// <summary>Run exactly one rebuild, then one more if requests arrived while it was running.</summary>
+    private async Task RunCoalescedReloadAsync()
+    {
+        if (_reloadInFlight)
+        {
+            _reloadPending = true;
+            return;
+        }
+        _reloadInFlight = true;
+        try
+        {
+            do
+            {
+                _reloadPending = false;
+                try { await ReloadAsync(); }
+                catch { /* transient Mongo/UI error — the next request retries */ }
+            }
+            while (_reloadPending);
+        }
+        finally { _reloadInFlight = false; }
     }
 
     /// <summary>

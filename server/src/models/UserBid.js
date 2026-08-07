@@ -77,5 +77,13 @@ userBidSchema.index({ groupId: 1, userId: 1, groupLinkId: 1 }, { unique: true })
 /** Time-window + board queries (group activity by day). */
 userBidSchema.index({ groupId: 1, updatedAt: -1 });
 userBidSchema.index({ groupId: 1, userId: 1, updatedAt: -1 });
+/**
+ * Bid-board `$lookup` joins (see services/bidBoard.js) match on `groupLinkId` *without* a
+ * `groupId` predicate, so none of the `groupId`-prefixed indexes above are usable and every
+ * join degraded to a collection scan per link. This is the index those lookups need.
+ */
+userBidSchema.index({ groupLinkId: 1, userId: 1 });
+/** Duplicate-detection window: this user's bids in the group since the lookback cutoff. */
+userBidSchema.index({ groupId: 1, userId: 1, createdAt: -1 });
 
 export const UserBid = mongoose.models.UserBid || mongoose.model('UserBid', userBidSchema);

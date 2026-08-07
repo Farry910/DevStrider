@@ -37,6 +37,38 @@ public sealed partial class LocalApiServer : ObservableObject
     /// </summary>
     private readonly SemaphoreSlim _refreshWordLock = new(1, 1);
 
+    /// <summary>Requests currently holding or waiting on <see cref="_refreshWordLock"/>.</summary>
+    private int _refreshWordQueueDepth;
+
+    /// <summary>
+    /// Refresh timing budget. The extension abandons <c>/refresh-word</c> at 90s, so queue-wait
+    /// plus automation must stay under that or callers time out on a request the app still
+    /// thinks is live. 40 + 45 = 85s leaves a small margin.
+    /// </summary>
+    private static readonly TimeSpan RefreshWordQueueTimeout = TimeSpan.FromSeconds(40);
+    private static readonly TimeSpan RefreshWordAutomationTimeout = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// Past this many stacked-up refreshes the queue is doing more harm than good — the ones at
+    /// the back would time out client-side anyway, so reject immediately with a message the user
+    /// can act on instead of letting them wait out the full budget for nothing.
+    /// </summary>
+    private const int MaxRefreshWordQueueDepth = 8;
+
+    /// <summary>
+    /// Ceiling on a single request body. Resume text and JDs are the big ones and land well
+    /// under this; the cap exists so a runaway or malformed caller can't make the app buffer
+    /// unbounded input into memory.
+    /// </summary>
+    private const long MaxRequestBodyBytes = 8L * 1024 * 1024;
+
+    /// <summary>
+    /// Consecutive <see cref="HttpListener.GetContextAsync"/> failures tolerated before the
+    /// accept loop gives up. Individual failures are usually one bad client connection, not a
+    /// dead listener, so retrying beats tearing down the endpoint.
+    /// </summary>
+    private const int MaxConsecutiveAcceptFailures = 10;
+
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -108,23 +140,68 @@ public sealed partial class LocalApiServer : ObservableObject
         Status = "Stopped";
     }
 
+    /// <summary>
+    /// Accept loop. A single failed <c>GetContextAsync</c> used to <c>break</c> out of here
+    /// permanently while <see cref="IsRunning"/> stayed <c>true</c> and <see cref="Status"/>
+    /// still read "Listening" — the app looked healthy but silently answered nothing until it
+    /// was restarted. Transient failures are now retried with a short backoff, and the two ways
+    /// the loop can genuinely end (shutdown, or a listener that is really gone) both leave the
+    /// observable state telling the truth.
+    /// </summary>
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
+        var consecutiveFailures = 0;
         while (!ct.IsCancellationRequested)
         {
             HttpListenerContext ctx;
             try
             {
                 ctx = await _listener!.GetContextAsync();
+                consecutiveFailures = 0;
             }
             catch (Exception) when (ct.IsCancellationRequested) { break; }
-            catch (HttpListenerException) { break; }
             catch (ObjectDisposedException) { break; }
+            catch (Exception ex)
+            {
+                // Listener torn down under us (Stop/Dispose, port revoked) — nothing to retry.
+                if (_listener is not { IsListening: true })
+                {
+                    MarkListenerDown($"Listener stopped unexpectedly — {ex.Message}");
+                    break;
+                }
+
+                consecutiveFailures++;
+                if (consecutiveFailures >= MaxConsecutiveAcceptFailures)
+                {
+                    MarkListenerDown($"Listener gave up after {consecutiveFailures} consecutive accept failures — {ex.Message}");
+                    break;
+                }
+
+                _activity.Warning(ExtensionSource, "Listener accept failed",
+                    $"{ex.Message} (attempt {consecutiveFailures}/{MaxConsecutiveAcceptFailures}, retrying)", silent: true);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100 * consecutiveFailures), ct);
+                }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
 
             // Each request fans out to the thread pool so a slow Mongo insert doesn't block the
             // listener from accepting the next call.
             _ = Task.Run(() => HandleAsync(ctx));
         }
+    }
+
+    /// <summary>
+    /// Reflect a listener that died on its own (as opposed to <see cref="StopAsync"/>) into the
+    /// observable state, so the tray/Settings surface shows it and the user can restart it.
+    /// </summary>
+    private void MarkListenerDown(string reason)
+    {
+        IsRunning = false;
+        Status = reason;
+        _activity.Error(ExtensionSource, "Listener stopped", reason);
     }
 
     private async Task HandleAsync(HttpListenerContext ctx)
@@ -211,8 +288,7 @@ public sealed partial class LocalApiServer : ObservableObject
                 // Telemetry sink — just consume and ack. The extension's purple-button flow
                 // fires this regardless of success/failure; we don't store it (the WPF UI is
                 // the dashboard now).
-                using var sink = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-                _ = await sink.ReadToEndAsync();
+                _ = await ReadBodyAsync(ctx);
                 await WriteJsonAsync(ctx, 200, new { ok = true });
                 return;
             }
@@ -226,12 +302,51 @@ public sealed partial class LocalApiServer : ObservableObject
             try { await WriteJsonAsync(ctx, 500, new { error = ex.Message }); }
             catch { /* response may already be closed */ }
         }
+        finally
+        {
+            // Every path above is expected to have closed the response already; this is the
+            // backstop for the ones that threw before doing so. Without it the connection stays
+            // open and the extension waits out its full timeout on a request that is already
+            // dead server-side.
+            try { ctx.Response.Close(); }
+            catch { /* already closed — the normal case */ }
+        }
+    }
+
+    /// <summary>
+    /// Read a request body with a hard ceiling (<see cref="MaxRequestBodyBytes"/>). Returns
+    /// <c>null</c> when the cap is exceeded, in which case the caller should 413 and stop.
+    /// The declared <c>Content-Length</c> is only a hint — chunked requests report -1 — so the
+    /// limit is enforced while reading rather than trusted up front.
+    /// </summary>
+    private static async Task<string?> ReadBodyAsync(HttpListenerContext ctx)
+    {
+        if (ctx.Request.ContentLength64 > MaxRequestBodyBytes) return null;
+
+        var encoding = ctx.Request.ContentEncoding ?? Encoding.UTF8;
+        var buffer = new byte[81920];
+        using var accumulated = new MemoryStream();
+        int read;
+        while ((read = await ctx.Request.InputStream.ReadAsync(buffer)) > 0)
+        {
+            if (accumulated.Length + read > MaxRequestBodyBytes) return null;
+            accumulated.Write(buffer, 0, read);
+        }
+        return encoding.GetString(accumulated.ToArray());
+    }
+
+    /// <summary>Standard 413 for a body that blew past <see cref="MaxRequestBodyBytes"/>.</summary>
+    private async Task WriteBodyTooLargeAsync(HttpListenerContext ctx)
+    {
+        var limitMb = MaxRequestBodyBytes / (1024 * 1024);
+        _activity.Warning(ExtensionSource, "Request rejected", $"Body exceeded {limitMb} MB.", silent: true);
+        await WriteJsonAsync(ctx, 413, new { success = false, error = $"Request body exceeds {limitMb} MB." });
     }
 
     private async Task HandleRecordBidAsync(HttpListenerContext ctx)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var body = await reader.ReadToEndAsync();
+        var body = await ReadBodyAsync(ctx);
+        if (body == null) { await WriteBodyTooLargeAsync(ctx); return; }
         RecordBidRequest? req;
         try
         {
@@ -350,8 +465,8 @@ public sealed partial class LocalApiServer : ObservableObject
     /// </summary>
     private async Task HandleResumeResultAsync(HttpListenerContext ctx)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var body = await reader.ReadToEndAsync();
+        var body = await ReadBodyAsync(ctx);
+        if (body == null) { await WriteBodyTooLargeAsync(ctx); return; }
         ResumeResultRequest? req;
         try
         {
@@ -442,8 +557,8 @@ public sealed partial class LocalApiServer : ObservableObject
 
     private async Task HandleResumeFailAsync(HttpListenerContext ctx)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var body = await reader.ReadToEndAsync();
+        var body = await ReadBodyAsync(ctx);
+        if (body == null) { await WriteBodyTooLargeAsync(ctx); return; }
         ResumeFailRequest? req;
         try
         {
@@ -491,8 +606,7 @@ public sealed partial class LocalApiServer : ObservableObject
     {
         // Drain the request body even though we don't read it — leaving it unread can wedge
         // some HttpListener clients waiting for the response.
-        using (var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding))
-            await reader.ReadToEndAsync();
+        _ = await ReadBodyAsync(ctx);
 
         var chromeHwnd = KeyboardHelper.GetForegroundWindow();
 
@@ -526,66 +640,109 @@ public sealed partial class LocalApiServer : ObservableObject
             return;
         }
 
-        if (_refreshWordLock.CurrentCount == 0)
-            _activity.Info(ExtensionSource, "Word refresh queued", "Waiting for a previous refresh to finish.", silent: true);
-        await _refreshWordLock.WaitAsync();
+        // Depth is claimed only after validation, so a misconfigured profile fails fast instead
+        // of taking a queue slot from a caller that could actually have run.
+        var depth = Interlocked.Increment(ref _refreshWordQueueDepth);
         try
         {
-            var (mods, keyVk) = parsed.Value;
-            var wordHwnd = KeyboardHelper.OpenWordDocument(wordPath);
-            if (wordHwnd == IntPtr.Zero)
+            if (depth > MaxRefreshWordQueueDepth)
             {
-                _activity.Error(ExtensionSource, "Refresh Word failed", "Couldn't open the Word document. Check the path and that Word is installed.");
-                await WriteJsonAsync(ctx, 500, new { success = false, error = "Failed to open Word. Ensure Microsoft Word is installed and the path is correct." });
+                var busy = $"{depth - 1} Word refreshes already queued — this one was dropped rather than left to time out. Try again in a moment.";
+                _activity.Warning(ExtensionSource, "Word refresh rejected", busy);
+                await WriteJsonAsync(ctx, 503, new { success = false, error = busy });
                 return;
             }
-            Thread.Sleep(KeyboardHelper.RefreshWordOpenDelayMs);
 
-            // Fast path: no modifiers → PostMessage straight to the window without focus juggling.
-            if (mods.Count == 0 && KeyboardHelper.PostSingleKeyToWindow(wordHwnd, mods, keyVk))
+            if (depth > 1)
             {
-                if (KeyboardHelper.WaitForWordClose(8))
+                _activity.Info(ExtensionSource, "Word refresh queued",
+                    $"{depth - 1} refresh{(depth - 1 == 1 ? "" : "es")} ahead of this one.", silent: true);
+            }
+
+            // Bounded wait: a Word instance wedged on a modal dialog holds the lock for as long
+            // as the user leaves it there, and an unbounded wait here would turn that into a
+            // permanent outage for every other Chrome profile.
+            if (!await _refreshWordLock.WaitAsync(RefreshWordQueueTimeout))
+            {
+                var stuck = $"Timed out after {RefreshWordQueueTimeout.TotalSeconds:0}s waiting for the previous Word refresh. Check whether Word is showing a dialog.";
+                _activity.Error(ExtensionSource, "Word refresh timed out", stuck);
+                await WriteJsonAsync(ctx, 503, new { success = false, error = stuck });
+                return;
+            }
+
+            try
+            {
+                using var automationCts = new CancellationTokenSource(RefreshWordAutomationTimeout);
+                var ct = automationCts.Token;
+                var (mods, keyVk) = parsed.Value;
+
+                var wordHwnd = await KeyboardHelper.OpenWordDocumentAsync(wordPath, ct);
+                if (wordHwnd == IntPtr.Zero)
+                {
+                    _activity.Error(ExtensionSource, "Refresh Word failed", "Couldn't open the Word document. Check the path and that Word is installed.");
+                    await WriteJsonAsync(ctx, 500, new { success = false, error = "Failed to open Word. Ensure Microsoft Word is installed and the path is correct." });
+                    return;
+                }
+                await Task.Delay(KeyboardHelper.RefreshWordOpenDelayMs, ct);
+
+                // Fast path: no modifiers → PostMessage straight to the window without focus juggling.
+                if (mods.Count == 0 && KeyboardHelper.PostSingleKeyToWindow(wordHwnd, mods, keyVk))
+                {
+                    if (await KeyboardHelper.WaitForWordCloseAsync(8, ct))
+                    {
+                        KeyboardHelper.ReturnToChrome(chromeHwnd);
+                        _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
+                        await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
+                        return;
+                    }
+                }
+
+                // Slow path: bring Word to foreground, send the hotkey (with modifiers) via SendInput.
+                wordHwnd = KeyboardHelper.FindWordWindow();
+                if (wordHwnd == IntPtr.Zero)
                 {
                     KeyboardHelper.ReturnToChrome(chromeHwnd);
                     _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
                     await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
                     return;
                 }
-            }
-
-            // Slow path: bring Word to foreground, send the hotkey (with modifiers) via SendInput.
-            wordHwnd = KeyboardHelper.FindWordWindow();
-            if (wordHwnd == IntPtr.Zero)
-            {
+                if (KeyboardHelper.SetForegroundWindow(wordHwnd) || KeyboardHelper.AltTabToWindow(wordHwnd))
+                {
+                    await Task.Delay(KeyboardHelper.HOTKEY_DELAY_MS, ct);
+                    KeyboardHelper.PressHotkey(mods, keyVk);
+                    if (await KeyboardHelper.WaitForWordCloseAsync(KeyboardHelper.WORD_CLOSE_TIMEOUT_SECONDS, ct))
+                    {
+                        KeyboardHelper.ReturnToChrome(chromeHwnd);
+                        _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
+                        await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
+                        return;
+                    }
+                }
                 KeyboardHelper.ReturnToChrome(chromeHwnd);
-                _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
-                await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
-                return;
+                _activity.Warning(ExtensionSource, "Word didn't close", "Hotkey was sent but Word stayed open — the macro may not have run.");
+                await WriteJsonAsync(ctx, 200, new { success = false, error = "Hotkey sent, but Word didn't close. The macro may not have executed." });
             }
-            if (KeyboardHelper.SetForegroundWindow(wordHwnd) || KeyboardHelper.AltTabToWindow(wordHwnd))
+            catch (OperationCanceledException)
             {
-                Thread.Sleep(KeyboardHelper.HOTKEY_DELAY_MS);
-                KeyboardHelper.PressHotkey(mods, keyVk);
-                if (KeyboardHelper.WaitForWordClose(KeyboardHelper.WORD_CLOSE_TIMEOUT_SECONDS))
-                {
-                    KeyboardHelper.ReturnToChrome(chromeHwnd);
-                    _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
-                    await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
-                    return;
-                }
+                // Automation watchdog. Hand focus back so the user isn't left staring at Word.
+                KeyboardHelper.ReturnToChrome(chromeHwnd);
+                var timedOut = $"Word automation exceeded {RefreshWordAutomationTimeout.TotalSeconds:0}s and was abandoned. The bid itself is recorded separately and is unaffected.";
+                _activity.Error(ExtensionSource, "Refresh Word timed out", timedOut);
+                await WriteJsonAsync(ctx, 504, new { success = false, error = timedOut });
             }
-            KeyboardHelper.ReturnToChrome(chromeHwnd);
-            _activity.Warning(ExtensionSource, "Word didn't close", "Hotkey was sent but Word stayed open — the macro may not have run.");
-            await WriteJsonAsync(ctx, 200, new { success = false, error = "Hotkey sent, but Word didn't close. The macro may not have executed." });
-        }
-        catch (Exception ex)
-        {
-            _activity.Error(ExtensionSource, "Refresh Word crashed", ex.Message);
-            await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
+            catch (Exception ex)
+            {
+                _activity.Error(ExtensionSource, "Refresh Word crashed", ex.Message);
+                await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
+            }
+            finally
+            {
+                _refreshWordLock.Release();
+            }
         }
         finally
         {
-            _refreshWordLock.Release();
+            Interlocked.Decrement(ref _refreshWordQueueDepth);
         }
     }
 

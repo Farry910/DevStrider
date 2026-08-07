@@ -148,6 +148,14 @@ function buildFilterStages(filters) {
 const MAX_BID_BOARD_ROWS = 5000;
 
 /**
+ * Safety valve for the pre-lookup narrowing below. The optimisation rewrites the leading
+ * `$match` to `{ groupId, $or: [createdAt in window, _id ∈ touchedLinkIds] }`; past a few
+ * thousand ids the `$in` list costs more to ship and evaluate than the scan it saves, so we
+ * fall back to the original group-wide match and let the post-lookup `$match` do the work.
+ */
+const MAX_PREFILTER_LINK_IDS = 20_000;
+
+/**
  * @param {{ groupId: string, userId: string, sort?: string, filters?: object, from: string|Date, to: string|Date, excludeLinkOnly?: boolean }} opts
  * `from` / `to`: ISO bounds [from, to) for **your** bid activity (`bid.updatedAt`), typically local calendar day from the client.
  * `excludeLinkOnly`: omit rows with only a URL / empty bid (no resume, company, or role) — for past-day read-only views.
@@ -185,7 +193,20 @@ export async function buildBidBoardPage({
   const t0 = new Date(from);
   const t1 = new Date(to);
 
-  const groupDoc = await Group.findById(groupId).select('timers').lean();
+  /**
+   * `touchedLinkIds` are the links whose in-scope bid was edited inside the window. Resolving
+   * them up front (index: `{groupId, userId, updatedAt}`) lets the pipeline narrow *before* the
+   * two `$lookup`s instead of joining every link the group has ever created and discarding the
+   * result. Runs alongside the group fetch since neither depends on the other.
+   */
+  const [groupDoc, touchedLinkIds] = await Promise.all([
+    Group.findById(groupId).select('timers').lean(),
+    UserBid.distinct('groupLinkId', {
+      groupId: gid,
+      userId: scopedKind === 'watches' ? { $in: scopedOids } : uid,
+      updatedAt: { $gte: t0, $lt: t1 },
+    }),
+  ]);
   const groupTimers = resolvedTimersFromGroupDoc(groupDoc);
   const dupCutoff = new Date(Date.now() - groupTimers.bidDuplicateLookbackDays * 86400000);
 
@@ -203,8 +224,25 @@ export async function buildBidBoardPage({
     },
   ];
 
+  /**
+   * Same predicate as `dayMatch` but expressed against fields available *before* the joins, so
+   * the two `$lookup`s below only ever see candidate links. `dayMatch` is still applied after
+   * the joins: in caller view a link can qualify here because *some* watched bid landed in the
+   * window while the specific unwound row did not, and only the post-join stage can tell.
+   */
+  const canPreFilter = touchedLinkIds.length <= MAX_PREFILTER_LINK_IDS;
+  const preDayMatch = canPreFilter
+    ? {
+        groupId: gid,
+        $or: [
+          { createdAt: { $gte: t0, $lt: t1 } },
+          { _id: { $in: touchedLinkIds } },
+        ],
+      }
+    : { groupId: gid };
+
   const preFacet = [
-    { $match: { groupId: gid } },
+    { $match: preDayMatch },
     {
       $lookup: {
         from: UB_COL,
@@ -389,7 +427,14 @@ export async function buildBidBoardPage({
       UserBid.find({ groupId, userId, groupLinkId: { $in: linkIds } })
         .populate('lastModifiedBy', 'nickname email')
         .lean(),
-      UserBid.find({ groupId, userId })
+      /**
+       * Duplicate detection only ever considers bids sitting on links created since `dupCutoff`
+       * (see the `meta.createdAt < dupCutoff` skip when `bidsByUrl` is built). A bid cannot
+       * predate the link it points at, so bounding on the bid's own `createdAt` is a superset of
+       * that set — same result, but it stops this from reading the user's entire bid history on
+       * every board load. Index: `{groupId, userId, createdAt}`.
+       */
+      UserBid.find({ groupId, userId, createdAt: { $gte: dupCutoff } })
         .select('company role groupLinkId createdAt resumeId status')
         .lean(),
       UserBid.find({ groupId, groupLinkId: { $in: linkIds } })
@@ -431,8 +476,16 @@ export async function buildBidBoardPage({
           .lean();
   const bidIdsWithInterviewForJunk = new Set(junkIvBlock.map((i) => String(i.bidId)));
 
-  /** All links in group + applied snapshot (or fallback from earliest bid with company+role). */
-  const allGroupLinks = await GroupLink.find({ groupId: gid })
+  /**
+   * Links in the duplicate-detection window + applied snapshot (or fallback from earliest bid
+   * with company+role). Bounded to `dupCutoff` because `linksByCr` discards anything older
+   * anyway — plus the rows actually on this page, which `companyRoleDupForLink` looks up by id
+   * and which can legitimately predate the cutoff when an old day is being viewed.
+   */
+  const allGroupLinks = await GroupLink.find({
+    groupId: gid,
+    $or: [{ createdAt: { $gte: dupCutoff } }, { _id: { $in: linkIds } }],
+  })
     .select(
       '_id url createdAt appliedCompany appliedRole appliedAt appliedStacks appliedByUserId'
     )
@@ -630,6 +683,30 @@ export async function buildBidBoardPage({
 
   const bidByLink = new Map(userBidsPop.map((b) => [String(b.groupLinkId), b]));
 
+  /**
+   * Pre-indexed views of the per-request lookups. The row mapper below runs up to
+   * `MAX_BID_BOARD_ROWS` times, so anything it needs has to be an O(1) probe — scanning
+   * `allMemberBidsOnPageLinks` / `interviews` inside the map made the tail of a large board
+   * quadratic.
+   */
+  /** @type {Map<string, typeof allMemberBidsOnPageLinks>} */
+  const memberBidsByLinkId = new Map();
+  for (const b of allMemberBidsOnPageLinks) {
+    const lid = String(b.groupLinkId);
+    const arr = memberBidsByLinkId.get(lid);
+    if (arr) arr.push(b);
+    else memberBidsByLinkId.set(lid, [b]);
+  }
+  /** Normalized companies the viewer already has a scheduled/completed/passed interview at. */
+  const interviewCompanies = new Set();
+  /** Bid ids that themselves led to one of those interviews — never flagged as a repeat. */
+  const interviewBidIds = new Set();
+  for (const i of interviews) {
+    const c = norm(i.company);
+    if (c) interviewCompanies.add(c);
+    if (i.bidId) interviewBidIds.add(String(i.bidId));
+  }
+
   function junkPurgeEligibleForLink(lnk, bidsForLink) {
     if (!lnk.markedUselessAt || lnk.appliedAt) return false;
     if (bidsForLink.length > 1) return false;
@@ -644,9 +721,7 @@ export async function buildBidBoardPage({
   }
 
   const rows = rawRows.map((link) => {
-    const bidsForLink = allMemberBidsOnPageLinks.filter(
-      (x) => String(x.groupLinkId) === String(link._id)
-    );
+    const bidsForLink = memberBidsByLinkId.get(String(link._id)) ?? [];
     /**
      * Caller view uses the un-populated bid embedded by the aggregation ($unwind result), since
      * the viewer has no bid of their own and the populated `bidByLink` map is keyed by the viewer.
@@ -669,13 +744,9 @@ export async function buildBidBoardPage({
           : '';
     /** Same idea as duplicate warnings: the bid that led to an interview is not flagged. */
     let companyInterviewWarning = false;
-    if (warnCo) {
-      const hasInterviewAtCompany = interviews.some((i) => norm(i.company) === warnCo);
-      if (hasInterviewAtCompany) {
-        const bidLedInterview =
-          bid && interviews.some((i) => i.bidId && String(i.bidId) === String(bid._id));
-        companyInterviewWarning = !bidLedInterview;
-      }
+    if (warnCo && interviewCompanies.has(warnCo)) {
+      const bidLedInterview = Boolean(bid && interviewBidIds.has(String(bid._id)));
+      companyInterviewWarning = !bidLedInterview;
     }
 
     /**

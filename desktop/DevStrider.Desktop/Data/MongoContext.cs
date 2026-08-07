@@ -134,5 +134,16 @@ public class MongoContext
             Builders<UserBid>.IndexKeys.Ascending(x => x.ProfileId)));
         await Interviews.Indexes.CreateOneAsync(new CreateIndexModel<Interview>(
             Builders<Interview>.IndexKeys.Ascending(x => x.ProfileId)));
+
+        // The Bid board and Interview list both filter by profile *and* bound by date. Mongo
+        // uses one index per query stage, so the single-field indexes above can serve the
+        // profile predicate or the date sort but never both — these compounds serve the whole
+        // query, which is what the day/range pickers actually issue.
+        await Bids.Indexes.CreateOneAsync(new CreateIndexModel<UserBid>(
+            Builders<UserBid>.IndexKeys.Ascending(x => x.ProfileId).Descending(x => x.UpdatedAt)));
+        await Links.Indexes.CreateOneAsync(new CreateIndexModel<GroupLink>(
+            Builders<GroupLink>.IndexKeys.Ascending(x => x.ProfileId).Descending(x => x.CreatedAt)));
+        await Interviews.Indexes.CreateOneAsync(new CreateIndexModel<Interview>(
+            Builders<Interview>.IndexKeys.Ascending(x => x.ProfileId).Ascending(x => x.ScheduledDate)));
     }
 }

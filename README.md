@@ -197,7 +197,7 @@ The server resolves the user from the token. That user must be a **member** of t
 ### Bid Assistant user flow (extension)
 
 1. **Job site — blue button:** extracts the JD, stores **URL + JD** in extension storage (`devstrider_pending`), copies JD to the clipboard, and runs the existing ChatGPT paste flow.
-2. **ChatGPT — purple button:** runs **Word refresh** (desktop app) and, when that succeeds, **records the bid in DevStrider** in the same action. It sends the stored URL + JD plus the **latest assistant message** on the page as `gptResumeContent`. A successful sync is also written to `bidAssistantSessionCache` in extension storage.
+2. **ChatGPT — purple button:** runs **Word refresh** (desktop app) and **records the bid in DevStrider** in the same action. The two run **in parallel and independently** — Word refreshes are serialized across Chrome profiles/windows in the desktop app, so one that is slow or queued never blocks or fails the bid record. The button reports both outcomes separately. It sends the stored URL + JD plus the **latest assistant message** on the page as `gptResumeContent`. A successful sync is also written to `bidAssistantSessionCache` in extension storage.
 
 ### How Bid Assistant obtains the JWT
 

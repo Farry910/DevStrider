@@ -49,5 +49,11 @@ const interviewSchema = new mongoose.Schema(
 
 interviewSchema.index({ groupId: 1, userId: 1, scheduledDate: 1 });
 interviewSchema.index({ groupId: 1, updatedAt: -1 });
+/**
+ * The bid board resolves "which bids on this page already led to an interview" by `bidId`
+ * (junk-purge eligibility + the company-interview warning). Sparse: most rows carry `bidId: null`
+ * for `linkedin_chat`-origin interviews, and those never participate in that lookup.
+ */
+interviewSchema.index({ groupId: 1, bidId: 1 }, { sparse: true });
 
 export const Interview = mongoose.models.Interview || mongoose.model('Interview', interviewSchema);

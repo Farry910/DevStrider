@@ -183,6 +183,27 @@ internal static class KeyboardHelper
         return false;
     }
 
+    /// <summary>
+    /// Async twin of <see cref="WaitForCondition"/>. The two long waits in the refresh-Word
+    /// flow (open, close) can each burn 15s; blocking a thread-pool thread for that long is
+    /// what made several Chrome profiles bidding at once feel like the whole app stalled — the
+    /// pool only injects ~1 replacement thread per second, so the queued work behind them
+    /// (Mongo writes, the next accept) waited on thread injection rather than on Word.
+    /// The predicates here are cheap Win32 window probes, safe to run on any thread.
+    /// </summary>
+    private static async Task<bool> WaitForConditionAsync(
+        Func<bool> condition, int timeoutMs, int pollMs, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (condition()) return true;
+            await Task.Delay(pollMs, ct).ConfigureAwait(false);
+        }
+        return false;
+    }
+
     public static IntPtr FindWordWindow()
     {
         var hwnd = FindWindowW("OpusApp", null);
@@ -308,6 +329,23 @@ internal static class KeyboardHelper
         return false;
     }
 
+    /// <summary>
+    /// Non-blocking <see cref="WaitForWordClose"/>. Same poll cadence and the same
+    /// sleep-then-check ordering, so a macro that closes Word instantly is still detected on
+    /// the first tick rather than being reported as "didn't close".
+    /// </summary>
+    public static async Task<bool> WaitForWordCloseAsync(
+        int timeoutSeconds = WORD_CLOSE_TIMEOUT_SECONDS, CancellationToken ct = default)
+    {
+        var checks = timeoutSeconds * 10;
+        for (int i = 0; i < checks; i++)
+        {
+            await Task.Delay(WORD_CLOSE_CHECK_INTERVAL_MS, ct).ConfigureAwait(false);
+            if (FindWordWindow() == IntPtr.Zero) return true;
+        }
+        return false;
+    }
+
     public static IntPtr OpenWordDocument(string path)
     {
         try
@@ -322,6 +360,37 @@ internal static class KeyboardHelper
         IntPtr foundHwnd = IntPtr.Zero;
         if (WaitForCondition(() => { foundHwnd = FindWordWindow(); return foundHwnd != IntPtr.Zero; },
                              WORD_OPEN_TIMEOUT_MS, WINDOW_SWITCH_DELAY_MS))
+        {
+            return foundHwnd;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// Non-blocking <see cref="OpenWordDocument"/>.
+    /// <para>
+    /// <see cref="Process.Start(ProcessStartInfo)"/> itself stays synchronous and is *not*
+    /// cancellable: for Office documents ShellExecuteEx negotiates over DDE, and if Word is
+    /// sitting on a modal dialog ("file in use", "save changes?") that call can block until the
+    /// user clicks it away. Nothing here can pre-empt that — the caller's queue-acquisition
+    /// timeout is what keeps one wedged Word from taking the whole endpoint down with it.
+    /// </para>
+    /// </summary>
+    public static async Task<IntPtr> OpenWordDocumentAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[KeyboardHelper] Failed to start Word: {ex.Message}");
+            return IntPtr.Zero;
+        }
+        IntPtr foundHwnd = IntPtr.Zero;
+        if (await WaitForConditionAsync(
+                () => { foundHwnd = FindWordWindow(); return foundHwnd != IntPtr.Zero; },
+                WORD_OPEN_TIMEOUT_MS, WINDOW_SWITCH_DELAY_MS, ct).ConfigureAwait(false))
         {
             return foundHwnd;
         }
