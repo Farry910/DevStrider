@@ -19,21 +19,19 @@ namespace DevStrider.Desktop.Services;
 public sealed class AtlasContext
 {
     private readonly SettingsService _settings;
+    private readonly SharedMongoCredentials _credentials;
     private MongoClient? _client;
     private string _connectedUri = "";
     private string _connectedDb = "";
 
-    public AtlasContext(SettingsService settings)
+    public AtlasContext(SettingsService settings, SharedMongoCredentials credentials)
     {
         _settings = settings;
+        _credentials = credentials;
     }
 
-    /// <summary>True when <see cref="AppSettings.SharedMongoUri"/> is set.</summary>
-    public async Task<bool> IsConfiguredAsync()
-    {
-        var s = await _settings.GetAsync();
-        return !string.IsNullOrWhiteSpace(s.SharedMongoUri);
-    }
+    /// <summary>True when username, host, and a stored password are all present.</summary>
+    public Task<bool> IsConfiguredAsync() => _credentials.IsConfiguredAsync();
 
     /// <summary>
     /// Returns a live <see cref="IMongoDatabase"/> against the configured shared cluster.
@@ -43,10 +41,9 @@ public sealed class AtlasContext
     public async Task<IMongoDatabase> GetDatabaseAsync()
     {
         var s = await _settings.GetAsync();
-        var uri = (s.SharedMongoUri ?? "").Trim();
+        // Composed in memory from the separate settings fields; the URI itself isn't persisted.
+        var uri = await _credentials.BuildUriAsync();
         var db = string.IsNullOrWhiteSpace(s.SharedDatabaseName) ? "devstrider-shared" : s.SharedDatabaseName.Trim();
-        if (uri.Length == 0)
-            throw new InvalidOperationException("Shared MongoDB URI isn't configured — set it in Settings → Peer database.");
 
         if (_client == null || _connectedUri != uri)
         {
@@ -63,6 +60,10 @@ public sealed class AtlasContext
     public async Task<IMongoCollection<PeerInterview>> PeerInterviewsAsync() =>
         (await GetDatabaseAsync()).GetCollection<PeerInterview>("peerInterviews");
 
+    /// <summary>Published identities + their profile lists — the Peers tab's user picker.</summary>
+    public async Task<IMongoCollection<PeerUser>> PeerUsersAsync() =>
+        (await GetDatabaseAsync()).GetCollection<PeerUser>("peerUsers");
+
     /// <summary>
     /// Cheap reachability check — pings the cluster with a small query. Uses an aggressive
     /// 8-second timeout for both connect + server-selection so the user gets useful
@@ -71,10 +72,11 @@ public sealed class AtlasContext
     public async Task<(bool ok, string message)> TestConnectionAsync()
     {
         var s = await _settings.GetAsync();
-        var uri = (s.SharedMongoUri ?? "").Trim();
         var dbName = string.IsNullOrWhiteSpace(s.SharedDatabaseName) ? "devstrider-shared" : s.SharedDatabaseName.Trim();
-        if (uri.Length == 0)
-            return (false, "Shared MongoDB URI isn't configured.");
+
+        string uri;
+        try { uri = await _credentials.BuildUriAsync(); }
+        catch (InvalidOperationException ex) { return (false, ex.Message); }
 
         try
         {
@@ -93,15 +95,16 @@ public sealed class AtlasContext
                 "  • Your machine's IP isn't on Atlas's IP Access List (Project → Network Access)\n" +
                 "  • Firewall / VPN blocking outbound 27017\n" +
                 "  • Corporate DNS blocking SRV lookups (try the non-SRV form of the URI)\n" +
-                $"Underlying: {ex.Message}");
+                // Driver messages quote the connection string back at you — redact before display.
+                $"Underlying: {SharedMongoCredentials.Redact(ex.Message)}");
         }
         catch (MongoAuthenticationException ex)
         {
-            return (false, $"Authentication rejected — check the username/password in the URI. ({ex.Message})");
+            return (false, $"Authentication rejected — check the shared-cluster username and password in Settings. ({SharedMongoCredentials.Redact(ex.Message)})");
         }
         catch (Exception ex)
         {
-            return (false, ex.Message);
+            return (false, SharedMongoCredentials.Redact(ex.Message));
         }
     }
 

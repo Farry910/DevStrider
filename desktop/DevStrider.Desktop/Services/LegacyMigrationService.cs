@@ -268,7 +268,7 @@ public sealed class LegacyMigrationService
             await _userProfile.SaveAsync(localUserProfile);
         }
 
-        var settings = await _settings.GetAsync();
+        var settings = await _settings.GetForEditAsync();
         settings.LegacyMigratedAt = DateTime.UtcNow;
         await _settings.SaveAsync(settings);
 

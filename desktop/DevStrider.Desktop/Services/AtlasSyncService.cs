@@ -26,6 +26,15 @@ public sealed class AtlasSyncService
     private readonly ProfilesService _profiles;
     private readonly ActivityLogService _activity;
 
+    /// <summary>
+    /// One sync at a time. Now that a background scheduler fires this hourly, a manual
+    /// <b>Sync now</b> can land on top of a scheduled run — and two concurrent passes share the
+    /// same <see cref="AppSettings.LastSyncAt"/> marker, so whichever finished second would
+    /// advance it past rows the other hadn't pushed yet. Second caller is turned away rather
+    /// than queued: it has nothing to add that the in-flight run isn't already doing.
+    /// </summary>
+    private readonly SemaphoreSlim _syncLock = new(1, 1);
+
     public AtlasSyncService(
         MongoContext local,
         AtlasContext atlas,
@@ -48,14 +57,30 @@ public sealed class AtlasSyncService
     /// </summary>
     public async Task<string> SyncAsync()
     {
+        // WaitAsync(0) → don't block, just report that one is already running.
+        if (!await _syncLock.WaitAsync(0))
+        {
+            const string busy = "A sync is already running — skipped.";
+            _activity.Info("Atlas", "Sync skipped", busy, silent: true);
+            return busy;
+        }
+        try
+        {
+            return await SyncCoreAsync();
+        }
+        finally { _syncLock.Release(); }
+    }
+
+    private async Task<string> SyncCoreAsync()
+    {
         if (!await _atlas.IsConfiguredAsync())
         {
-            const string msg = "Shared MongoDB URI isn't configured — set it in Settings.";
+            const string msg = "Shared cluster isn't configured — set the password in Settings → Peer database.";
             _activity.Warning("Atlas", "Sync skipped", msg);
             return msg;
         }
 
-        var settings = await _settings.GetAsync();
+        var settings = await _settings.GetForEditAsync();
         var userProfile = await _localProfile.GetAsync();
         var owner = (userProfile.Username ?? "").Trim();
         if (string.IsNullOrEmpty(owner))
@@ -76,6 +101,41 @@ public sealed class AtlasSyncService
         {
             var atlasBids = await _atlas.PeerBidsAsync();
             var atlasIvs = await _atlas.PeerInterviewsAsync();
+            var atlasUsers = await _atlas.PeerUsersAsync();
+
+            // ===== Publish who we are ============================================
+            // Unconditional, not delta-gated: it's one small upsert, and it's what makes this
+            // install visible to teammates before it has pushed a single bid. Matched on username
+            // so a reinstall updates the existing identity instead of forking a second one.
+            var me = new PeerUser
+            {
+                Username = owner,
+                Email = (userProfile.PersonalEmail ?? "").Trim(),
+                DisplayName = string.IsNullOrWhiteSpace(userProfile.DisplayName) ? owner : userProfile.DisplayName.Trim(),
+                Profiles = profiles.Values
+                    .Select(p => new PeerUserProfile { Slug = p.Slug(), Name = p.Name ?? "" })
+                    .OrderBy(p => p.Name)
+                    .ToList(),
+                UpdatedAt = DateTime.UtcNow
+            };
+            var existingMe = await atlasUsers.Find(u => u.Username == owner).FirstOrDefaultAsync();
+            if (existingMe != null) me.Id = existingMe.Id;   // keep the row's identity stable
+            await atlasUsers.ReplaceOneAsync(
+                Builders<PeerUser>.Filter.Eq(u => u.Username, owner),
+                me,
+                new ReplaceOptions { IsUpsert = true });
+
+            // ===== Pull everyone else's identities into the local mirror ==========
+            // Full replace rather than a delta: the set is tiny (one row per teammate) and this
+            // way a profile someone renamed or removed doesn't linger in our picker.
+            var allUsers = await atlasUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
+            foreach (var u in allUsers)
+            {
+                await _local.PeerUsers.ReplaceOneAsync(
+                    Builders<PeerUser>.Filter.Eq(x => x.Username, u.Username),
+                    u,
+                    new ReplaceOptions { IsUpsert = true });
+            }
 
             // ===== Push: my updated bids / interviews → Atlas ===================
             var myUpdatedBids = await _local.Bids
@@ -136,13 +196,16 @@ public sealed class AtlasSyncService
             await _settings.SaveAsync(settings);
 
             var status = $"Pushed {pushedBids} bids / {pushedIvs} interviews · " +
-                         $"pulled {pulledBids} bids / {pulledIvs} interviews.";
+                         $"pulled {pulledBids} bids / {pulledIvs} interviews · " +
+                         $"{allUsers.Count} team member{(allUsers.Count == 1 ? "" : "s")}.";
             _activity.Success("Atlas", "Sync complete", status);
             return status;
         }
         catch (Exception ex)
         {
-            _activity.Error("Atlas", "Sync failed", ex.Message);
+            // Driver exceptions echo the connection string, password included — the Activity
+            // feed is user-visible and gets screenshotted, so redact before it lands there.
+            _activity.Error("Atlas", "Sync failed", SharedMongoCredentials.Redact(ex.Message));
             return "Sync failed — see Activity for details.";
         }
     }

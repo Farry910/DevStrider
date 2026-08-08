@@ -33,9 +33,39 @@
             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DataLocation}" Margin="0,0,0,4"/>
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Local listener" Foreground="{StaticResource Muted}" Margin="0,0,12,4"/>
             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ListenerHint}" Margin="0,0,0,4"/>
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="Registry" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
-            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding RegistryLocation}" TextWrapping="Wrap"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Shared cluster" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SharedClusterLocation}" TextWrapping="Wrap"/>
           </Grid>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="How to use DevStrider" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+          <TextBlock Text="1 · One-time setup" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Profiles tab — create a profile per real person you bid as. Give it the Word .docm holding your resume macro, the macro's name, and a resume prompt (Insert default gives a working template). Switch the active profile from the title-bar dropdown; every link, bid, and interview belongs to whichever profile was active.&#x0A;&#x0A;Settings tab — set your username and email under Identity, then the shared-cluster password under Peer database. Press Test connection to confirm the cluster answers."/>
+
+          <TextBlock Text="2 · Install the Chrome extension" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="chrome://extensions → Developer mode → Load unpacked → pick the extension folder. Keep one logged-in ChatGPT tab open in the background; the extension drives it without ever bringing it to the front. Check the popup's version pill after any update — a stale service worker is the usual cause of odd behaviour."/>
+
+          <TextBlock Text="3 · Bidding — the one button" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="On a job posting, click the floating button. It scrapes the job description, sends it to your background ChatGPT tab with your resume prompt, waits for the reply, builds the resume through Word invisibly, and records the bid — all while you stay on the job page filling in the application. Ctrl+click instead if the scraper misses and you want to use text you've selected by hand.&#x0A;&#x0A;The reply must end with a [FolderName]: line and a final 'UID, Company, Role, Stack1, Stack2' line. That last line is what fills in company, role, and stacks on the bid; without it the bid is still recorded, just bare. If a macro run fails the bid is recorded anyway — you lose the file, never the record."/>
+
+          <TextBlock Text="4 · Tracking" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Bids tab is the day's board — edit a row, apply a fast-feed line by hand, or schedule an interview off a bid (the JD and resume id carry forward). Interviews tab shows a date range and can schedule the next round off an existing one. Find bid searches your history. Overview and Stats aggregate you and your synced peers."/>
+
+          <TextBlock Text="5 · Sharing with the team" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Your bid and interview summaries are pushed to the shared cluster automatically — hourly by default, adjustable in Settings, and always available on demand from Sharing → Sync now. Only summaries travel: company, role, status, stacks, dates. Job URLs, job descriptions, resume text, meeting links, and comments never leave this machine.&#x0A;&#x0A;Peers tab is the other direction — pick a teammate, then one of their profiles, to see that identity's activity."/>
+
+          <TextBlock Text="If something looks wrong" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="Activity tab logs every extension call, sync, and macro run with the reason it failed. Two checks catch most problems: the version pill above matches the build you expect, and the extension popup's version matches the folder you loaded. The app keeps running in the tray after you close the window — right-click the tray icon and choose Quit to actually stop it."/>
         </StackPanel>
       </Border>
 
@@ -77,7 +107,7 @@
                        Text="setx DEVSTRIDER_GITHUB_PAT &quot;ghp_xxxxxxxxxxxxxxxx&quot;&#x0A;setx DEVSTRIDER_GITHUB_REPO_URL &quot;https://github.com/your-team/repo&quot;&#x0A;setx DEVSTRIDER_USERNAME &quot;joshua&quot;"/>
           </Border>
           <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,6" TextWrapping="Wrap"
-                     Text="Then close and re-open DevStrider. After it picks them up, you can clear them again — the PAT is DPAPI-encrypted in Mongo and the rest is plaintext in Mongo."/>
+                     Text="Then close and re-open DevStrider. After it picks them up, you can clear them again — the values are stored in plaintext in the local MongoDB."/>
         </StackPanel>
       </Border>
     </StackPanel>

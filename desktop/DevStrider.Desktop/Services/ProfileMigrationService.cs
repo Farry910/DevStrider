@@ -46,7 +46,7 @@ public sealed class ProfileMigrationService
         try
         {
             var profiles = await _profilesService.ListAsync();
-            var settings = await _settings.GetAsync();
+            var settings = await _settings.GetForEditAsync();
             var settingsDirty = false;
 
             // 1) Seed a default profile if there are none.

@@ -10,7 +10,6 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ProfileService _profiles;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
-    private readonly RegistrySyncService _registrySync;
     private readonly AtlasContext _atlas;
 
     public LocalApiServer LocalApi => _localApi;
@@ -20,14 +19,12 @@ public partial class SettingsViewModel : ViewModelBase
         ProfileService profiles,
         LocalApiServer localApi,
         ActivityLogService activity,
-        RegistrySyncService registrySync,
         AtlasContext atlas)
     {
         _settings = settings;
         _profiles = profiles;
         _localApi = localApi;
         _activity = activity;
-        _registrySync = registrySync;
         _atlas = atlas;
     }
 
@@ -35,8 +32,64 @@ public partial class SettingsViewModel : ViewModelBase
     public AppSettings Model { get => _model; set => SetProperty(ref _model, value); }
 
     private string _username = "me";
-    /// <summary>Mirror of <see cref="UserProfile.Username"/> — your filename in the shared cluster.</summary>
+    /// <summary>Mirror of <see cref="UserProfile.Username"/> — the key your rows are filed under.</summary>
     public string Username { get => _username; set => SetProperty(ref _username, value); }
+
+    private string _email = "";
+    /// <summary>Mirror of <see cref="UserProfile.PersonalEmail"/> — published to teammates.</summary>
+    public string Email { get => _email; set => SetProperty(ref _email, value); }
+
+    /// <summary>
+    /// Buffer for the shared-cluster password, fed by the <c>PasswordBox</c>'s
+    /// <c>PasswordChanged</c> handler and applied to <see cref="Model"/> in
+    /// <see cref="SaveAsync"/>. Empty means "leave the saved password alone" — the box always
+    /// renders blank on load, so an untouched box must not wipe a working password.
+    /// </summary>
+    public string SharedMongoPasswordEntry { get; set; } = "";
+
+    private string _sharedPasswordHint = "";
+    /// <summary>Whether a password is currently saved, without rendering it into the UI.</summary>
+    public string SharedPasswordHint
+    {
+        get => _sharedPasswordHint;
+        private set => SetProperty(ref _sharedPasswordHint, value);
+    }
+
+    /// <summary>Same "blank means keep" contract as <see cref="SharedMongoPasswordEntry"/>.</summary>
+    public string R2SecretEntry { get; set; } = "";
+
+    private string _r2SecretHint = "";
+    public string R2SecretHint { get => _r2SecretHint; private set => SetProperty(ref _r2SecretHint, value); }
+
+    private string _r2EndpointDisplay = "";
+    /// <summary>Read-only echo of the endpoint derived from the account id, so typos are visible.</summary>
+    public string R2EndpointDisplay { get => _r2EndpointDisplay; private set => SetProperty(ref _r2EndpointDisplay, value); }
+
+    private void RefreshR2Hints()
+    {
+        R2SecretHint = !string.IsNullOrEmpty(Model.R2SecretAccessKey)
+            ? "A secret key is saved. Leave blank to keep it; type to replace it."
+            : "No secret key saved — resume upload is disabled until you set one.";
+        R2EndpointDisplay = string.IsNullOrEmpty(Model.R2Endpoint)
+            ? "Endpoint: (set an account ID)"
+            : $"Endpoint: {Model.R2Endpoint}/{Model.R2Bucket}";
+    }
+
+    private void RefreshSharedPasswordHint() =>
+        SharedPasswordHint = !string.IsNullOrEmpty(Model.SharedMongoPassword)
+            ? "A password is saved. Leave blank to keep it; type to replace it."
+            : "No password saved — peer sync is disabled until you set one.";
+
+    /// <summary>Clear the saved shared-cluster password and disable peer sync.</summary>
+    [RelayCommand]
+    public async Task ClearSharedPasswordAsync()
+    {
+        Model.SharedMongoPassword = "";
+        SharedMongoPasswordEntry = "";
+        await _settings.SaveAsync(Model);
+        RefreshSharedPasswordHint();
+        StatusMessage = "Shared-cluster password cleared — peer sync is now disabled.";
+    }
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -44,9 +97,14 @@ public partial class SettingsViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            Model = await _settings.GetAsync();
+            // A copy, not the shared cached instance — otherwise every keystroke in this form
+            // would be live for the listener and sync services before the user hits Save.
+            Model = await _settings.GetForEditAsync();
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
+            Email = profile.PersonalEmail ?? "";
+            RefreshSharedPasswordHint();
+            RefreshR2Hints();
         }
         finally { IsBusy = false; }
     }
@@ -57,14 +115,36 @@ public partial class SettingsViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            await _settings.SaveAsync(Model);
+            // Apply the typed password before the save. Blank means "keep what's there" — the
+            // box renders empty on every load, so treating blank as "clear it" would silently
+            // disable peer sync for anyone who saved an unrelated setting.
+            if (!string.IsNullOrEmpty(SharedMongoPasswordEntry))
+            {
+                Model.SharedMongoPassword = SharedMongoPasswordEntry;
+                SharedMongoPasswordEntry = "";
+            }
+            if (!string.IsNullOrEmpty(R2SecretEntry))
+            {
+                Model.R2SecretAccessKey = R2SecretEntry;
+                R2SecretEntry = "";
+            }
 
-            // Mirror Sharing key + Word macro into the registry so they outlive Mongo.
-            await _registrySync.PushAsync();
+            await _settings.SaveAsync(Model);
+            // Saving installed Model as the shared cache; take a fresh copy so continued
+            // editing doesn't mutate what every other service is now reading.
+            Model = await _settings.GetForEditAsync();
+            RefreshSharedPasswordHint();
+            RefreshR2Hints();
 
             var p = await _profiles.GetAsync();
-            p.Username = string.IsNullOrWhiteSpace(Username) ? "me" : Username.Trim();
+            // Lowercase + no spaces: this is the join key on every pushed row, and peers match
+            // it exactly. Normalising here beats discovering the mismatch after a sync.
+            p.Username = string.IsNullOrWhiteSpace(Username)
+                ? "me"
+                : Username.Trim().ToLowerInvariant().Replace(' ', '-');
+            p.PersonalEmail = (Email ?? "").Trim();
             await _profiles.SaveAsync(p);
+            Username = p.Username;
 
             // Always ensure the listener is running on the (possibly new) saved port.
             if (_localApi.IsRunning && _localApi.BoundPort != Model.ListenerPort)
@@ -87,32 +167,6 @@ public partial class SettingsViewModel : ViewModelBase
     {
         await _localApi.StopAsync();
         _localApi.Start(Model.ListenerPort);
-    }
-
-    /// <summary>
-    /// Pull Word macro (path + hotkey) from the registry into the form (discards unsaved
-    /// edits to those fields).
-    /// </summary>
-    [RelayCommand]
-    public async Task SyncFromRegistryAsync()
-    {
-        IsBusy = true;
-        try
-        {
-            var changed = await _registrySync.PullAsync();
-            Model = await _settings.GetAsync();
-            StatusMessage = changed
-                ? "Pulled Word macro from registry."
-                : "Already in sync with registry.";
-            _activity.Success("Registry", "Synced from registry",
-                changed ? "Word macro updated from HKCU\\Software\\DevStrider." : "Already in sync.");
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Registry sync failed: {ex.Message}";
-            _activity.Error("Registry", "Sync from registry failed", ex.Message);
-        }
-        finally { IsBusy = false; }
     }
 
     /// <summary>Save current form, then ping the shared cluster — surfaces TLS / auth / DNS errors fast.</summary>

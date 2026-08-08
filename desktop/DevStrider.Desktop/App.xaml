@@ -47,9 +47,6 @@
       <DataTemplate DataType="{x:Type vm:PeersViewModel}">
         <views:PeersView/>
       </DataTemplate>
-      <DataTemplate DataType="{x:Type vm:ResumeViewModel}">
-        <views:ResumeView/>
-      </DataTemplate>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

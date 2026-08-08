@@ -61,7 +61,7 @@ public sealed class ProfileContext
         var target = All.FirstOrDefault(p => p.Id == profileId);
         if (target == null) return;
 
-        var s = await _settings.GetAsync();
+        var s = await _settings.GetForEditAsync();
         s.ActiveProfileId = target.Id;
         await _settings.SaveAsync(s);
 

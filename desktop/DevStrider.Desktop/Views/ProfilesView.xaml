@@ -87,7 +87,7 @@
                     Content="&#xE8E5;"/>
           </Grid>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
-                     Text="When this profile is active, /refresh-word from the extension targets this .docm. The active profile's path is mirrored to HKCU\Software\DevStrider\WordDocPath on save."/>
+                     Text="When this profile is active, /refresh-word from the extension targets this .docm."/>
 
           <TextBlock Text="Word macro name (run by name via COM, headless)"/>
           <TextBox Text="{Binding Selected.MacroName, UpdateSourceTrigger=PropertyChanged}"
@@ -115,15 +115,6 @@
                    Margin="0,2,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
                      Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
-
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Command="{Binding ImportFromResumeAutoCommand}" Style="{StaticResource GhostButton}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Import from ResumeAuto (profiles.json)" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-          </StackPanel>
 
           <StackPanel Orientation="Horizontal">
             <Button Command="{Binding SaveProfileCommand}" Margin="0,0,8,0">

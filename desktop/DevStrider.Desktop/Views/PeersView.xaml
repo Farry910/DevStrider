@@ -15,13 +15,23 @@
       <TextBlock Grid.Column="0" Text="Peers" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <DatePicker Grid.Column="1" SelectedDate="{Binding From, Mode=TwoWay}" Margin="16,0,4,0" VerticalAlignment="Center"/>
       <DatePicker Grid.Column="2" SelectedDate="{Binding To, Mode=TwoWay}" Margin="0,0,12,0" VerticalAlignment="Center"/>
-      <ComboBox Grid.Column="3"
-                ItemsSource="{Binding Owners}"
-                SelectedItem="{Binding OwnerFilter, Mode=TwoWay}"
-                MinWidth="180"
-                VerticalAlignment="Center"
-                ToolTip="Filter by peer (empty = show all)"/>
-      <TextBlock Grid.Column="4" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0,0,0" Foreground="{StaticResource Muted}"/>
+      <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+        <ComboBox ItemsSource="{Binding Users}"
+                  SelectedItem="{Binding UserFilter, Mode=TwoWay}"
+                  MinWidth="150"
+                  VerticalAlignment="Center"
+                  ToolTip="Team member (empty = everyone)"/>
+        <!-- Profile only means something inside one member, so it stays disabled until a member
+             is picked and is cleared automatically whenever that choice changes. -->
+        <ComboBox ItemsSource="{Binding ProfileNames}"
+                  SelectedItem="{Binding ProfileFilter, Mode=TwoWay}"
+                  MinWidth="150"
+                  Margin="6,0,0,0"
+                  VerticalAlignment="Center"
+                  IsEnabled="{Binding HasUserSelected}"
+                  ToolTip="Profile of the selected member (empty = all of theirs)"/>
+      </StackPanel>
+      <TextBlock Grid.Column="4" Text="{Binding StatusMessage}" VerticalAlignment="Center" Margin="16,0,0,0" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
       <Button Grid.Column="5"
               Command="{Binding LoadCommand}"
               Style="{StaticResource IconButton}"

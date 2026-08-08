@@ -64,9 +64,9 @@ public class MongoContext
     public IMongoCollection<PeerInterview> PeerInterviews =>
         Database.GetCollection<PeerInterview>("peerInterviews");
 
-    /// <summary>Resume-auto-generation queue (replaces ResumeAuto's SQLite jobs table).</summary>
-    public IMongoCollection<ResumeJob> ResumeJobs =>
-        Database.GetCollection<ResumeJob>("resumeJobs");
+    /// <summary>Local mirror of published team identities — drives the Peers tab's user picker.</summary>
+    public IMongoCollection<PeerUser> PeerUsers =>
+        Database.GetCollection<PeerUser>("peerUsers");
 
     /// <summary>
     /// Camel-case + ignore-unknown-fields so we can round-trip JSON payloads (export/import)
@@ -118,13 +118,10 @@ public class MongoContext
         await PeerInterviews.Indexes.CreateOneAsync(new CreateIndexModel<PeerInterview>(
             Builders<PeerInterview>.IndexKeys.Ascending(x => x.OwnerUsername).Ascending(x => x.ScheduledDate)));
 
-        // Resume queue — fast "next queued job for this profile" lookups + the dedup key
-        // mirroring ResumeAuto's UNIQUE(profile, date, url).
-        await ResumeJobs.Indexes.CreateOneAsync(new CreateIndexModel<ResumeJob>(
-            Builders<ResumeJob>.IndexKeys.Ascending(x => x.ProfileId).Ascending(x => x.Status)));
-        await ResumeJobs.Indexes.CreateOneAsync(new CreateIndexModel<ResumeJob>(
-            Builders<ResumeJob>.IndexKeys
-                .Ascending(x => x.ProfileId).Ascending(x => x.JobDate).Ascending(x => x.UrlNorm),
+        // Team identities are upserted by username on every sync, so that lookup must be unique
+        // and indexed — otherwise a reinstall could quietly create a second row for one person.
+        await PeerUsers.Indexes.CreateOneAsync(new CreateIndexModel<PeerUser>(
+            Builders<PeerUser>.IndexKeys.Ascending(x => x.Username),
             new CreateIndexOptions { Unique = true }));
 
         // Per-profile filtering hits these indexes for every Bid board / Interview load.

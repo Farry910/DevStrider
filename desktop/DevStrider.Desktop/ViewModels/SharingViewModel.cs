@@ -41,7 +41,7 @@ public partial class SharingViewModel : ViewModelBase
     private string _legacyEmail = "";
     public string LegacyEmail { get => _legacyEmail; set => SetProperty(ref _legacyEmail, value); }
 
-    /// <summary>true when <see cref="Models.AppSettings.SharedMongoUri"/> is set.</summary>
+    /// <summary>True when the shared cluster has a username, host, and a stored password.</summary>
     private bool _isConfigured;
     public bool IsConfigured { get => _isConfigured; set => SetProperty(ref _isConfigured, value); }
 
@@ -52,7 +52,9 @@ public partial class SharingViewModel : ViewModelBase
     public async Task LoadAsync()
     {
         var s = await _settings.GetAsync();
-        IsConfigured = !string.IsNullOrWhiteSpace(s.SharedMongoUri);
+        // Ask AtlasContext rather than reading one field: "configured" now means username,
+        // host, and password are all present.
+        IsConfigured = await _atlas.IsConfiguredAsync();
         LastSyncDisplay = s.LastSyncAt > DateTime.MinValue
             ? $"{s.LastSyncAt:yyyy-MM-dd HH:mm:ss} UTC"
             : "Never";

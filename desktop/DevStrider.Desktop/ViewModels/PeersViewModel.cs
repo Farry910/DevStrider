@@ -42,8 +42,16 @@ public partial class PeersViewModel : ViewModelBase
 
     public ObservableCollection<PeerBidRow> Bids { get; } = new();
     public ObservableCollection<PeerInterviewRow> Interviews { get; } = new();
-    /// <summary>Owners present in local peer data — feeds the filter combo. Empty string = All.</summary>
-    public ObservableCollection<string> Owners { get; } = new();
+
+    /// <summary>
+    /// Team members, from the mirrored <c>peerUsers</c> identities. Empty string = everyone.
+    /// Sourced from published identities rather than scraped off bid rows, so a teammate who has
+    /// set up but not yet bid still appears.
+    /// </summary>
+    public ObservableCollection<string> Users { get; } = new();
+
+    /// <summary>Profiles belonging to <see cref="UserFilter"/>. Empty string = all of theirs.</summary>
+    public ObservableCollection<string> ProfileNames { get; } = new();
 
     private DateTime _from = DateTime.Today.AddDays(-30);
     public DateTime From { get => _from; set { if (SetProperty(ref _from, value)) _ = LoadAsync(); } }
@@ -51,13 +59,75 @@ public partial class PeersViewModel : ViewModelBase
     private DateTime _to = DateTime.Today.AddDays(7);
     public DateTime To { get => _to; set { if (SetProperty(ref _to, value)) _ = LoadAsync(); } }
 
-    /// <summary>Empty string = all owners.</summary>
-    private string _ownerFilter = "";
-    public string OwnerFilter { get => _ownerFilter; set { if (SetProperty(ref _ownerFilter, value)) _ = LoadAsync(); } }
+    /// <summary>Selected teammate; empty = all. Changing it rebuilds the profile list.</summary>
+    private string _userFilter = "";
+    public string UserFilter
+    {
+        get => _userFilter;
+        set
+        {
+            if (!SetProperty(ref _userFilter, value)) return;
+            // A profile name only means something within one user, so a user change invalidates it.
+            _profileFilter = "";
+            OnPropertyChanged(nameof(ProfileFilter));
+            OnPropertyChanged(nameof(HasUserSelected));
+            _ = LoadAsync();
+        }
+    }
+
+    /// <summary>
+    /// Gates the profile picker. A real bool rather than binding <see cref="UserFilter"/> straight
+    /// at <c>IsEnabled</c> — a string source there fails conversion silently and leaves the
+    /// control enabled, which is the bug in the pattern this view used to copy.
+    /// </summary>
+    public bool HasUserSelected => !string.IsNullOrEmpty(_userFilter);
+
+    /// <summary>Selected profile within the chosen user; empty = all of that user's profiles.</summary>
+    private string _profileFilter = "";
+    public string ProfileFilter { get => _profileFilter; set { if (SetProperty(ref _profileFilter, value)) _ = LoadAsync(); } }
 
     public PeersViewModel(MongoContext db)
     {
         _db = db;
+    }
+
+    /// <summary>
+    /// Rebuild the two pickers. Identities come from the mirror; the profile list is narrowed to
+    /// the selected user, which is what makes the pair behave as user → profile rather than one
+    /// flat list of every "user / profile" pair on the team.
+    /// </summary>
+    private async Task RefreshPickersAsync()
+    {
+        var users = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
+        users.Sort((a, b) => string.Compare(a.Username, b.Username, StringComparison.OrdinalIgnoreCase));
+
+        var previousUser = UserFilter;
+        Users.Clear();
+        Users.Add("");                                  // "All members"
+        foreach (var u in users) Users.Add(u.Username);
+
+        // A teammate can disappear (renamed handle); don't leave a stale filter selected.
+        if (!string.IsNullOrEmpty(previousUser) && !Users.Contains(previousUser))
+        {
+            _userFilter = "";
+            OnPropertyChanged(nameof(UserFilter));
+            OnPropertyChanged(nameof(HasUserSelected));
+        }
+
+        ProfileNames.Clear();
+        ProfileNames.Add("");                            // "All profiles"
+        if (!string.IsNullOrEmpty(UserFilter))
+        {
+            var picked = users.FirstOrDefault(u =>
+                string.Equals(u.Username, UserFilter, StringComparison.OrdinalIgnoreCase));
+            foreach (var p in picked?.Profiles ?? new List<PeerUserProfile>())
+                if (!string.IsNullOrWhiteSpace(p.Name)) ProfileNames.Add(p.Name);
+        }
+        if (!string.IsNullOrEmpty(ProfileFilter) && !ProfileNames.Contains(ProfileFilter))
+        {
+            _profileFilter = "";
+            OnPropertyChanged(nameof(ProfileFilter));
+        }
     }
 
     [RelayCommand]
@@ -66,6 +136,8 @@ public partial class PeersViewModel : ViewModelBase
         IsBusy = true;
         try
         {
+            await RefreshPickersAsync();
+
             var fromUtc = From.Date.ToUniversalTime();
             var toUtc = To.Date.AddDays(1).ToUniversalTime();
 
@@ -89,22 +161,21 @@ public partial class PeersViewModel : ViewModelBase
                 .SortBy(i => i.ScheduledDate)
                 .ToListAsync();
 
-            // Owner label = "username / Profile Name". Build the set across both collections.
-            string OwnerLabel(string user, string profile) => $"{user} / {profile}".Trim(' ', '/');
-            var ownerSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var b in bids) ownerSet.Add(OwnerLabel(b.OwnerUsername, b.OwnerProfileName));
-            foreach (var i in ivs)  ownerSet.Add(OwnerLabel(i.OwnerUsername, i.OwnerProfileName));
-
-            // Apply owner filter (post-query — small N, simpler than building a Mongo Or).
-            bool MatchesOwner(string label) =>
-                string.IsNullOrEmpty(OwnerFilter) ||
-                string.Equals(OwnerFilter, label, StringComparison.OrdinalIgnoreCase);
+            // Two-level filter, applied post-query: the mirror is small, and matching in memory
+            // avoids building a compound Mongo filter for what is at most a few thousand rows.
+            // Profile is only consulted once a user is chosen — the same profile name under two
+            // different teammates is two different things.
+            bool MatchesOwner(string user, string profileName) =>
+                (string.IsNullOrEmpty(UserFilter) ||
+                 string.Equals(UserFilter, user, StringComparison.OrdinalIgnoreCase))
+                &&
+                (string.IsNullOrEmpty(ProfileFilter) ||
+                 string.Equals(ProfileFilter, profileName, StringComparison.OrdinalIgnoreCase));
 
             Bids.Clear();
             foreach (var b in bids)
             {
-                var label = OwnerLabel(b.OwnerUsername, b.OwnerProfileName);
-                if (!MatchesOwner(label)) continue;
+                if (!MatchesOwner(b.OwnerUsername, b.OwnerProfileName)) continue;
                 Bids.Add(new PeerBidRow
                 {
                     Username = b.OwnerUsername,
@@ -123,8 +194,7 @@ public partial class PeersViewModel : ViewModelBase
             Interviews.Clear();
             foreach (var i in ivs)
             {
-                var label = OwnerLabel(i.OwnerUsername, i.OwnerProfileName);
-                if (!MatchesOwner(label)) continue;
+                if (!MatchesOwner(i.OwnerUsername, i.OwnerProfileName)) continue;
                 Interviews.Add(new PeerInterviewRow
                 {
                     Username = i.OwnerUsername,
@@ -140,14 +210,13 @@ public partial class PeersViewModel : ViewModelBase
                 });
             }
 
-            var currentFilter = OwnerFilter;
-            Owners.Clear();
-            Owners.Add("");  // "All"
-            foreach (var o in ownerSet.OrderBy(o => o, StringComparer.OrdinalIgnoreCase)) Owners.Add(o);
-            if (!string.IsNullOrEmpty(currentFilter) && !Owners.Contains(currentFilter)) OwnerFilter = "";
-
-            StatusMessage = $"{Bids.Count} peer bids, {Interviews.Count} peer interviews. " +
-                            "Click Sync on the Sharing tab to pull the latest.";
+            var scope = string.IsNullOrEmpty(UserFilter)
+                ? "across all team members"
+                : string.IsNullOrEmpty(ProfileFilter)
+                    ? $"for {UserFilter}"
+                    : $"for {UserFilter} / {ProfileFilter}";
+            StatusMessage = $"{Bids.Count} bids, {Interviews.Count} interviews {scope}. " +
+                            "Peer data refreshes on the sync schedule, or from Sharing → Sync now.";
         }
         finally { IsBusy = false; }
     }

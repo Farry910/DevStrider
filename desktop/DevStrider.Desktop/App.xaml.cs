@@ -58,13 +58,12 @@ public partial class App : Application
             services.AddSingleton<AchievementService>();
             services.AddSingleton<ResumeService>();
             services.AddSingleton<ActivityLogService>();
-            services.AddSingleton<RegistryStore>();
-            services.AddSingleton<RegistrySyncService>();
+            services.AddSingleton<SharedMongoCredentials>();
             services.AddSingleton<AtlasContext>();
             services.AddSingleton<AtlasSyncService>();
+            services.AddSingleton<SyncScheduler>();
             services.AddSingleton<LegacyMigrationService>();
             services.AddSingleton<WordMacroService>();
-            services.AddSingleton<ResumeQueueService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
 
@@ -79,7 +78,6 @@ public partial class App : Application
             services.AddSingleton<ActivityViewModel>();
             services.AddSingleton<ProfilesViewModel>();
             services.AddSingleton<PeersViewModel>();
-            services.AddSingleton<ResumeViewModel>();
             services.AddSingleton<MainWindowViewModel>();
 
             Services = services.BuildServiceProvider();
@@ -114,8 +112,22 @@ public partial class App : Application
                 try
                 {
                     var settingsService = Services.GetRequiredService<SettingsService>();
+
+                    // Load the settings row — and with it every credential the app holds — into
+                    // memory once, before anything else reads it. Everything downstream is then
+                    // served from the cache instead of re-querying MongoDB per use.
+                    await settingsService.LoadAsync();
+
                     var profileService = Services.GetRequiredService<ProfileService>();
+                    var sharedCreds = Services.GetRequiredService<SharedMongoCredentials>();
                     await SettingsBootstrap.ApplyAsync(settingsService, profileService);
+
+                    // Split any legacy single-URI shared-cluster setting into its parts. Runs
+                    // right after bootstrap so an env-seeded URI is migrated on the same launch
+                    // that seeded it, and before anything can open an Atlas connection.
+                    if (await sharedCreds.MigrateLegacyUriAsync())
+                        activity.Info("Atlas", "Shared connection split",
+                            "Converted the legacy single-URI setting into separate host/username/password fields.");
 
                     // Multi-profile migration: seeds a Default profile + backfills ProfileId
                     // on legacy data. Idempotent — no-op once the seed exists.
@@ -124,10 +136,10 @@ public partial class App : Application
                     var profileContext = Services.GetRequiredService<ProfileContext>();
                     await profileContext.InitAsync();
 
-                    // Registry sync runs AFTER bootstrap + profile init: if env vars seeded a
-                    // value but registry already has a different one, registry wins (long-lived).
-                    var registrySync = Services.GetRequiredService<RegistrySyncService>();
-                    await registrySync.InitialSyncAsync();
+                    // Background peer sync. Starts after profile init so the first pass has an
+                    // active profile to stamp on pushed rows; it waits a couple of minutes on its
+                    // own before the first run.
+                    Services.GetRequiredService<SyncScheduler>().Start();
 
                     var settings = await settingsService.GetAsync();
                     var server = Services.GetRequiredService<LocalApiServer>();
@@ -203,6 +215,7 @@ public partial class App : Application
         try
         {
             (Services?.GetService(typeof(ResumeAutoIngestService)) as ResumeAutoIngestService)?.Dispose();
+            (Services?.GetService(typeof(SyncScheduler)) as SyncScheduler)?.Dispose();
         }
         catch { /* ignore */ }
         Tray?.Dispose();

@@ -1,7 +1,4 @@
 using System.Collections.ObjectModel;
-using System.IO;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
@@ -15,7 +12,6 @@ public partial class ProfilesViewModel : ViewModelBase
     private readonly ProfilesService _service;
     private readonly ProfileContext _context;
     private readonly ActivityLogService _activity;
-    private readonly RegistrySyncService _registrySync;
 
     public ObservableCollection<Profile> Profiles => _context.All;
 
@@ -32,13 +28,11 @@ public partial class ProfilesViewModel : ViewModelBase
     public ProfilesViewModel(
         ProfilesService service,
         ProfileContext context,
-        ActivityLogService activity,
-        RegistrySyncService registrySync)
+        ActivityLogService activity)
     {
         _service = service;
         _context = context;
         _activity = activity;
-        _registrySync = registrySync;
         Selected = _context.Current;
         _context.ProfileListChanged += () => OnPropertyChanged(nameof(Profiles));
         _context.ProfileChanged += () =>
@@ -78,12 +72,24 @@ public partial class ProfilesViewModel : ViewModelBase
             StatusMessage = "Profile name can't be empty.";
             return;
         }
-        await _service.UpdateAsync(Selected);
+        // Capture everything needed *before* the refresh. RefreshListAsync clears the bound
+        // collection, and the profile ComboBox binds SelectedItem TwoWay — so WPF pushes null
+        // straight back into Selected while the clear is in flight. Touching Selected.Name
+        // afterwards threw a NullReferenceException on every successful save, which surfaced as
+        // the "Dispatcher exception" dialog right after picking a .docm.
+        var saved = Selected;
+        var savedId = saved.Id;
+        var savedName = saved.Name;
+
+        await _service.UpdateAsync(saved);
         await _context.RefreshListAsync();
-        // If the saved profile is the active one, mirror its WordDocPath back to registry.
-        if (Selected.Id == _context.Current?.Id) await _registrySync.PushAsync();
-        StatusMessage = $"Saved profile '{Selected.Name}'.";
-        _activity.Success("Profiles", "Profile saved", Selected.Name);
+
+        // Re-point at the fresh instance the refresh produced, so the editor stays populated
+        // instead of blanking out.
+        Selected = _context.All.FirstOrDefault(p => p.Id == savedId) ?? _context.Current;
+
+        StatusMessage = $"Saved profile '{savedName}'.";
+        _activity.Success("Profiles", "Profile saved", savedName);
     }
 
     [RelayCommand]
@@ -124,81 +130,16 @@ public partial class ProfilesViewModel : ViewModelBase
         OnPropertyChanged(nameof(Selected));
     }
 
-    /// <summary>
-    /// Import ResumeAuto's <c>profiles.json</c> (user picks the file). For each entry: read the
-    /// <c>prompt_path</c> file's contents into <see cref="Profile.ResumePrompt"/>, copy
-    /// <c>docm_path</c> → WordDocPath and <c>macro_name</c> → MacroName. Matches local profiles
-    /// by name (case-insensitive); creates missing ones.
-    /// </summary>
-    [RelayCommand]
-    public async Task ImportFromResumeAutoAsync()
-    {
-        var dlg = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Select ResumeAuto profiles.json",
-            Filter = "profiles.json|profiles.json|JSON files (*.json)|*.json|All files (*.*)|*.*",
-            FilterIndex = 1,
-        };
-        if (dlg.ShowDialog() != true) return;
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(dlg.FileName);
-            var baseDir = Path.GetDirectoryName(dlg.FileName) ?? "";
-            var entries = JsonSerializer.Deserialize<List<ResumeAutoProfile>>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
-
-            int created = 0, updated = 0;
-            foreach (var e in entries)
-            {
-                var name = (e.Name ?? "").Trim();
-                if (name.Length == 0 || string.Equals(name, "Default", StringComparison.OrdinalIgnoreCase)) continue;
-
-                // Resolve + read the prompt file (relative paths resolved against profiles.json's folder).
-                var prompt = "";
-                var promptPath = (e.PromptPath ?? "").Trim();
-                if (promptPath.Length > 0)
-                {
-                    if (!Path.IsPathRooted(promptPath)) promptPath = Path.Combine(baseDir, promptPath);
-                    if (File.Exists(promptPath))
-                        try { prompt = await File.ReadAllTextAsync(promptPath); } catch { /* leave blank */ }
-                }
-
-                var existing = _context.All.FirstOrDefault(p =>
-                    string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (existing == null)
-                {
-                    existing = await _service.CreateAsync(name);
-                    created++;
-                }
-                else updated++;
-
-                existing.WordDocPath = (e.DocmPath ?? "").Trim();
-                existing.MacroName = (e.MacroName ?? "").Trim();
-                if (prompt.Length > 0) existing.ResumePrompt = prompt;
-                await _service.UpdateAsync(existing);
-            }
-
-            await _context.RefreshListAsync();
-            Selected = _context.Current;
-            StatusMessage = $"Imported ResumeAuto profiles: {created} created, {updated} updated.";
-            _activity.Success("Profiles", "ResumeAuto import", $"{created} created, {updated} updated.");
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Import failed: {ex.Message}";
-            _activity.Error("Profiles", "ResumeAuto import failed", ex.Message);
-        }
-    }
-
     [RelayCommand]
     public async Task SetActiveAsync()
     {
         if (Selected == null) return;
+        // Same capture-first rule as SaveProfileAsync: the switch fires ProfileChanged, and
+        // subscribers can reassign Selected out from under us.
+        var name = Selected.Name;
         await _context.SwitchAsync(Selected.Id);
-        await _registrySync.PushAsync();
-        StatusMessage = $"Switched to '{Selected.Name}'.";
-        _activity.Success("Profiles", "Switched profile", Selected.Name);
+        StatusMessage = $"Switched to '{name}'.";
+        _activity.Success("Profiles", "Switched profile", name);
     }
 
     [RelayCommand]
@@ -242,14 +183,5 @@ public partial class ProfilesViewModel : ViewModelBase
         Selected = _context.Current;
         StatusMessage = $"Deleted profile '{deletedName}'.";
         _activity.Success("Profiles", "Profile deleted", deletedName);
-    }
-
-    /// <summary>Wire shape of one entry in ResumeAuto's profiles.json (snake_case keys).</summary>
-    private sealed class ResumeAutoProfile
-    {
-        [JsonPropertyName("name")] public string? Name { get; set; }
-        [JsonPropertyName("prompt_path")] public string? PromptPath { get; set; }
-        [JsonPropertyName("docm_path")] public string? DocmPath { get; set; }
-        [JsonPropertyName("macro_name")] public string? MacroName { get; set; }
     }
 }

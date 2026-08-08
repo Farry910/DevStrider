@@ -4,9 +4,9 @@ A local-first, Windows desktop app (.NET 8 / WPF) for tracking job **bids** and 
 auto-generating tailored **resumes** through ChatGPT, and sharing daily status with a team via a
 shared MongoDB/Atlas cluster.
 
-- **Desktop app version:** 3.5.0
-- **Chrome extension version:** 2.4.0 (the "Bid Assistant")
-- **Platform:** Windows 10/11 only (uses Word COM automation, DPAPI, the system tray, and Win32 interop)
+- **Desktop app version:** 4.2.0
+- **Chrome extension version:** 3.1.0 (the "Bid Assistant")
+- **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 ---
 
@@ -23,9 +23,9 @@ DevStrider is the local hub of a three-part system:
 
 1. **Record bids** — browse a job posting, the extension extracts the JD and records a bid in the
    local database.
-2. **Auto-generate resumes** — paste a batch of job links; for each one the extension scrapes the
-   JD, drives ChatGPT (no clipboard, in the background), runs your Word macro to produce a tailored
-   resume file, and **auto-records the bid** with the extracted company/role/stacks.
+2. **Generate a tailored resume** — the extension sends the JD into ChatGPT, then one click runs
+   your Word macro to produce the resume file and records the bid with the company/role/stacks
+   parsed off the reply's fast-feed line.
 3. **Track interviews** — schedule interviews off a bid, carrying the JD + resume forward.
 4. **Share with a team** — push your bid/interview summaries to a shared cluster and pull peers'
    so everyone can see daily activity.
@@ -62,7 +62,7 @@ dotnet publish DevStrider.Desktop -c Release -r win-x64 `
 > **Do not** add `-p:PublishTrimmed=true` — WPF's reflection breaks under the trimmer.
 
 On first launch DevStrider creates the `devstrider` database, seeds a default profile + settings,
-and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v3.5.0`)
+and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v4.2.0`)
 so you can confirm a fresh build was picked up.
 
 ### Closing the app
@@ -82,8 +82,16 @@ It exposes two floating buttons:
 - **Blue** (job pages) — sends the page's JD into your ChatGPT tab via DOM injection (no clipboard).
 - **Purple** (ChatGPT) — runs the Word macro and records the bid from the last ChatGPT reply.
 
-…plus the **batch engine** (see *Resume auto-gen* below), which runs automatically while a ChatGPT
-tab is open. The extension talks only to `http://127.0.0.1:8765` (loopback, no auth).
+The extension talks only to `http://127.0.0.1:8765` (loopback, no auth). Purple runs the Word
+refresh and the bid record **in parallel** — a slow or failed Word step never blocks the bid.
+
+**Prompt contract** — ChatGPT's reply must end with these two lines, in order, or the purple
+button has nothing to parse:
+
+```
+[FolderName]: <output_filename>        ← your Word macro reads this
+UID, Company, Role, Stack1, Stack2     ← MUST be the last line; DevStrider strips it for the bid
+```
 
 ---
 
@@ -101,30 +109,6 @@ Interview, Final Interview, Offer.
 ### Find bid
 Search your bids by company / role / stack / URL across a configurable window (default **last 60
 days**, up to all-time).
-
-### Resume auto-gen
-Paste job links → **Start** → walk away. Pipeline per URL (background, no clipboard, no focus theft):
-
-1. Extension scrapes the JD in a throwaway tab.
-2. Injects `prompt + JD` into your ChatGPT tab and harvests the reply.
-3. App writes the resume to a bridge file and runs your Word macro by name (Word invisible).
-4. App parses the trailing fast-feed line and **auto-records the bid**.
-
-Statuses: `Queued → Generating → Resume Received → Done` (or `Failed`). Failed jobs are skipped;
-**Retry failed** re-queues them.
-
-> **Keep one logged-in ChatGPT tab open** for the whole batch — the engine lives in that tab. You
-> can work in other apps/windows; just don't close the ChatGPT tab or switch the active profile
-> mid-batch.
-
-**Prompt contract** — ChatGPT's reply must end with these two lines, in order:
-
-```
-[FolderName]: <output_filename>        ← your Word macro reads this (unchanged)
-UID, Company, Role, Stack1, Stack2     ← MUST be the last line; DevStrider strips it for the bid
-```
-
-Use **Profiles → Insert default** to get a working template.
 
 ### Overview / Stats
 Aggregate counts and a bids-per-10-minute chart, for you and any synced peers, over a date range.
@@ -151,7 +135,9 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
 ### Settings (Account)
 - **MongoDB connection** (local)
 - **Identity** — your username (filename prefix in the shared cluster)
-- **Peer database** — shared MongoDB/Atlas URI + DB name, with **Test connection**
+- **Peer database** — shared cluster host / username / options / DB name, with **Test connection**
+  and **Clear password**. See [Credentials](#credentials).
+- **Cloud storage (Cloudflare R2)** — account ID, bucket, access key ID, secret access key
 - **Bid-Assistant listener** — port (default 8765) + status
 - **Word macro hotkey** — shared fallback when a profile has no macro name
 
@@ -173,9 +159,6 @@ The extension drives the app through these endpoints on `http://127.0.0.1:8765`:
 | `GET`  | `/health` | Liveness check |
 | `POST` | `/record-bid` | Record/update one bid (manual flow) |
 | `POST` | `/refresh-word` | Run the active profile's Word macro (hotkey path) |
-| `GET`  | `/resume/next-job` | Claim the next queued resume job for the active profile |
-| `POST` | `/resume/result` | Deliver ChatGPT output → macro + auto-bid |
-| `POST` | `/resume/fail` | Mark a resume job failed |
 | `GET`  | `/browse-word` | Native file picker for the .docm path |
 
 `/refresh-word` is **serialized app-wide**: Word only ever has one instance of the .docm open, so
@@ -194,9 +177,8 @@ waits its turn, so focus returns to the window that actually clicked. Callers sh
 | `links` | Job-posting URLs (GroupLink), profile-scoped |
 | `bids` | Your bids (UserBid), profile-scoped |
 | `interviews` | Interviews, profile-scoped |
-| `resumeJobs` | The resume-generation queue |
 | `peerBids` / `peerInterviews` | Local mirror of peers' shared data |
-| `settings` / `profiles` | App settings + the username singleton |
+| `settings` / `profiles` | App settings (incl. all credentials) + the username singleton |
 
 The shared cluster holds only `peerBids` + `peerInterviews`.
 
@@ -206,10 +188,55 @@ The shared cluster holds only `peerBids` + `peerInterviews`.
 
 Empty/default settings are seeded once at first launch from `DEVSTRIDER_*` variables (set with
 `setx`, then restart). See the **About** tab for the full list — e.g.
-`DEVSTRIDER_SHARED_MONGO_URI`, `DEVSTRIDER_USERNAME`, `DEVSTRIDER_LISTENER_PORT`,
+`DEVSTRIDER_SHARED_MONGO_HOST`, `DEVSTRIDER_USERNAME`, `DEVSTRIDER_LISTENER_PORT`,
 `DEVSTRIDER_WORD_DOC_PATH`, `DEVSTRIDER_WORD_HOTKEY`.
 
-Word macro path/hotkey are also mirrored to `HKCU\Software\DevStrider` so they survive a Mongo wipe.
+---
+
+## Credentials
+
+Every credential the app holds — the shared-cluster password and the Cloudflare R2 token — lives
+on the singleton `AppSettings` row in the **local MongoDB**, in cleartext. There is no second
+store: no registry, no keychain, no encrypted file.
+
+[`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads that row **once at
+startup** and serves every later read from memory. Before that, each of ~16 call sites re-queried
+MongoDB — `/refresh-word` hit the database on every purple click just to read a hotkey, and
+opening an Atlas connection cost two round-trips before sending a byte.
+
+Because reads now share one instance, the rule is: `GetAsync()` returns the **cached object and
+must not be mutated**; anything that edits settings takes `GetForEditAsync()` (a copy) and hands
+the result to `SaveAsync`, which persists it and installs it as the new cache.
+
+Consequence worth being explicit about: anything able to read the local `devstrider` database — a
+backup, a synced folder, another account on this machine — gets the shared cluster password *and*
+the R2 token. An R2 token with object-write permission can also delete objects, so any install
+holding it can empty the bucket.
+
+### Shared cluster
+
+The shared Atlas cluster uses **one login shared by every install**. That is a deliberate trade
+for a small trusted team, and it has consequences worth stating plainly:
+
+- Every user can read *and delete* everyone else's peer data — MongoDB has no row-level security.
+- One leaked password means rotating it for every installed client at once.
+- `OwnerUsername` is self-asserted; nothing enforces that a row came from who it claims.
+
+Stored as four fields — `SharedMongoUsername`, `SharedMongoHost`, `SharedMongoPassword`,
+`SharedMongoOptions`. The full URI is composed in memory at connect time and never persisted.
+
+Username and host ship with defaults so a new user only types the password (Settings → Peer
+database). The URI is assembled by
+[`SharedMongoCredentials`](DevStrider.Desktop/Services/SharedMongoCredentials.cs), which
+percent-encodes both credential halves — Atlas passwords routinely contain `@`, `:`, `/` and `%`,
+any of which corrupt a raw URI.
+
+**Upgrading from an older install:** earlier versions stored the whole thing as one URI string. On
+first launch the app splits it into the separate fields, clears the old value, and logs *"Shared
+connection split"* to Activity. Nothing to do by hand.
+
+Driver errors are passed through `SharedMongoCredentials.Redact` before reaching the Activity log,
+since Mongo exceptions quote the connection string — password and all — back verbatim.
 
 ---
 
@@ -242,5 +269,5 @@ Word macro path/hotkey are also mirrored to `HKCU\Software\DevStrider` so they s
 DevStrider began as a multi-tenant web app (React + Express + Socket.IO + Atlas) and was rewritten
 as this single-user local desktop app. The team-sync layer moved from a shared **GitHub repo** of
 daily JSON snapshots to a shared **MongoDB/Atlas** cluster (`Sharing` tab → **Sync**). The standalone
-Python "ResumeAuto" tool was folded into this app as the **Resume auto-gen** tab + the merged Chrome
-extension.
+Python "ResumeAuto" tool was folded in as a batch **Resume auto-gen** tab, then removed again in
+4.0.0 — resume generation is now the manual blue/purple button flow only.

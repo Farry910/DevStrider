@@ -12,8 +12,16 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_MONGO_URI         → AppSettings.MongoUri               (when default "mongodb://127.0.0.1:27017")
 ///   DEVSTRIDER_DATABASE_NAME     → AppSettings.DatabaseName            (when default "devstrider")
 ///   DEVSTRIDER_USERNAME          → UserProfile.Username                (when default "me" or current Windows user)
-///   DEVSTRIDER_SHARED_MONGO_URI  → AppSettings.SharedMongoUri          (when empty)
+///   DEVSTRIDER_SHARED_MONGO_URI  → AppSettings.SharedMongoUri          (when empty; legacy — migrated to the parts below on the same launch)
+///   DEVSTRIDER_SHARED_MONGO_USER → AppSettings.SharedMongoUsername     (when still the shipped default)
+///   DEVSTRIDER_SHARED_MONGO_HOST → AppSettings.SharedMongoHost         (when still the shipped default)
+///   DEVSTRIDER_SHARED_MONGO_PASSWORD → AppSettings.SharedMongoPassword (when empty)
 ///   DEVSTRIDER_SHARED_DATABASE   → AppSettings.SharedDatabaseName      (when default "devstrider-shared")
+///   DEVSTRIDER_R2_ACCOUNT_ID     → AppSettings.R2AccountId             (when empty)
+///   DEVSTRIDER_R2_BUCKET         → AppSettings.R2Bucket                (when empty)
+///   DEVSTRIDER_R2_ACCESS_KEY_ID  → AppSettings.R2AccessKeyId           (when empty)
+///   DEVSTRIDER_R2_SECRET_KEY     → AppSettings.R2SecretAccessKey       (when empty)
+///   DEVSTRIDER_SYNC_INTERVAL_MIN → AppSettings.SyncIntervalMinutes     (when default 60)
 ///   DEVSTRIDER_LISTENER_PORT     → AppSettings.ListenerPort            (when default 8765)
 ///   DEVSTRIDER_WORD_DOC_PATH     → AppSettings.WordDocPath             (when empty)
 ///   DEVSTRIDER_WORD_HOTKEY       → AppSettings.WordHotkey              (when default "F9")
@@ -26,7 +34,7 @@ public static class SettingsBootstrap
 {
     public static async Task ApplyAsync(SettingsService settingsService, ProfileService profileService)
     {
-        var settings = await settingsService.GetAsync();
+        var settings = await settingsService.GetForEditAsync();
         var profile = await profileService.GetAsync();
         var settingsDirty = false;
         var profileDirty = false;
@@ -34,9 +42,32 @@ public static class SettingsBootstrap
         settingsDirty |= SeedIfMatch(settings.MongoUri,           "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",        v => settings.MongoUri = v);
         settingsDirty |= SeedIfMatch(settings.DatabaseName,       "devstrider",                "DEVSTRIDER_DATABASE_NAME",    v => settings.DatabaseName = v);
         settingsDirty |= SeedIfEmpty(settings.SharedMongoUri,                                  "DEVSTRIDER_SHARED_MONGO_URI", v => settings.SharedMongoUri = v);
+        settingsDirty |= SeedIfMatch(settings.SharedMongoUsername, SharedMongoCredentials.DefaultUsername, "DEVSTRIDER_SHARED_MONGO_USER", v => settings.SharedMongoUsername = v);
+        settingsDirty |= SeedIfMatch(settings.SharedMongoHost,     SharedMongoCredentials.DefaultHost,     "DEVSTRIDER_SHARED_MONGO_HOST", v => settings.SharedMongoHost = v);
         settingsDirty |= SeedIfMatch(settings.SharedDatabaseName, "devstrider-shared",         "DEVSTRIDER_SHARED_DATABASE",  v => settings.SharedDatabaseName = v);
+
+        settingsDirty |= SeedIfEmpty(settings.SharedMongoPassword,                             "DEVSTRIDER_SHARED_MONGO_PASSWORD", v => settings.SharedMongoPassword = v);
+
+        // Cloud storage (R2) — same rule: seeded once into the local settings row, then the
+        // Settings UI owns them.
+        settingsDirty |= SeedIfEmpty(settings.R2AccountId,                                     "DEVSTRIDER_R2_ACCOUNT_ID",    v => settings.R2AccountId = v);
+        settingsDirty |= SeedIfEmpty(settings.R2Bucket,                                        "DEVSTRIDER_R2_BUCKET",        v => settings.R2Bucket = v);
+        settingsDirty |= SeedIfEmpty(settings.R2AccessKeyId,                                   "DEVSTRIDER_R2_ACCESS_KEY_ID", v => settings.R2AccessKeyId = v);
+        settingsDirty |= SeedIfEmpty(settings.R2SecretAccessKey,                               "DEVSTRIDER_R2_SECRET_KEY",    v => settings.R2SecretAccessKey = v);
+
         settingsDirty |= SeedIfEmpty(settings.WordDocPath,                                     "DEVSTRIDER_WORD_DOC_PATH",    v => settings.WordDocPath = v);
         settingsDirty |= SeedIfMatch(settings.WordHotkey,         "F9",                        "DEVSTRIDER_WORD_HOTKEY",      v => settings.WordHotkey = v);
+
+        // 0 is meaningful here (disables scheduled sync), so accept the full non-negative range.
+        if (settings.SyncIntervalMinutes == 60)
+        {
+            var syncEnv = ReadEnv("DEVSTRIDER_SYNC_INTERVAL_MIN");
+            if (syncEnv != null && int.TryParse(syncEnv, out var mins) && mins >= 0 && mins <= 10080)
+            {
+                settings.SyncIntervalMinutes = mins;
+                settingsDirty = true;
+            }
+        }
 
         // Int field — accept only well-formed integers in the listening-port range.
         if (settings.ListenerPort == 8765)

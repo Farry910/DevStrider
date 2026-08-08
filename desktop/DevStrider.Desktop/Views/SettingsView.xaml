@@ -3,23 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel MaxWidth="700" HorizontalAlignment="Left">
-      <Grid Margin="0,0,0,4">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-        <TextBlock Grid.Column="0" Text="Settings" Style="{StaticResource H1}"/>
-        <Button Grid.Column="1"
-                Command="{Binding SyncFromRegistryCommand}"
-                Style="{StaticResource GhostButton}"
-                VerticalAlignment="Center"
-                ToolTip="Pull Sharing key + Word macro from HKCU\Software\DevStrider into the form (discards unsaved edits to those three fields)">
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <TextBlock Text="Sync from registry" VerticalAlignment="Center"/>
-          </StackPanel>
-        </Button>
-      </Grid>
+      <TextBlock Text="Settings" Style="{StaticResource H1}" Margin="0,0,0,4"/>
       <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" Margin="0,4,0,12"/>
 
       <Border Style="{StaticResource Card}">
@@ -39,11 +23,20 @@
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Text="Your username (used as your filename in the team repo)"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="How teammates find you in the shared cluster. Your username owns the profiles you bid as — peers pick you first, then one of your profiles. There is no password: this identifies you, it doesn't authenticate you."/>
+
+          <TextBlock Text="Username"/>
           <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
                    Tag="e.g. joshua"/>
-          <TextBlock Foreground="{StaticResource Muted}"
-                     Text="Defaults to your Windows account name (lowercased). Snapshots upload to YYYY-MM-DD/&lt;username&gt;.json. Keep it lowercase, no spaces."/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="Defaults to your Windows account name, lowercased. Keep it lowercase with no spaces — it's the key your bids and interviews are filed under, so changing it later orphans everything already pushed."/>
+
+          <TextBlock Text="Email"/>
+          <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
+                   Tag="you@example.com"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                     Text="Contact address shown to teammates alongside your name. Visible to everyone on the shared cluster."/>
         </StackPanel>
       </Border>
 
@@ -51,18 +44,50 @@
         <StackPanel>
           <TextBlock Text="Peer database (shared MongoDB / Atlas)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Connection to the shared cluster that holds everyone's bid + interview summaries. Leave blank to disable peer sync. Sync runs from the Sharing tab."/>
+                     Text="Connection to the shared cluster that holds everyone's bid + interview summaries. Username and host ship with defaults; only the password is yours to enter. The password is encrypted for your Windows account and never stored in MongoDB. Clear it to disable peer sync. Sync runs from the Sharing tab."/>
 
-          <TextBlock Text="Connection URI"/>
-          <TextBox Text="{Binding Model.SharedMongoUri, UpdateSourceTrigger=PropertyChanged}"
+          <TextBlock Text="Cluster host"/>
+          <TextBox Text="{Binding Model.SharedMongoHost, UpdateSourceTrigger=PropertyChanged}"
                    FontFamily="Consolas"
                    Margin="0,2,0,8"
-                   Tag="mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&amp;w=majority"/>
+                   Tag="cluster0.abcde.mongodb.net"/>
+
+          <TextBlock Text="Username"/>
+          <TextBox Text="{Binding Model.SharedMongoUsername, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="shared-cluster user"/>
+
+          <TextBlock Text="Password"/>
+          <!--
+            PasswordBox deliberately has no Text binding — WPF doesn't expose Password as a
+            DependencyProperty precisely so the plaintext never sits in the binding engine or a
+            visual-tree dump. The view-model reads it in the Save handler instead.
+          -->
+          <PasswordBox x:Name="SharedMongoPasswordBox"
+                       PasswordChanged="SharedMongoPasswordBox_PasswordChanged"
+                       FontFamily="Consolas"
+                       Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="{Binding SharedPasswordHint}"/>
+
+          <TextBlock Text="Connection options"/>
+          <TextBox Text="{Binding Model.SharedMongoOptions, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="retryWrites=true&amp;w=majority"/>
 
           <TextBlock Text="Database name"/>
           <TextBox Text="{Binding Model.SharedDatabaseName, UpdateSourceTrigger=PropertyChanged}"
-                   Margin="0,2,0,4"
+                   Margin="0,2,0,8"
                    Tag="devstrider-shared"/>
+
+          <TextBlock Text="Automatic sync interval (minutes)"/>
+          <TextBox Text="{Binding Model.SyncIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,4"
+                   Tag="60"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,4"
+                     Text="Peer data is pushed and pulled on this cadence in the background. 0 disables it and leaves only the Sync now button; anything under 5 is treated as 5. The first run happens a couple of minutes after launch."/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
                      Text="Contains two collections — peerBids and peerInterviews. Other collections from older data can be dropped from the Sharing tab's Reset section."/>
 
@@ -73,13 +98,55 @@
                 <TextBlock Text="Save settings" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding TestSharedConnectionCommand}" Style="{StaticResource GhostButton}">
+            <Button Command="{Binding TestSharedConnectionCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Text="Test connection" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
+            <Button Command="{Binding ClearSharedPasswordAsyncCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Clear password" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
           </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Cloud storage (Cloudflare R2)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Bucket that holds resume files shared with peers. Like the peer database, these are stored in the local database and loaded at startup. An API token with object-write permission can also delete objects — everyone holding it can empty the bucket."/>
+
+          <TextBlock Text="Account ID"/>
+          <TextBox Text="{Binding Model.R2AccountId, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="hex prefix of the r2.cloudflarestorage.com endpoint"/>
+
+          <TextBlock Text="Bucket"/>
+          <TextBox Text="{Binding Model.R2Bucket, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="devstrider"/>
+
+          <TextBlock Text="Access key ID"/>
+          <TextBox Text="{Binding Model.R2AccessKeyId, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"/>
+
+          <TextBlock Text="Secret access key"/>
+          <PasswordBox x:Name="R2SecretBox"
+                       PasswordChanged="R2SecretBox_PasswordChanged"
+                       FontFamily="Consolas"
+                       Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="{Binding R2SecretHint}"/>
+
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                     Text="{Binding R2EndpointDisplay}"/>
         </StackPanel>
       </Border>
 
@@ -135,7 +202,7 @@
                    Tag="F9   (or Ctrl+Shift+R, etc.)"
                    Margin="0,2,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,0" TextWrapping="Wrap"
-                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted. Mirrors to HKCU\Software\DevStrider so it survives a Mongo wipe."/>
+                     Text="Default F9 runs Word's 'update fields' macro. Ctrl+S, Ctrl+Shift+R, etc. are accepted."/>
         </StackPanel>
       </Border>
 

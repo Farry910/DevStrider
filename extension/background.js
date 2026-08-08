@@ -1,11 +1,8 @@
 "use strict";
 
 // DevStrider local desktop app listener. The extension talks to it over loopback HTTP.
-// Two flows live here:
-//   • Manual (floating buttons): START_GENERATE injects a JD into ChatGPT; REFRESH_WORD runs
-//     the Word macro + records one bid.
-//   • Batch (Resume tab): the ChatGPT content script polls the app and drives generation; this
-//     worker only scrapes job descriptions in throwaway background tabs (RESUME_SCRAPE_JD).
+// One flow lives here — the manual floating buttons: START_GENERATE injects a JD into ChatGPT,
+// REFRESH_WORD runs the Word macro and records one bid.
 const APP_URL = "http://127.0.0.1:8765";
 const FETCH_TIMEOUT_MS = 15000;
 
@@ -24,58 +21,6 @@ function findChatGPTTab(cb) {
       cb(null);
     }
   );
-}
-
-// --- Background-tab JD scrape (batch engine asks for this) -----------------
-async function scrapeJobDescription(url) {
-  var tab = await chrome.tabs.create({ url: url, active: false });
-  var tabId = tab.id;
-  try {
-    await waitForComplete(tabId, 30000);
-    var results = await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      func: extractJdInPage
-    });
-    return (results && results[0] && results[0].result) || "";
-  } finally {
-    try { await chrome.tabs.remove(tabId); } catch (e) { /* ignore */ }
-  }
-}
-
-function waitForComplete(tabId, timeoutMs) {
-  return new Promise(function (resolve) {
-    var done = false;
-    var timer = setTimeout(function () { if (!done) { done = true; chrome.tabs.onUpdated.removeListener(listener); resolve(); } }, timeoutMs || 30000);
-    function listener(id, info) {
-      if (id === tabId && info.status === "complete") {
-        if (done) return;
-        done = true; clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener);
-        // Give SPA job boards a beat to render the description.
-        setTimeout(resolve, 1500);
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
-  });
-}
-
-// Runs IN the job page (isolated world). Self-contained — no outer references.
-function extractJdInPage() {
-  function txt(el) { return el ? (el.innerText || el.textContent || "").trim() : ""; }
-  var selectors = [
-    ".jobs-description__content", ".jobs-description", "#jobDescriptionText",
-    "#job-description-container", ".jobsearch-JobComponent-description",
-    ".job-post", ".job__description", "#job-description", ".job-description",
-    "[class*='job-description']", "[class*='JobDescription']", ".posting-page",
-    "[id*='requisitionDescription']", "article", "[role='main']", "main"
-  ];
-  for (var i = 0; i < selectors.length; i++) {
-    try {
-      var els = document.querySelectorAll(selectors[i]);
-      for (var j = 0; j < els.length; j++) { var t = txt(els[j]); if (t.length >= 200) return t; }
-    } catch (e) { /* ignore */ }
-  }
-  var body = (document.body && (document.body.innerText || document.body.textContent)) || "";
-  return body.trim();
 }
 
 // --- Manual: run Word macro + record one bid (purple button) ----------------
@@ -100,23 +45,83 @@ function submitDevStriderRecord(st, gptResumeContent, fastFeedInput, callback) {
     .catch(function () { callback({ ok: false, error: "App not running?" }); });
 }
 
+// Active profile's resume prompt. Never fails the bid: if the app is unreachable we fall back to
+// sending the bare JD, which still works when ChatGPT already knows the format from a Project or
+// custom instructions.
+function fetchActiveProfile(callback) {
+  fetchWithTimeout(APP_URL + "/active-profile", { method: "GET" }, 10000)
+    .then(function (r) { return r.text(); })
+    .then(function (t) { var d; try { d = JSON.parse(t); } catch (e) { d = null; } callback(d); })
+    .catch(function () { callback(null); });
+}
+
+// Ask the app to build the resume silently and record the bid. `reply` is the full ChatGPT
+// output including its trailing fast-feed line — the app splits it.
+function postGenerateResume(pending, reply, callback) {
+  if (!pending || !pending.url) {
+    callback({ ok: false, error: "No job context — click the button on a job page." });
+    return;
+  }
+  var bodyObj = {
+    url: pending.url,
+    jobDescription: pending.jobDescription || "",
+    resumeText: String(reply || ""),
+    origin: "Bid Assistant"
+  };
+  // Generous timeout: the app runs Word over COM, and that can take a while on a cold start.
+  fetchWithTimeout(APP_URL + "/generate-resume", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bodyObj)
+  }, 180000)
+    .then(function (r) { return r.text().then(function (t) { return { status: r.status, text: t }; }); })
+    .then(function (r) {
+      var data; try { data = JSON.parse(r.text); } catch (e) { callback({ ok: false, error: "Invalid JSON from app" }); return; }
+      if (r.status >= 200 && r.status < 300 && data && data.ok) callback(data);
+      else callback({ ok: false, error: (data && data.error) || ("HTTP " + r.status) });
+    })
+    .catch(function () { callback({ ok: false, error: "App not reachable. Is DevStrider running?" }); });
+}
+
 chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
-  // ---- Batch: scrape a JD in a throwaway tab ----
-  if (message && message.type === "RESUME_SCRAPE_JD") {
-    scrapeJobDescription(message.url)
-      .then(function (jd) { sendResponse({ ok: true, jd: jd }); })
-      .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
+  // ---- One-button flow, driven entirely from the job tab --------------------
+  // Nothing here focuses or activates the ChatGPT tab: the user stays on the job page filling
+  // in the application while generation happens behind them.
+  if (message && message.type === "BID_JOB") {
+    var jd = message.jd ? String(message.jd) : "";
+    var url = message.url ? String(message.url) : "";
+    findChatGPTTab(function (chatTabId) {
+      if (!chatTabId) { sendResponse({ ok: false, error: "Open a logged-in ChatGPT tab first" }); return; }
+      // The content script opens a new chat per bid, so the profile's resume prompt has to lead
+      // — otherwise ChatGPT has no idea it should emit the [FolderName] + fast-feed lines.
+      fetchActiveProfile(function (profile) {
+        var prompt = (profile && profile.resumePrompt) || "";
+        var payload = prompt ? (prompt + "\n\n" + jd) : jd;
+        chrome.tabs.sendMessage(chatTabId, { type: "INJECT_AND_HARVEST", text: payload }, function (resp) {
+          if (chrome.runtime.lastError) { sendResponse({ ok: false, error: chrome.runtime.lastError.message }); return; }
+          if (!resp || !resp.ok) { sendResponse({ ok: false, error: (resp && resp.error) || "ChatGPT tab didn't respond" }); return; }
+          postGenerateResume({ url: url, jobDescription: jd }, resp.reply, sendResponse);
+        });
+      });
+    });
+    return true;
+  }
+
+  // ---- Manual fallback: commit a reply already visible on the ChatGPT tab ----
+  if (message && message.type === "BID_FROM_REPLY") {
+    var replyText = message.reply ? String(message.reply) : "";
+    chrome.storage.local.get(["devstriderPending"], function (st) {
+      postGenerateResume(st && st.devstriderPending, replyText, sendResponse);
+    });
     return true;
   }
 
   // ---- Manual: send a JD into ChatGPT via DOM injection (no clipboard) ----
   if (message && message.type === "START_GENERATE") {
-    var jd = message.jd ? String(message.jd) : "";
+    var startJd = message.jd ? String(message.jd) : "";
     findChatGPTTab(function (chatTabId) {
       if (!chatTabId) { sendResponse({ ok: false, error: "Open a logged-in ChatGPT tab first" }); return; }
       chrome.tabs.update(chatTabId, { active: true }, function (tab) {
         if (tab && tab.windowId) chrome.windows.update(tab.windowId, { focused: true });
-        chrome.tabs.sendMessage(chatTabId, { type: "INJECT_TEXT", text: jd }, function (resp) {
+        chrome.tabs.sendMessage(chatTabId, { type: "INJECT_TEXT", text: startJd }, function (resp) {
           if (chrome.runtime.lastError) sendResponse({ ok: false, error: chrome.runtime.lastError.message });
           else sendResponse(resp || { ok: false, error: "No response from ChatGPT tab" });
         });

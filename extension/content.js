@@ -168,88 +168,89 @@
     inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
   }
 
-  function harvestWhenComplete(timeoutMs) {
+
+  // ===========================================================================
+  // GENERATION-COMPLETE DETECTION  (runs in the ChatGPT tab, usually backgrounded)
+  // ===========================================================================
+
+  /** How often to re-check the page while ChatGPT is streaming. */
+  var GEN_POLL_MS = 1500;
+  /** Give up after this long — a wedged generation must not hang the job tab forever. */
+  var GEN_TIMEOUT_MS = 240000;
+  /** Consecutive identical polls before we call the reply finished. */
+  var GEN_STABLE_POLLS = 2;
+
+  /**
+   * True while ChatGPT is still producing a reply. Checked against several signals because any
+   * single one breaks whenever the UI is redesigned — a stop button under either of its known
+   * test ids, or the absence of the voice button that only returns once streaming ends.
+   */
+  function isStreaming() {
+    if (document.querySelector('[data-testid="stop-button"]')) return true;
+    if (document.querySelector('button[aria-label*="Stop" i]')) return true;
+    // Voice button is present only when idle; its absence means a reply is in flight.
+    var idle = document.querySelector('button[aria-label="Start Voice"]') ||
+               document.querySelector('[data-testid="composer-speech-button"]');
+    return !idle;
+  }
+
+  /**
+   * Resolve once the newest assistant message has stopped growing.
+   *
+   * Polling rather than a bare MutationObserver is deliberate: this runs in a **background** tab,
+   * and comparing the message text across ticks is what actually proves the reply is complete —
+   * the stop button can vanish a beat before the last tokens land. A MutationObserver runs
+   * alongside purely to shorten the wait, since observers aren't throttled in hidden tabs while
+   * timers are.
+   */
+  function waitForGenerationComplete() {
     return new Promise(function (resolve, reject) {
-      var to = setTimeout(function () { obs.disconnect(); reject(new Error('ChatGPT generation timed out')); }, timeoutMs || 180000);
-      var obs = new MutationObserver(async function () {
-        // Completion signal: the "Start Voice" button reappears when streaming finishes.
-        var done = document.querySelector('button[aria-label="Start Voice"]');
-        if (!done) return;
-        clearTimeout(to); obs.disconnect();
-        await sleep(1000);
-        var msgs = document.querySelectorAll('[data-message-author-role="assistant"]');
-        var last = msgs[msgs.length - 1];
-        if (!last) { reject(new Error('No assistant message found')); return; }
-        var txt = '';
-        var els = last.querySelectorAll('p, pre, li, h1, h2, h3, h4, h5, h6');
-        if (els.length > 0) els.forEach(function (e) { txt += e.innerText + '\n'; }); else txt = last.innerText;
-        resolve(txt.replace(/\n{3,}/g, '\n\n').trim());
-      });
-      obs.observe(document.querySelector('main') || document.body, { childList: true, subtree: true });
+      var lastText = null;
+      var stableCount = 0;
+      var startedAt = Date.now();
+      var settled = false;
+      var timer = null;
+      var obs = null;
+
+      function finish(err, value) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearInterval(timer);
+        if (obs) obs.disconnect();
+        if (err) reject(err); else resolve(value);
+      }
+
+      function tick() {
+        if (settled) return;
+        if (Date.now() - startedAt > GEN_TIMEOUT_MS) {
+          finish(new Error('ChatGPT generation timed out'));
+          return;
+        }
+
+        var text = extractLastAssistantMessage();
+        if (!text || text.length < 20) { lastText = text; stableCount = 0; return; }
+        if (isStreaming()) { lastText = text; stableCount = 0; return; }
+
+        // Idle *and* the text hasn't changed since the previous tick → finished.
+        if (text === lastText) {
+          stableCount++;
+          if (stableCount >= GEN_STABLE_POLLS) finish(null, text);
+        } else {
+          lastText = text;
+          stableCount = 0;
+        }
+      }
+
+      timer = setInterval(tick, GEN_POLL_MS);
+      try {
+        obs = new MutationObserver(tick);
+        obs.observe(document.querySelector('main') || document.body, { childList: true, subtree: true, characterData: true });
+      } catch (e) { /* observer is an optimisation; polling alone still works */ }
     });
   }
 
-  async function injectAndHarvest(text) {
-    await injectText(text);
-    await sleep(2500);
-    return await harvestWhenComplete();
-  }
-
   // ===========================================================================
-  // BATCH ENGINE  (runs only on a ChatGPT tab; the tab being open IS the engine)
-  // ===========================================================================
-  var batchBusy = false;
-
-  function scrapeJdViaBackground(url) {
-    return new Promise(function (resolve, reject) {
-      chrome.runtime.sendMessage({ type: 'RESUME_SCRAPE_JD', url: url }, function (resp) {
-        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (resp && resp.ok) resolve(resp.jd || ''); else reject(new Error((resp && resp.error) || 'scrape failed'));
-      });
-    });
-  }
-  function postResult(jobId, jd, resumeText) {
-    return fetch(APP_URL + '/resume/result', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId: jobId, jobDescription: jd, resumeText: resumeText })
-    }).catch(function () {});
-  }
-  function postFail(jobId, error) {
-    return fetch(APP_URL + '/resume/fail', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId: jobId, error: error })
-    }).catch(function () {});
-  }
-
-  async function batchTick() {
-    if (batchBusy) return;
-    batchBusy = true;
-    try {
-      var res = await fetch(APP_URL + '/resume/next-job');
-      if (res.status === 204 || !res.ok) return;          // nothing queued / batch paused
-      var job = await res.json();
-      if (!job || !job.jobId) return;
-
-      var jd = '';
-      try { jd = await scrapeJdViaBackground(job.url); }
-      catch (e) { await postFail(job.jobId, 'JD scrape failed: ' + e.message); return; }
-      if (!jd || jd.trim().length < 100) { await postFail(job.jobId, 'Job description too short or not found'); return; }
-
-      var combined = (job.prompt ? job.prompt + '\n\n' : '') + '--- JOB DESCRIPTION ---\n' + jd.trim();
-      var resumeText = '';
-      try { resumeText = await injectAndHarvest(combined); }
-      catch (e) { await postFail(job.jobId, 'ChatGPT: ' + e.message); return; }
-
-      await postResult(job.jobId, jd.trim(), resumeText);
-    } catch (e) {
-      // App down / network hiccup — stay quiet, retry next tick.
-    } finally {
-      batchBusy = false;
-    }
-  }
-
-  // ===========================================================================
-  // MESSAGE HANDLER (manual blue button asks us to inject)
+  // MESSAGE HANDLER (the job tab drives this tab remotely)
   // ===========================================================================
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (msg && msg.type === 'INJECT_TEXT') {
@@ -257,18 +258,37 @@
         .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
       return true;
     }
+
+    // One-button flow: inject, wait out the generation, hand the reply back. The caller stays
+    // on the job page the whole time — nothing here touches focus.
+    if (msg && msg.type === 'INJECT_AND_HARVEST') {
+      (async function () {
+        try {
+          await injectText(String(msg.text || ''));
+          var reply = await waitForGenerationComplete();
+          sendResponse({ ok: true, reply: reply });
+        } catch (e) {
+          sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
+        }
+      })();
+      return true;
+    }
   });
 
   // ===========================================================================
   // FLOATING BUTTONS (manual single-bid path — preserved)
   // ===========================================================================
-  const DEFAULT_BLUE_LABEL = 'Send JD to ChatGPT (Ctrl+click to use selected text)';
+  const DEFAULT_BLUE_LABEL = 'Bid this job — generate resume + record (Ctrl+click to use selected text)';
   var _busy = false;
 
-  function updateBlueStatus(status) {
+  function updateBlueStatus(status, iconKey, color) {
     var btn = document.getElementById(BLUE_BTN_ID);
     if (!btn) return;
     btn.title = status || DEFAULT_BLUE_LABEL;
+    var icon = btn.querySelector('span');
+    if (!icon || !iconKey) return;
+    icon.innerHTML = SVG_ICONS[iconKey] || SVG_ICONS.clipboard;
+    icon.style.color = color || 'rgba(255,255,255,0.9)';
   }
 
   var SVG_ICONS = {
@@ -289,11 +309,19 @@
     btn.title = status || 'Update Word & record bid in DevStrider';
   }
 
+  /**
+   * Blue is the one-button flow and lives on job pages. Purple stays as a manual fallback on the
+   * ChatGPT tab for when you want to eyeball the reply before committing it — same destination,
+   * just driven by hand.
+   */
   function setButtonStates() {
     var onChatGPT = isChatGPTUrl();
     var blueBtn = document.getElementById(BLUE_BTN_ID);
     var purpleBtn = document.getElementById(PURPLE_BTN_ID);
-    if (blueBtn) { blueBtn.disabled = onChatGPT; blueBtn.style.opacity = onChatGPT ? '0.4' : '1'; blueBtn.style.cursor = onChatGPT ? 'not-allowed' : 'pointer'; }
+    if (blueBtn) {
+      var blueOff = onChatGPT || _busy;
+      blueBtn.disabled = blueOff; blueBtn.style.opacity = blueOff ? '0.4' : '1'; blueBtn.style.cursor = blueOff ? 'not-allowed' : 'pointer';
+    }
     if (purpleBtn) { purpleBtn.disabled = !onChatGPT; purpleBtn.style.opacity = onChatGPT ? '1' : '0.4'; purpleBtn.style.cursor = onChatGPT ? 'pointer' : 'not-allowed'; }
   }
 
@@ -359,7 +387,14 @@
     });
   }
 
-  // Blue button: extract JD (or selection) → inject into ChatGPT via DOM (no clipboard).
+  /**
+   * The one button. Scrapes the JD off this page (or your selection with Ctrl+click), hands it to
+   * a background ChatGPT tab, waits out the generation, and has DevStrider build the resume
+   * silently and record the bid.
+   *
+   * You never leave this tab — keep filling in the application while it runs. The whole round
+   * trip is one message to the worker; the reply carries both outcomes.
+   */
   function onBlueClick(e) {
     var btn = document.getElementById(BLUE_BTN_ID);
     if (!btn || btn.disabled || _busy) return;
@@ -367,58 +402,72 @@
     var jd = '';
     if (e && e.ctrlKey) {
       jd = (window.getSelection() || '').toString().trim();
-      if (!jd || jd.length < MIN_JD_LENGTH) { updateBlueStatus('Select the JD text first, then Ctrl+click'); return; }
+      if (!jd || jd.length < MIN_JD_LENGTH) { updateBlueStatus('Select the JD text first, then Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
     } else {
       jd = extractJobDescription();
-      if (!jd || jd.trim().length < MIN_JD_LENGTH) { updateBlueStatus('JD too short — select text & Ctrl+click'); return; }
+      if (!jd || jd.trim().length < MIN_JD_LENGTH) { updateBlueStatus('JD too short — select text & Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
     }
 
     _busy = true;
-    updateBlueStatus('Sending to ChatGPT…');
-    chrome.storage.local.set({
-      devstriderPending: { url: window.location.href, jobDescription: jd, savedAt: Date.now() }
-    });
-    chrome.runtime.sendMessage({ type: 'START_GENERATE', jd: jd }, function () {
+    setButtonStates();
+    updateBlueStatus('Generating resume… keep working, this runs in the background', 'spinner', 'rgba(255,255,255,0.85)');
+
+    var pending = { url: window.location.href, jobDescription: jd, savedAt: Date.now() };
+    chrome.storage.local.set({ devstriderPending: pending });
+
+    chrome.runtime.sendMessage({ type: 'BID_JOB', jd: jd, url: pending.url }, function (response) {
       _busy = false;
-      updateBlueStatus(chrome.runtime.lastError ? 'Error: ' + chrome.runtime.lastError.message : 'Sent to ChatGPT');
+      setButtonStates();
+
+      if (chrome.runtime.lastError) {
+        updateBlueStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
+      } else if (response && response.ok) {
+        // Bid recorded. The macro is reported separately — a failed macro costs you the resume
+        // file, not the bid, and the two shouldn't look like one failure.
+        var label = [response.company, response.role].filter(Boolean).join(' · ') || 'Bid recorded';
+        if (response.macro) {
+          updateBlueStatus(('Resume + bid done — ' + label).slice(0, 60), 'check', 'rgba(255,255,255,0.95)');
+        } else {
+          updateBlueStatus(('Bid recorded · macro: ' + (response.macroError || 'failed')).slice(0, 60), 'xmark', 'rgba(255,193,7,0.95)');
+        }
+      } else {
+        updateBlueStatus('Failed: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
+      }
+      setTimeout(function () { updateBlueStatus(DEFAULT_BLUE_LABEL, 'clipboard', 'rgba(255,255,255,0.9)'); }, 6000);
     });
   }
 
-  // Purple button: harvest the ChatGPT reply → run Word macro + record the bid (manual path).
+  /**
+   * Manual fallback, ChatGPT tab only: commit the reply that's already on screen. Same
+   * destination as the blue button — silent macro + bid record — for when you want to read the
+   * output before committing it, or the automatic wait gave up.
+   */
   function onPurpleClick() {
     var btn = document.getElementById(PURPLE_BTN_ID);
     if (!btn || btn.disabled) return;
     btn.disabled = true;
     updatePurpleStatus('Processing…', 'spinner', 'rgba(255,255,255,0.85)');
 
-    var gptFull = extractLastAssistantMessage();
-    var split = splitTrailingFastFeed(gptFull);
-    chrome.runtime.sendMessage(
-      { type: 'REFRESH_WORD', gptResumeContent: split.resumePart, fastFeedInput: split.fastFeedLine },
-      function (response) {
-        setButtonStates();
-        if (chrome.runtime.lastError) {
-          updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
-        } else if (response && response.ok) {
-          // Word refresh and DevStrider recording are independent now — report both outcomes.
-          // The DevStrider write is the one that matters most: it's never gated on Word.
-          var word = response.word || { ok: false };
-          var ds = response.devStrider || { ok: false };
-          if (word.ok && ds.ok) {
-            updatePurpleStatus('Word + DevStrider OK!', 'check', 'rgba(255,255,255,0.95)');
-          } else if (ds.ok) {
-            updatePurpleStatus(('DevStrider OK · Word: ' + (word.error || 'failed')).slice(0, 44), 'xmark', 'rgba(255,193,7,0.95)');
-          } else if (word.ok) {
-            updatePurpleStatus(('Word OK · DevStrider: ' + (ds.error || 'failed')).slice(0, 44), 'xmark', 'rgba(255,193,7,0.95)');
-          } else {
-            updatePurpleStatus(('Word: ' + (word.error || 'failed') + ' · DevStrider: ' + (ds.error || 'failed')).slice(0, 60), 'xmark', 'rgba(255,255,255,0.5)');
-          }
-        } else {
-          updatePurpleStatus('Error: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
-        }
-        setTimeout(function () { updatePurpleStatus('Update Word & record bid in DevStrider', 'fileWord', 'rgba(255,255,255,0.9)'); }, 3500);
+    var reply = extractLastAssistantMessage();
+    if (!reply) {
+      updatePurpleStatus('No ChatGPT reply found on this page', 'xmark', 'rgba(255,255,255,0.5)');
+      setButtonStates();
+      return;
+    }
+
+    chrome.runtime.sendMessage({ type: 'BID_FROM_REPLY', reply: reply }, function (response) {
+      setButtonStates();
+      if (chrome.runtime.lastError) {
+        updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
+      } else if (response && response.ok) {
+        var label = [response.company, response.role].filter(Boolean).join(' · ') || 'Bid recorded';
+        if (response.macro) updatePurpleStatus(('Resume + bid done — ' + label).slice(0, 60), 'check', 'rgba(255,255,255,0.95)');
+        else updatePurpleStatus(('Bid recorded · macro: ' + (response.macroError || 'failed')).slice(0, 60), 'xmark', 'rgba(255,193,7,0.95)');
+      } else {
+        updatePurpleStatus('Failed: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
       }
-    );
+      setTimeout(function () { updatePurpleStatus('Commit this reply — resume + bid', 'fileWord', 'rgba(255,255,255,0.9)'); }, 5000);
+    });
   }
 
   // ===========================================================================
@@ -433,8 +482,4 @@
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 
-  // The batch engine only lives on ChatGPT tabs — keep one open + logged in to run batches.
-  if (isChatGPTUrl()) {
-    setInterval(batchTick, 4000);
-  }
 })();

@@ -157,12 +157,6 @@
                 <TextBlock Text="Find bid" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding ShowResumeCommand}" Style="{StaticResource NavButton}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE7C3;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <TextBlock Text="Resume auto-gen" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
             <Button Command="{Binding ShowOverviewCommand}" Style="{StaticResource NavButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
