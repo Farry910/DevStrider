@@ -43,6 +43,10 @@ already had.
 ' No clipboard access: the resume text arrives as the parameter.
 '========================
 
+' Where the macro was working when it failed. Word is invisible, so the error log is the only
+' witness -- and "[76] Path not found" without the path is unactionable.
+Private gLastPath As String
+
 '========================
 ' Main macro
 '========================
@@ -98,7 +102,8 @@ Sub LogMacroError(ByVal errNumber As Long, ByVal errDescription As String)
     path = Environ$("TEMP") & "\devstrider_macro_error.log"
     f = FreeFile
     Open path For Append As #f
-    Print #f, Format$(Now, "yyyy-mm-dd hh:nn:ss") & "  [" & errNumber & "] " & errDescription
+    Print #f, Format$(Now, "yyyy-mm-dd hh:nn:ss") & "  [" & errNumber & "] " & errDescription & _
+              "  |  path=" & gLastPath
     Close #f
 End Sub
 
@@ -207,11 +212,14 @@ Sub SaveResumeAutomatically(folderName As String)
     Dim basePath As String, fullPath As String, docPath As String, pdfPath As String
 
     ' Per-profile: each template hardcodes its own owner's output root and file name.
-    basePath = "C:\Users\Fernando\Music\bid"
+    basePath = "C:\Users\lenovo\Music\bid"
     fullPath = basePath & "\" & folderName
 
-    If Dir(fullPath, vbDirectory) = "" Then MkDir fullPath
+    gLastPath = fullPath
+    EnsureFolder fullPath
 
+    ' The account name only ever belonged in basePath. This is the resume's filename -- it should
+    ' be the person the profile is for, which is what a recruiter sees on the attachment.
     docPath = fullPath & "\Fernando.docx"
     pdfPath = fullPath & "\Fernando.pdf"
 
@@ -231,6 +239,25 @@ Sub SaveResumeAutomatically(folderName As String)
         BitmapMissingFonts:=True, _
         UseISO19005_1:=False
 End Sub
+
+'========================
+' Create a folder and every missing parent
+'
+' VBA's MkDir creates ONE level. The old code called it on basePath\folderName, which works only
+' if basePath already exists -- so the very first run on a machine died with error 76 no matter
+' how correct the path was, and creating the leaf by hand fixed only that one bid.
+'========================
+Sub EnsureFolder(ByVal folderPath As String)
+    Dim fso As Object, parent As String
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FolderExists(folderPath) Then Exit Sub
+
+    ' Recursion bottoms out at a drive root, whose parent is "".
+    parent = fso.GetParentFolderName(folderPath)
+    If parent <> "" Then EnsureFolder parent
+
+    If Not fso.FolderExists(folderPath) Then fso.CreateFolder folderPath
+End Sub
 ```
 
 ---
@@ -243,6 +270,8 @@ End Sub
 | **Changed** | `Sub UpdateResumeAndSwitchOriginal()` → `(ByVal ClipText As String)` |
 | **Removed** | `ClipText = GetClipboardText()` — it arrives as the parameter |
 | **Added** | `LogMacroError` — the old handler swallowed every error silently, leaving no way to tell a failed run from a wrong one |
+| **Added** | `EnsureFolder` — `MkDir` creates one level, so the output root was never created and every first run failed with error 76 |
+| **Added** | `gLastPath` in the log line — `[76] Path not found` didn't say *which* path, which made the failure unactionable |
 | **Tidied** | Dropped unused `savedDocPath` / `originalPath` / `newWordApp`; hoisted `pos` out of the loop |
 
 Everything else — section parsing, bookmarks, `**bold**`, `SaveAs2`, PDF export, `Application.Quit`
@@ -280,6 +309,7 @@ bmSubtitle3   bmExperience3
 | Symptom | Cause |
 |---|---|
 | Activity: macro failed after ~90s | The `Sub` still has no `String` parameter, or it errored — check `%TEMP%\devstrider_macro_error.log` |
+| Log says `[76] Path not found` | `basePath` points somewhere that doesn't exist. The `path=` on the log line is the folder it tried; `EnsureFolder` creates it now, so this should only mean a bad drive letter or a permission failure |
 | Document comes back blank | ChatGPT's reply had no `[Section]:` labels — press **Insert default** on the Profiles tab to get a prompt that emits them |
 | Folder named `Resume` | No `[FolderName]:` line in the reply |
 | Bid recorded with no company/role | The reply's last line wasn't the bare `UID, Company, Role, …` line |

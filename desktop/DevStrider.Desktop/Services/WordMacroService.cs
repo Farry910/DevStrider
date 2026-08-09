@@ -157,13 +157,53 @@ public sealed class WordMacroService
     private static string BuildPowerShell() => """
 param ([string]$ResumeTextPath, [string]$DocumentPath, [string]$MacroName, [string]$ProfileName)
 $word = $null
+$doc = $null
 $ourPid = 0
+$macroLog = Join-Path $env:TEMP 'devstrider_macro_error.log'
+$logBefore = 0
 
 function Stop-OurWord {
     # Only the instance this script created. Never touches the user's own Word.
     if ($ourPid -gt 0) {
         try { Stop-Process -Id $ourPid -Force -ErrorAction SilentlyContinue } catch {}
     }
+}
+
+function Close-OurWork {
+    # Word is a single-instance COM server: if it was already running we are holding the user's
+    # own instance, not a private one. Killing it would take their open documents with it, and
+    # leaving it hidden strands the window. So close only the document we opened, and hand the
+    # instance back the way we found it.
+    if ($doc) { try { $doc.Close([ref]0) } catch {} }
+    if ($ourPid -gt 0) {
+        Stop-OurWord
+    } elseif ($word) {
+        try { $word.Visible = $true } catch {}
+        try { $word.DisplayAlerts = -1 } catch {}
+    }
+}
+
+function Get-MacroErrorTail {
+    # Whatever the VBA error handler appended since we started. A failing macro logs and
+    # deliberately stays open, so this file is the only place its reason exists -- without it
+    # every failure looks identical from out here.
+    if (-not (Test-Path $macroLog)) { return '' }
+    try {
+        $all = [System.IO.File]::ReadAllText($macroLog)
+        if ($all.Length -le $logBefore) { return '' }
+        return $all.Substring($logBefore).Trim()
+    } catch { return '' }
+}
+
+function Test-WordAlive {
+    # Prefer the process handle. Probing the COM proxy is unreliable: once Word has quit,
+    # PowerShell's adapter returns $null for $word.Name instead of throwing, so a try/catch
+    # probe reports a dead instance as alive and every successful run looks like a timeout.
+    if ($ourPid -gt 0) {
+        return [bool](Get-Process -Id $ourPid -ErrorAction SilentlyContinue)
+    }
+    # Attached to a pre-existing instance, so there is no PID of ours to watch.
+    try { return -not [string]::IsNullOrEmpty($word.Name) } catch { return $false }
 }
 
 try {
@@ -187,53 +227,78 @@ try {
     Start-Sleep -Seconds 1
     $doc.Repaginate()
 
+    # Baseline the macro's log so we only ever read entries from *this* run.
+    if (Test-Path $macroLog) {
+        try { $logBefore = [System.IO.File]::ReadAllText($macroLog).Length } catch { $logBefore = 0 }
+    }
+
     Write-Host "Running macro for [$ProfileName]: $MacroName"
     # The resume text is the macro's single argument — no clipboard, no bridge file.
     #
     # [ref] is required, not stylistic: Word.Application.Run declares all thirty of its Arg
     # parameters ByRef, and PowerShell refuses to marshal a plain value into one —
     # "Argument: '2' should be a System.Management.Automation.PSReference. Use [ref]."
+    $runFailed = ''
     try {
         $word.Run($MacroName, [ref]$resumeText)
     } catch {
-        # Only retry the binder failure, which happens before the macro is entered. Retrying
-        # anything else would run the macro a second time after it had already done its work.
-        if ($_.Exception.Message -notlike '*PSReference*' -and
-            $_.Exception.Message -notlike '*ByRef*') { throw }
-        $null = $word.GetType().InvokeMember(
-            'Run',
-            [System.Reflection.BindingFlags]::InvokeMethod,
-            $null,
-            $word,
-            @($MacroName, $resumeText))
-    }
-
-    # The macro ends with Application.Quit, so Word going away is the success signal.
-    $startTime = Get-Date
-    while ($true) {
-        Start-Sleep -Milliseconds 500
-        try {
-            $null = $word.Name
-            if (((Get-Date) - $startTime).TotalSeconds -gt 90) {
-                Stop-OurWord
-                throw "Macro did not finish within 90 seconds."
-            }
-        } catch [System.Runtime.InteropServices.COMException] {
-            break        # RPC failed = Word exited = the macro completed
-        } catch {
-            if ($_.Exception.Message -like "*did not finish*") { throw }
-            break
+        $msg = $_.Exception.Message
+        if ($msg -like '*PSReference*' -or $msg -like '*ByRef*') {
+            # A binder failure happens before the macro is entered, so retrying is safe. Nothing
+            # else is retried -- that would run the macro twice after it had already done its work.
+            $null = $word.GetType().InvokeMember(
+                'Run',
+                [System.Reflection.BindingFlags]::InvokeMethod,
+                $null,
+                $word,
+                @($MacroName, $resumeText))
+        } else {
+            # Do NOT treat this as a failure yet. The macro ends with Application.Quit, which
+            # tears down the RPC channel while this very call is still on the stack -- so a
+            # *successful* run surfaces here as a COM error (0x800A9C68). The evidence below,
+            # not the HRESULT, decides the outcome.
+            $runFailed = $msg
         }
     }
+
+    # Run is a synchronous COM call, so reaching this line means the macro has already finished
+    # and its error handler -- if it ran at all -- has already written to the log. There is
+    # nothing to wait for, which is why this no longer polls for Word to disappear.
+    $macroError = Get-MacroErrorTail
+    if ($macroError) {
+        Close-OurWork
+        throw "Macro reported: $macroError"
+    }
+
+    if ($runFailed) {
+        # Run threw but the macro logged nothing. Either it quit Word mid-call (success, and the
+        # HRESULT is just the channel collapsing) or the call never reached the macro at all --
+        # a missing name, a disabled project. Word still being here separates the two.
+        #
+        # This has to be a poll, not a sleep: Word takes a few seconds to finish exiting after
+        # Application.Quit, so a fixed wait either reports a good run as failed or pads every
+        # genuine failure. A macro that never dispatched leaves Word untouched, so it costs the
+        # full window -- paid only on a misconfiguration, and it stops the 90-second silence.
+        $deadline = (Get-Date).AddSeconds(12)
+        while ((Get-Date) -lt $deadline -and (Test-WordAlive)) { Start-Sleep -Milliseconds 250 }
+        if (Test-WordAlive) {
+            Close-OurWork
+            throw "Macro call failed: $runFailed"
+        }
+    }
+
+    # No-op when the macro already quit; tidies up when it did not.
+    Close-OurWork
     Write-Output "SUCCESS"
     exit 0
 } catch {
     Write-Host "POWERSHELL ERROR: $($_.Exception.Message)"
+    # Never $word.Quit() here: on an attached instance that closes the user's Word and every
+    # document in it, with DisplayAlerts off and SaveChanges 0 -- silent loss of their work.
+    Close-OurWork
     if ($word) {
-        try { $word.Quit([ref]0) } catch {}
         try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null } catch {}
     }
-    Stop-OurWord
     exit 1
 } finally {
     [System.GC]::Collect(); [System.GC]::WaitForPendingFinalizers()

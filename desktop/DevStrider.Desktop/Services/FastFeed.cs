@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
@@ -48,14 +50,68 @@ public static class FastFeed
         {
             var trimmed = lines[i].Trim();
             if (trimmed.Length == 0) continue;
+
+            // A fast-feed line is bare by contract, so a "[Label]: …" line is never one — and
+            // plenty of them parse anyway ("[Skills]: React, TypeScript, Node.js" has three
+            // comma-segments). Consuming one would strip a resume section and fill the bid with
+            // nonsense. [FolderName] is the single exception: its value *is* the fast-feed data
+            // when the prompt doesn't also emit a bare duplicate, so read it without removing
+            // the line the macro needs.
+            var labelled = LabelledLine.Match(trimmed);
+            if (labelled.Success)
+            {
+                if (labelled.Groups[1].Value.Trim().Equals("FolderName", StringComparison.OrdinalIgnoreCase))
+                {
+                    var inlineValue = labelled.Groups[2].Value.Trim();
+                    var inlineParsed = ParseLine(inlineValue);
+                    if (inlineParsed != null)
+                        return new SplitResult(full.TrimEnd(), inlineValue, inlineParsed);
+                }
+                continue;
+            }
+
             var parsed = ParseLine(trimmed);
             if (parsed != null)
             {
-                var resumePart = string.Join("\n", lines.Take(i)).TrimEnd();
+                // Keep the line when it is the value under a bare "[FolderName]:" label. A prompt
+                // that puts every label on its own line makes the folder name and the fast-feed
+                // line the same text, so stripping it hands the macro a label with nothing after
+                // it and every resume lands in a folder called "Resume". The bid still gets its
+                // fields either way -- only the text passed to the macro differs, which is why
+                // this deliberately diverges from the JS port.
+                var take = IsFolderNameValue(lines, i) ? i + 1 : i;
+                var resumePart = string.Join("\n", lines.Take(take)).TrimEnd();
                 return new SplitResult(resumePart, trimmed, parsed);
             }
         }
         return new SplitResult(full.TrimEnd(), "", null);
+    }
+
+    /// <summary>
+    /// A section header with its value on the same line: <c>[Label]: value</c>. Deliberately
+    /// requires the colon, so a bracket-wrapped fast-feed line (<c>[id, Company, Role]</c>)
+    /// does not match.
+    /// </summary>
+    private static readonly Regex LabelledLine = new(@"^\[([^\]]+)\]\s*:\s*(.*)$", RegexOptions.Compiled);
+
+    /// <summary>A <c>[FolderName]:</c> label alone on its line, with its value beneath it.</summary>
+    private static readonly Regex BareFolderNameLabel =
+        new(@"^\[\s*foldername\s*\]\s*:?\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// True when the line at <paramref name="index"/> sits directly under a bare
+    /// <c>[FolderName]:</c> label — i.e. it is that section's content, not a trailing
+    /// fast-feed line that happens to look the same.
+    /// </summary>
+    private static bool IsFolderNameValue(string[] lines, int index)
+    {
+        for (int j = index - 1; j >= 0; j--)
+        {
+            var prev = lines[j].Trim();
+            if (prev.Length == 0) continue;
+            return BareFolderNameLabel.IsMatch(prev);
+        }
+        return false;
     }
 
     public record SplitResult(string ResumePart, string FastFeedLine, Parsed? Parsed);
