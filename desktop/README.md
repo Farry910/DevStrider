@@ -4,7 +4,7 @@ A local-first, Windows desktop app (.NET 8 / WPF) for tracking job **bids** and 
 auto-generating tailored **resumes** through ChatGPT, and sharing daily status with a team via a
 shared PostgreSQL database.
 
-- **Desktop app version:** 6.2.0
+- **Desktop app version:** 7.1.0
 - **Chrome extension version:** 3.2.0 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
@@ -62,7 +62,7 @@ dotnet publish DevStrider.Desktop -c Release -r win-x64 `
 > **Do not** add `-p:PublishTrimmed=true` — WPF's reflection breaks under the trimmer.
 
 On first launch DevStrider creates the `devstrider` database, seeds a default profile + settings,
-and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v6.2.0`)
+and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v7.1.0`)
 so you can confirm a fresh build was picked up.
 
 ### Closing the app

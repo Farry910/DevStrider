@@ -104,13 +104,16 @@ public sealed class PeerSyncService
 
             // The generated id has to come back before anything can be pushed — it's the
             // foreign key every bid and interview row carries.
-            (var ownerId, teamSize) = await PublishIdentityAsync(conn, owner, userProfile, profiles.Values);
+            // One shared-database row per local profile; the map is what stamps each bid with
+            // the identity that actually owns it.
+            (var idByProfile, teamSize) = await PublishIdentitiesAsync(conn, owner, userProfile, profiles.Values);
             await PullIdentitiesAsync(conn);
 
-            pushedBids = await PushBidsAsync(conn, ownerId, profiles, lastSync);
-            pushedIvs = await PushInterviewsAsync(conn, ownerId, profiles, lastSync);
-            pulledBids = await PullBidsAsync(conn, ownerId, lastSync);
-            pulledIvs = await PullInterviewsAsync(conn, ownerId, lastSync);
+            var mine = idByProfile.Values.ToList();
+            pushedBids = await PushBidsAsync(conn, idByProfile, lastSync);
+            pushedIvs = await PushInterviewsAsync(conn, idByProfile, lastSync);
+            pulledBids = await PullBidsAsync(conn, mine, lastSync);
+            pulledIvs = await PullInterviewsAsync(conn, mine, lastSync);
 
             settings.LastSyncAt = newSyncMark;
             await _settings.SaveAsync(settings);
@@ -137,41 +140,50 @@ public sealed class PeerSyncService
     // ── identity ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Upsert this install's identity, then report how many members the team has. Published every
-    /// sync rather than delta-gated: it's one small row, and it's what makes a teammate visible
-    /// before they've bid.
+    /// Publish one row per local profile and return a map of local profile id to shared-database
+    /// id. Every bid is stamped with the id of the row matching <i>its own</i> profile, which is
+    /// what makes "group by person + profile" a join instead of a string match.
+    ///
+    /// <para>
+    /// Published every sync rather than delta-gated: the rows are tiny, and this is what makes a
+    /// teammate's profile visible before they have bid from it. Rows are never deleted here --
+    /// the foreign key cascades, so removing one would destroy that profile's shared history.
+    /// </para>
     /// </summary>
-    private static async Task<(long ownerId, int teamSize)> PublishIdentityAsync(
-        NpgsqlConnection conn, string owner, UserProfile userProfile, IEnumerable<Profile> profiles)
+    private static async Task<(Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, int teamSize)>
+        PublishIdentitiesAsync(
+            NpgsqlConnection conn, string owner, UserProfile userProfile, IEnumerable<Profile> profiles)
     {
-        var list = profiles
-            .Select(p => new PeerUserProfile { Slug = p.Slug(), Name = p.Name ?? "" })
-            .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        long ownerId;
+        var idByProfile = new Dictionary<MongoDB.Bson.ObjectId, long>();
+        var email = (userProfile.PersonalEmail ?? "").Trim();
 
-        await using (var cmd = new NpgsqlCommand("""
-            INSERT INTO peer_users (username, email, profiles, updated_at)
-            VALUES (@u, @e, @p::jsonb, @t)
-            ON CONFLICT (username) DO UPDATE SET
-                email      = EXCLUDED.email,
-                profiles   = EXCLUDED.profiles,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-            """, conn))
+        foreach (var prof in profiles)
         {
+            await using var cmd = new NpgsqlCommand("""
+                INSERT INTO peer_users (username, profile_slug, profile_name, email, updated_at)
+                VALUES (@u, @ps, @pn, @e, @t)
+                ON CONFLICT (username, profile_slug) DO UPDATE SET
+                    profile_name = EXCLUDED.profile_name,
+                    email        = EXCLUDED.email,
+                    updated_at   = EXCLUDED.updated_at
+                RETURNING id
+                """, conn);
             cmd.Parameters.AddWithValue("u", owner);
-            cmd.Parameters.AddWithValue("e", (userProfile.PersonalEmail ?? "").Trim());
-            cmd.Parameters.Add(new NpgsqlParameter("p", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(list) });
+            cmd.Parameters.AddWithValue("ps", prof.Slug());
+            cmd.Parameters.AddWithValue("pn", prof.Name ?? "");
+            cmd.Parameters.AddWithValue("e", email);
             cmd.Parameters.AddWithValue("t", SharedDbContext.Utc(DateTime.UtcNow));
-            // created_at is left to its column default on insert and deliberately absent from the
-            // DO UPDATE list, so it records when the identity first appeared and never moves.
-            ownerId = Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L);
+            // created_at takes its column default on insert and is absent from the DO UPDATE
+            // list, so it records first appearance and never moves.
+            var id = Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L);
+            if (id == 0)
+                throw new InvalidOperationException($"Shared database returned no id for profile '{prof.Name}'.");
+            idByProfile[prof.Id] = id;
         }
-        if (ownerId == 0) throw new InvalidOperationException("Shared database did not return an id for this identity.");
 
-        await using var count = new NpgsqlCommand("SELECT COUNT(*) FROM peer_users", conn);
-        return (ownerId, Convert.ToInt32(await count.ExecuteScalarAsync() ?? 0));
+        await using var count = new NpgsqlCommand(
+            "SELECT COUNT(DISTINCT username) FROM peer_users", conn);
+        return (idByProfile, Convert.ToInt32(await count.ExecuteScalarAsync() ?? 0));
     }
 
     /// <summary>
@@ -181,61 +193,56 @@ public sealed class PeerSyncService
     private async Task PullIdentitiesAsync(NpgsqlConnection conn)
     {
         await using var cmd = new NpgsqlCommand(
-            "SELECT id, username, email, profiles, created_at, updated_at FROM peer_users", conn);
+            "SELECT id, username, profile_slug, profile_name, email, created_at, updated_at FROM peer_users", conn);
         await using var r = await cmd.ExecuteReaderAsync();
 
         var seen = new List<PeerUser>();
         while (await r.ReadAsync())
         {
-            var json = r.IsDBNull(3) ? "[]" : r.GetString(3);
-            List<PeerUserProfile> profiles;
-            try { profiles = JsonSerializer.Deserialize<List<PeerUserProfile>>(json) ?? new(); }
-            catch { profiles = new(); }   // a malformed row shouldn't sink the whole sync
-
             seen.Add(new PeerUser
             {
                 RemoteId = r.GetInt64(0),
                 Username = r.GetString(1),
-                Email = r.GetString(2),
-                Profiles = profiles,
-                CreatedAt = r.GetDateTime(4),
-                UpdatedAt = r.GetDateTime(5),
+                ProfileSlug = r.GetString(2),
+                ProfileName = r.GetString(3),
+                Email = r.GetString(4),
+                CreatedAt = r.GetDateTime(5),
+                UpdatedAt = r.GetDateTime(6),
             });
         }
 
         foreach (var u in seen)
         {
             await _local.PeerUsers.ReplaceOneAsync(
-                Builders<PeerUser>.Filter.Eq(x => x.Username, u.Username),
+                Builders<PeerUser>.Filter.Eq(x => x.RemoteId, u.RemoteId),
                 u,
                 new ReplaceOptions { IsUpsert = true });
         }
 
-        // Drop mirrored identities that no longer exist upstream.
-        var names = seen.Select(u => u.Username).ToList();
-        await _local.PeerUsers.DeleteManyAsync(Builders<PeerUser>.Filter.Nin(x => x.Username, names));
+        // Prune the local mirror only. The shared rows themselves are never deleted.
+        var ids = seen.Select(u => u.RemoteId).ToList();
+        await _local.PeerUsers.DeleteManyAsync(Builders<PeerUser>.Filter.Nin(x => x.RemoteId, ids));
     }
 
     // ── bids ────────────────────────────────────────────────────────────────
 
     private async Task<int> PushBidsAsync(
-        NpgsqlConnection conn, long ownerId, Dictionary<MongoDB.Bson.ObjectId, Profile> profiles, DateTime since)
+        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, DateTime since)
     {
         var mine = await _local.Bids.Find(b => b.UpdatedAt > since).ToListAsync();
         var n = 0;
         foreach (var b in mine)
         {
-            if (!profiles.TryGetValue(b.ProfileId, out var prof)) continue;
+            // No published identity for this profile means it is not ours to push.
+            if (!idByProfile.TryGetValue(b.ProfileId, out var ownerId)) continue;
 
             await using var cmd = new NpgsqlCommand("""
-                INSERT INTO peer_bids (id, owner_user_id, owner_profile_slug, owner_profile_name,
+                INSERT INTO peer_bids (id, owner_user_id,
                                        company, role, status, origin, resume_id, primary_stacks,
                                        job_description, created_at, updated_at, first_created_at, applied_at)
-                VALUES (@id, @ou, @os, @on, @co, @ro, @st, @og, @ri, @ps, @jd, @ca, @ua, @fa, @aa)
+                VALUES (@id, @ou, @co, @ro, @st, @og, @ri, @ps, @jd, @ca, @ua, @fa, @aa)
                 ON CONFLICT (id) DO UPDATE SET
                     owner_user_id      = EXCLUDED.owner_user_id,
-                    owner_profile_slug = EXCLUDED.owner_profile_slug,
-                    owner_profile_name = EXCLUDED.owner_profile_name,
                     company            = EXCLUDED.company,
                     role               = EXCLUDED.role,
                     status             = EXCLUDED.status,
@@ -250,8 +257,6 @@ public sealed class PeerSyncService
 
             cmd.Parameters.AddWithValue("id", b.Id.ToString());
             cmd.Parameters.AddWithValue("ou", ownerId);
-            cmd.Parameters.AddWithValue("os", prof.Slug());
-            cmd.Parameters.AddWithValue("on", prof.Name ?? "");
             cmd.Parameters.AddWithValue("co", b.Company ?? "");
             cmd.Parameters.AddWithValue("ro", b.Role ?? "");
             cmd.Parameters.AddWithValue("st", b.Status ?? "");
@@ -271,17 +276,17 @@ public sealed class PeerSyncService
         return n;
     }
 
-    private async Task<int> PullBidsAsync(NpgsqlConnection conn, long ownerId, DateTime since)
+    private async Task<int> PullBidsAsync(NpgsqlConnection conn, List<long> mine, DateTime since)
     {
         await using var cmd = new NpgsqlCommand("""
-            SELECT id, owner_user_id, owner_profile_slug, owner_profile_name, company, role,
+            SELECT id, owner_user_id, company, role,
                    status, origin, resume_id, primary_stacks, job_description, created_at,
                    updated_at, first_created_at, applied_at
             FROM peer_bids
-            WHERE updated_at > @since AND owner_user_id <> @owner
+            WHERE updated_at > @since AND NOT (owner_user_id = ANY(@mine))
             """, conn);
         cmd.Parameters.AddWithValue("since", SharedDbContext.Utc(since));
-        cmd.Parameters.AddWithValue("owner", ownerId);
+        cmd.Parameters.AddWithValue("mine", mine);
 
         var rows = new List<PeerBid>();
         await using (var r = await cmd.ExecuteReaderAsync())
@@ -293,19 +298,17 @@ public sealed class PeerSyncService
                     Id = MongoDB.Bson.ObjectId.TryParse(r.GetString(0), out var oid)
                         ? oid : MongoDB.Bson.ObjectId.GenerateNewId(),
                     OwnerUserId = r.GetInt64(1),
-                    OwnerProfileSlug = r.GetString(2),
-                    OwnerProfileName = r.GetString(3),
-                    Company = r.GetString(4),
-                    Role = r.GetString(5),
-                    Status = r.GetString(6),
-                    Origin = r.GetString(7),
-                    ResumeId = r.GetString(8),
-                    PrimaryStacks = r.IsDBNull(9) ? new() : ((string[])r.GetValue(9)).ToList(),
-                    JobDescription = r.GetString(10),
-                    CreatedAt = r.GetDateTime(11),
-                    UpdatedAt = r.GetDateTime(12),
-                    FirstCreatedAt = r.GetDateTime(13),
-                    AppliedAt = r.IsDBNull(14) ? null : r.GetDateTime(14),
+                    Company = r.GetString(2),
+                    Role = r.GetString(3),
+                    Status = r.GetString(4),
+                    Origin = r.GetString(5),
+                    ResumeId = r.GetString(6),
+                    PrimaryStacks = r.IsDBNull(7) ? new() : ((string[])r.GetValue(7)).ToList(),
+                    JobDescription = r.GetString(8),
+                    CreatedAt = r.GetDateTime(9),
+                    UpdatedAt = r.GetDateTime(10),
+                    FirstCreatedAt = r.GetDateTime(11),
+                    AppliedAt = r.IsDBNull(12) ? null : r.GetDateTime(12),
                 });
             }
         }
@@ -321,24 +324,23 @@ public sealed class PeerSyncService
     // ── interviews ──────────────────────────────────────────────────────────
 
     private async Task<int> PushInterviewsAsync(
-        NpgsqlConnection conn, long ownerId, Dictionary<MongoDB.Bson.ObjectId, Profile> profiles, DateTime since)
+        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, DateTime since)
     {
         var mine = await _local.Interviews.Find(i => i.UpdatedAt > since).ToListAsync();
         var n = 0;
         foreach (var iv in mine)
         {
-            if (!profiles.TryGetValue(iv.ProfileId, out var prof)) continue;
+            if (!idByProfile.TryGetValue(iv.ProfileId, out var ownerId)) continue;
 
             await using var cmd = new NpgsqlCommand("""
-                INSERT INTO peer_interviews (id, owner_user_id, owner_profile_slug, owner_profile_name,
+                INSERT INTO peer_interviews (id, owner_user_id, bid_id,
                                              process_id, company, role, interview_type, status, recruiter, resume_id,
                                              job_description, scheduled_date, scheduled_time,
                                              duration_minutes, created_at, updated_at)
-                VALUES (@id, @ou, @os, @on, @pr, @co, @ro, @it, @st, @rc, @ri, @jd, @sd, @sti, @dm, @ca, @ua)
+                VALUES (@id, @ou, @bd, @pr, @co, @ro, @it, @st, @rc, @ri, @jd, @sd, @sti, @dm, @ca, @ua)
                 ON CONFLICT (id) DO UPDATE SET
                     owner_user_id      = EXCLUDED.owner_user_id,
-                    owner_profile_slug = EXCLUDED.owner_profile_slug,
-                    owner_profile_name = EXCLUDED.owner_profile_name,
+                    bid_id             = EXCLUDED.bid_id,
                     process_id         = EXCLUDED.process_id,
                     company            = EXCLUDED.company,
                     role               = EXCLUDED.role,
@@ -355,8 +357,10 @@ public sealed class PeerSyncService
 
             cmd.Parameters.AddWithValue("id", iv.Id.ToString());
             cmd.Parameters.AddWithValue("ou", ownerId);
-            cmd.Parameters.AddWithValue("os", prof.Slug());
-            cmd.Parameters.AddWithValue("on", prof.Name ?? "");
+            // Empty means the interview never came from a bid -- send NULL, not "", so the
+            // foreign key and "no bid" read the same way in SQL as they do here.
+            cmd.Parameters.AddWithValue("bd",
+                iv.BidId == MongoDB.Bson.ObjectId.Empty ? DBNull.Value : iv.BidId.ToString());
             cmd.Parameters.AddWithValue("pr", iv.ProcessId == MongoDB.Bson.ObjectId.Empty ? "" : iv.ProcessId.ToString());
             cmd.Parameters.AddWithValue("co", iv.Company ?? "");
             cmd.Parameters.AddWithValue("ro", iv.Role ?? "");
@@ -377,17 +381,18 @@ public sealed class PeerSyncService
         return n;
     }
 
-    private async Task<int> PullInterviewsAsync(NpgsqlConnection conn, long ownerId, DateTime since)
+    private async Task<int> PullInterviewsAsync(NpgsqlConnection conn, List<long> mine, DateTime since)
     {
         await using var cmd = new NpgsqlCommand("""
-            SELECT id, owner_user_id, owner_profile_slug, owner_profile_name, process_id,
+            SELECT id, owner_user_id, process_id,
                    company, role, interview_type, status, recruiter, resume_id, job_description,
-                   scheduled_date, scheduled_time, duration_minutes, created_at, updated_at
+                   scheduled_date, scheduled_time, duration_minutes, created_at, updated_at,
+                   bid_id
             FROM peer_interviews
-            WHERE updated_at > @since AND owner_user_id <> @owner
+            WHERE updated_at > @since AND NOT (owner_user_id = ANY(@mine))
             """, conn);
         cmd.Parameters.AddWithValue("since", SharedDbContext.Utc(since));
-        cmd.Parameters.AddWithValue("owner", ownerId);
+        cmd.Parameters.AddWithValue("mine", mine);
 
         var rows = new List<PeerInterview>();
         await using (var r = await cmd.ExecuteReaderAsync())
@@ -399,21 +404,21 @@ public sealed class PeerSyncService
                     Id = MongoDB.Bson.ObjectId.TryParse(r.GetString(0), out var oid)
                         ? oid : MongoDB.Bson.ObjectId.GenerateNewId(),
                     OwnerUserId = r.GetInt64(1),
-                    OwnerProfileSlug = r.GetString(2),
-                    OwnerProfileName = r.GetString(3),
-                    ProcessId = r.GetString(4),
-                    Company = r.GetString(5),
-                    Role = r.GetString(6),
-                    InterviewType = r.GetString(7),
-                    Status = r.GetString(8),
-                    Recruiter = r.GetString(9),
-                    ResumeId = r.GetString(10),
-                    JobDescription = r.GetString(11),
-                    ScheduledDate = r.IsDBNull(12) ? null : r.GetDateTime(12),
-                    ScheduledTime = r.GetString(13),
-                    DurationMinutes = r.IsDBNull(14) ? null : r.GetInt32(14),
-                    CreatedAt = r.GetDateTime(15),
-                    UpdatedAt = r.GetDateTime(16),
+                    ProcessId = r.GetString(2),
+                    Company = r.GetString(3),
+                    Role = r.GetString(4),
+                    InterviewType = r.GetString(5),
+                    Status = r.GetString(6),
+                    Recruiter = r.GetString(7),
+                    ResumeId = r.GetString(8),
+                    JobDescription = r.GetString(9),
+                    ScheduledDate = r.IsDBNull(10) ? null : r.GetDateTime(10),
+                    ScheduledTime = r.GetString(11),
+                    DurationMinutes = r.IsDBNull(12) ? null : r.GetInt32(12),
+                    CreatedAt = r.GetDateTime(13),
+                    UpdatedAt = r.GetDateTime(14),
+                    BidId = r.IsDBNull(15) || !MongoDB.Bson.ObjectId.TryParse(r.GetString(15), out var bid)
+                        ? MongoDB.Bson.ObjectId.Empty : bid,
                 });
             }
         }

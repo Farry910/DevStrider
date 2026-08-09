@@ -20,15 +20,14 @@ public class PeerBid
 
     /// <summary>The originator's team-repo nickname (<see cref="UserProfile.Username"/>).</summary>
     /// <summary>
-    /// Foreign key to <c>peer_users.id</c>. The username is deliberately not duplicated here —
-    /// resolve it through the mirrored <see cref="PeerUser"/> so a rename can't leave stale
-    /// copies scattered across every row.
+    /// Foreign key to <c>peer_users.id</c>, which is a (person, profile) pair — so this one
+    /// column names both. Neither the username nor the profile name is copied here: resolve them
+    /// through the mirrored <see cref="PeerUser"/>, so renaming either can't leave stale copies
+    /// scattered across every row.
     /// </summary>
     public long OwnerUserId { get; set; }
     /// <summary>FS-safe slug of the originator's profile name.</summary>
-    public string OwnerProfileSlug { get; set; } = "";
     /// <summary>The originator's profile display name.</summary>
-    public string OwnerProfileName { get; set; } = "";
 
     public string Company { get; set; } = "";
     public string Role { get; set; } = "";

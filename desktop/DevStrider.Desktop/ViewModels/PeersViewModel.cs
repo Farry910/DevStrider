@@ -101,18 +101,24 @@ public partial class PeersViewModel : ViewModelBase
     /// </summary>
     private async Task RefreshPickersAsync()
     {
-        var users = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
-        // Rows carry only owner_user_id; the username lives on the identity, so a rename can't
-        // leave stale copies behind.
-        _usersById = users.Where(u => u.RemoteId != 0).ToDictionary(u => u.RemoteId);
-        users.Sort((a, b) => string.Compare(a.Username, b.Username, StringComparison.OrdinalIgnoreCase));
+        var identities = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
+        // Rows carry only owner_user_id. Both the username and the profile name live on the
+        // identity, so renaming either can't leave stale copies behind on historical bids.
+        _usersById = identities.Where(u => u.RemoteId != 0).ToDictionary(u => u.RemoteId);
 
         var previousUser = UserFilter;
         Users.Clear();
-        Users.Add("");                                  // "All members"
-        foreach (var u in users) Users.Add(u.Username);
+        Users.Add("");                                   // "All members"
+        // One row per (person, profile), so a person appears once per profile — collapse them.
+        foreach (var name in identities.Select(u => u.Username)
+                                       .Where(n => !string.IsNullOrWhiteSpace(n))
+                                       .Distinct(StringComparer.OrdinalIgnoreCase)
+                                       .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+        {
+            Users.Add(name);
+        }
 
-        // A teammate can disappear (renamed handle); don't leave a stale filter selected.
+        // A teammate can disappear; don't leave a stale filter selected.
         if (!string.IsNullOrEmpty(previousUser) && !Users.Contains(previousUser))
         {
             _userFilter = "";
@@ -124,10 +130,15 @@ public partial class PeersViewModel : ViewModelBase
         ProfileNames.Add("");                            // "All profiles"
         if (!string.IsNullOrEmpty(UserFilter))
         {
-            var picked = users.FirstOrDefault(u =>
-                string.Equals(u.Username, UserFilter, StringComparison.OrdinalIgnoreCase));
-            foreach (var p in picked?.Profiles ?? new List<PeerUserProfile>())
-                if (!string.IsNullOrWhiteSpace(p.Name)) ProfileNames.Add(p.Name);
+            foreach (var name in identities
+                        .Where(u => string.Equals(u.Username, UserFilter, StringComparison.OrdinalIgnoreCase))
+                        .Select(u => u.ProfileName)
+                        .Where(n => !string.IsNullOrWhiteSpace(n))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+        {
+            ProfileNames.Add(name);
+        }
         }
         if (!string.IsNullOrEmpty(ProfileFilter) && !ProfileNames.Contains(ProfileFilter))
         {
@@ -173,6 +184,8 @@ public partial class PeersViewModel : ViewModelBase
             // different teammates is two different things.
             string UsernameOf(long id) =>
                 _usersById.TryGetValue(id, out var u) ? u.Username : "(unknown)";
+            string ProfileOf(long id) =>
+                _usersById.TryGetValue(id, out var u) ? u.ProfileName : "";
 
             bool MatchesOwner(string user, string profileName) =>
                 (string.IsNullOrEmpty(UserFilter) ||
@@ -185,11 +198,12 @@ public partial class PeersViewModel : ViewModelBase
             foreach (var b in bids)
             {
                 var bidOwner = UsernameOf(b.OwnerUserId);
-                if (!MatchesOwner(bidOwner, b.OwnerProfileName)) continue;
+                var bidProfile = ProfileOf(b.OwnerUserId);
+                if (!MatchesOwner(bidOwner, bidProfile)) continue;
                 Bids.Add(new PeerBidRow
                 {
                     Username = bidOwner,
-                    Profile = b.OwnerProfileName,
+                    Profile = bidProfile,
                     Company = b.Company,
                     Role = b.Role,
                     Status = b.Status,
@@ -205,11 +219,12 @@ public partial class PeersViewModel : ViewModelBase
             foreach (var i in ivs)
             {
                 var ivOwner = UsernameOf(i.OwnerUserId);
-                if (!MatchesOwner(ivOwner, i.OwnerProfileName)) continue;
+                var ivProfile = ProfileOf(i.OwnerUserId);
+                if (!MatchesOwner(ivOwner, ivProfile)) continue;
                 Interviews.Add(new PeerInterviewRow
                 {
                     Username = ivOwner,
-                    Profile = i.OwnerProfileName,
+                    Profile = ivProfile,
                     ScheduledDate = i.ScheduledDate,
                     ScheduledTime = i.ScheduledTime,
                     InterviewType = i.InterviewType,
