@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bid Assistant",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "One button on any job page: reads the job description, generates a tailored resume via a background ChatGPT tab, builds it in Word silently, and records the bid in DevStrider.",
   "icons": { "16": "icon.png", "48": "icon.png", "128": "icon.png" },
   "permissions": ["storage", "tabs"],

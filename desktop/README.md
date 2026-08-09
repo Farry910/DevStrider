@@ -5,7 +5,7 @@ auto-generating tailored **resumes** through ChatGPT, and sharing daily status w
 shared PostgreSQL database.
 
 - **Desktop app version:** 7.1.0
-- **Chrome extension version:** 3.2.0 (the "Bid Assistant")
+- **Chrome extension version:** 3.3.0 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 ---

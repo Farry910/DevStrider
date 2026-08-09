@@ -260,14 +260,56 @@
   const DEFAULT_LABEL = 'Bid this job — generate resume + record (Ctrl+click to use selected text)';
   var _busy = false;
 
-  function updateStatus(status, iconKey, color) {
+  /**
+   * Text selected on the page, captured on mousedown.
+   *
+   * Clicking a <button> collapses the document selection as part of mousedown's default
+   * action, so by the time the click handler runs window.getSelection() is already empty —
+   * which made Ctrl+click silently do nothing. Listeners run before the default action, so
+   * reading it here still sees what the user highlighted.
+   */
+  var _selectionAtMouseDown = '';
+
+  var TOAST_ID = 'devstrider-toast';
+  var _toastTimer = null;
+
+  /**
+   * Show the message on screen, not just in the button's tooltip. Every rejection used to be
+   * tooltip-only, so "nothing happened" and "your selection was too short" looked identical.
+   */
+  function showToast(message, color) {
+    if (!message) return;
+    var el = document.getElementById(TOAST_ID);
+    if (!el) {
+      el = document.createElement('div');
+      el.id = TOAST_ID;
+      (document.documentElement || document.body).appendChild(el);
+    }
+    el.style.cssText = 'all:initial;position:fixed!important;right:52px!important;top:2.5%!important;' +
+      'z-index:2147483647!important;max-width:320px!important;padding:8px 12px!important;' +
+      'border-radius:8px!important;background:#18181b!important;' +
+      'border:1px solid rgba(255,255,255,0.10)!important;' +
+      'box-shadow:0 4px 20px rgba(0,0,0,0.35)!important;' +
+      'font-family:-apple-system,Segoe UI,Roboto,sans-serif!important;font-size:12px!important;' +
+      'line-height:1.4!important;white-space:normal!important;pointer-events:none!important;' +
+      'color:' + (color || 'rgba(255,255,255,0.92)') + '!important;';
+    el.textContent = message;
+    if (_toastTimer) clearTimeout(_toastTimer);
+    // Long enough to read a failure; generation messages are replaced by the outcome anyway.
+    _toastTimer = setTimeout(function () { if (el && el.parentNode) el.parentNode.removeChild(el); }, 7000);
+  }
+
+  function updateStatus(status, iconKey, color, toast) {
     var btn = document.getElementById(BTN_ID);
-    if (!btn) return;
-    btn.title = status || DEFAULT_LABEL;
-    var icon = btn.querySelector('span');
-    if (!icon || !iconKey) return;
-    icon.innerHTML = SVG_ICONS[iconKey] || SVG_ICONS.clipboard;
-    icon.style.color = color || 'rgba(255,255,255,0.9)';
+    if (btn) {
+      btn.title = status || DEFAULT_LABEL;
+      var icon = btn.querySelector('span');
+      if (icon && iconKey) {
+        icon.innerHTML = SVG_ICONS[iconKey] || SVG_ICONS.clipboard;
+        icon.style.color = color || 'rgba(255,255,255,0.9)';
+      }
+    }
+    if (toast !== false) showToast(status, color);
   }
 
   var SVG_ICONS = {
@@ -316,6 +358,13 @@
     btn.innerHTML = '<span style="color:rgba(255,255,255,0.9);display:flex;pointer-events:none;">' + SVG_ICONS.clipboard + '</span>';
     btn.addEventListener('mouseenter', function () { if (!btn.disabled) btn.style.background = 'rgba(255,255,255,0.08)'; });
     btn.addEventListener('mouseleave', function () { btn.style.background = 'transparent'; });
+    // Runs before the browser collapses the selection, so Ctrl+click can still see it.
+    // preventDefault stops the button taking focus, which is what clears it.
+    btn.addEventListener('mousedown', function (e) {
+      try { _selectionAtMouseDown = (window.getSelection() || '').toString().trim(); }
+      catch (err) { _selectionAtMouseDown = ''; }
+      e.preventDefault();
+    });
     btn.addEventListener('click', onBidClick);
 
     group.appendChild(dragHandle); group.appendChild(btn);
@@ -360,11 +409,27 @@
 
     var jd = '';
     if (e && e.ctrlKey) {
-      jd = (window.getSelection() || '').toString().trim();
-      if (!jd || jd.length < MIN_JD_LENGTH) { updateStatus('Select the JD text first, then Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
+      // Captured on mousedown -- see _selectionAtMouseDown. Falling back to a live read keeps
+      // keyboard-activated clicks working, where no mousedown ever fired.
+      jd = _selectionAtMouseDown || (window.getSelection() || '').toString().trim();
+      if (!jd) {
+        updateStatus('Nothing selected. Highlight the job description first, then Ctrl+click.',
+                     'xmark', 'rgba(255,120,120,0.95)');
+        return;
+      }
+      if (jd.length < MIN_JD_LENGTH) {
+        updateStatus('Selection is only ' + jd.length + ' characters; needs at least ' +
+                     MIN_JD_LENGTH + '. Select the whole job description.',
+                     'xmark', 'rgba(255,193,7,0.95)');
+        return;
+      }
     } else {
       jd = extractJobDescription();
-      if (!jd || jd.trim().length < MIN_JD_LENGTH) { updateStatus('JD too short — select text & Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
+      if (!jd || jd.trim().length < MIN_JD_LENGTH) {
+        updateStatus('Could not find the job description on this page. Select it by hand, then Ctrl+click.',
+                     'xmark', 'rgba(255,193,7,0.95)');
+        return;
+      }
     }
 
     _busy = true;
@@ -374,7 +439,22 @@
     var pending = { url: window.location.href, jobDescription: jd, savedAt: Date.now() };
     chrome.storage.local.set({ devstriderPending: pending });
 
+    // If the service worker is torn down mid-request the callback never fires, and without this
+    // the button would stay disabled until the page reloads.
+    var settled = false;
+    var watchdog = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      _busy = false;
+      setButtonStates();
+      updateStatus('No response after 5 minutes. Check DevStrider is running and the ChatGPT tab is open.',
+                   'xmark', 'rgba(255,120,120,0.95)');
+    }, 300000);
+
     chrome.runtime.sendMessage({ type: 'BID_JOB', jd: jd, url: pending.url }, function (response) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
       _busy = false;
       setButtonStates();
 
