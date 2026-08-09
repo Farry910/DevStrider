@@ -189,7 +189,24 @@ try {
 
     Write-Host "Running macro for [$ProfileName]: $MacroName"
     # The resume text is the macro's single argument — no clipboard, no bridge file.
-    $word.Run($MacroName, $resumeText)
+    #
+    # [ref] is required, not stylistic: Word.Application.Run declares all thirty of its Arg
+    # parameters ByRef, and PowerShell refuses to marshal a plain value into one —
+    # "Argument: '2' should be a System.Management.Automation.PSReference. Use [ref]."
+    try {
+        $word.Run($MacroName, [ref]$resumeText)
+    } catch {
+        # Only retry the binder failure, which happens before the macro is entered. Retrying
+        # anything else would run the macro a second time after it had already done its work.
+        if ($_.Exception.Message -notlike '*PSReference*' -and
+            $_.Exception.Message -notlike '*ByRef*') { throw }
+        $null = $word.GetType().InvokeMember(
+            'Run',
+            [System.Reflection.BindingFlags]::InvokeMethod,
+            $null,
+            $word,
+            @($MacroName, $resumeText))
+    }
 
     # The macro ends with Application.Quit, so Word going away is the success signal.
     $startTime = Get-Date

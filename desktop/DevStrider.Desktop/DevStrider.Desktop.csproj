@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -8,7 +8,7 @@
       We compose WPF + WinForms in the same process so we can use
       System.Windows.Forms.NotifyIcon for the system-tray icon. WPF doesn't have
       a built-in tray API; rather than pull a NuGet (Hardcodet.NotifyIcon.Wpf)
-      we use the in-box WinForms one. The two stacks coexist fine — we don't
+      we use the in-box WinForms one. The two stacks coexist fine â€” we don't
       run a WinForms message loop, the existing WPF dispatcher handles events.
     -->
     <UseWindowsForms>true</UseWindowsForms>
@@ -26,7 +26,7 @@
     <AssemblyName>DevStrider</AssemblyName>
     <!-- Bump this string on every release. The MainWindow title bar reads it at runtime
          so you can eyeball whether the build picked up the latest source. -->
-    <Version>7.1.0</Version>
+    <Version>7.1.1</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -38,7 +38,7 @@
 
   <!--
     UseWindowsForms=true auto-adds System.Windows.Forms to the implicit usings, which
-    collides with System.Windows.* (Application / UserControl / MouseEventArgs / …) in
+    collides with System.Windows.* (Application / UserControl / MouseEventArgs / â€¦) in
     every WPF code-behind. Opt this single namespace out; TrayService.cs imports
     it explicitly with the aliases it needs.
   -->
@@ -47,14 +47,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver — local database, and the legacy web-app import -->
+    <!-- MongoDB driver â€” local database, and the legacy web-app import -->
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
 
-    <!-- PostgreSQL — the shared/peer database -->
+    <!-- PostgreSQL â€” the shared/peer database -->
     <PackageReference Include="Npgsql" Version="8.0.5" />
 
-    <!-- DI container only — Hosting/Config/Logging aren't used in the WPF process. -->
+    <!-- DI container only â€” Hosting/Config/Logging aren't used in the WPF process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
 
     <!-- Charts -->
