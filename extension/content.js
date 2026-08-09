@@ -155,15 +155,8 @@
 
 
   // ===========================================================================
-  // GENERATION-COMPLETE DETECTION  (runs in the ChatGPT tab, usually backgrounded)
+  // GENERATION STATE  (this script runs in the ChatGPT tab, which is nearly always hidden)
   // ===========================================================================
-
-  /** How often to re-check the page while ChatGPT is streaming. */
-  var GEN_POLL_MS = 1500;
-  /** Give up after this long — a wedged generation must not hang the job tab forever. */
-  var GEN_TIMEOUT_MS = 240000;
-  /** Consecutive identical polls before we call the reply finished. */
-  var GEN_STABLE_POLLS = 2;
 
   /**
    * True while ChatGPT is still producing a reply. Checked against several signals because any
@@ -179,77 +172,33 @@
     return !idle;
   }
 
-  /**
-   * Resolve once the newest assistant message has stopped growing.
-   *
-   * Polling rather than a bare MutationObserver is deliberate: this runs in a **background** tab,
-   * and comparing the message text across ticks is what actually proves the reply is complete —
-   * the stop button can vanish a beat before the last tokens land. A MutationObserver runs
-   * alongside purely to shorten the wait, since observers aren't throttled in hidden tabs while
-   * timers are.
-   */
-  function waitForGenerationComplete() {
-    return new Promise(function (resolve, reject) {
-      var lastText = null;
-      var stableCount = 0;
-      var startedAt = Date.now();
-      var settled = false;
-      var timer = null;
-      var obs = null;
-
-      function finish(err, value) {
-        if (settled) return;
-        settled = true;
-        if (timer) clearInterval(timer);
-        if (obs) obs.disconnect();
-        if (err) reject(err); else resolve(value);
-      }
-
-      function tick() {
-        if (settled) return;
-        if (Date.now() - startedAt > GEN_TIMEOUT_MS) {
-          finish(new Error('ChatGPT generation timed out'));
-          return;
-        }
-
-        var text = extractLastAssistantMessage();
-        if (!text || text.length < 20) { lastText = text; stableCount = 0; return; }
-        if (isStreaming()) { lastText = text; stableCount = 0; return; }
-
-        // Idle *and* the text hasn't changed since the previous tick → finished.
-        if (text === lastText) {
-          stableCount++;
-          if (stableCount >= GEN_STABLE_POLLS) finish(null, text);
-        } else {
-          lastText = text;
-          stableCount = 0;
-        }
-      }
-
-      timer = setInterval(tick, GEN_POLL_MS);
-      try {
-        obs = new MutationObserver(tick);
-        obs.observe(document.querySelector('main') || document.body, { childList: true, subtree: true, characterData: true });
-      } catch (e) { /* observer is an optimisation; polling alone still works */ }
-    });
-  }
-
   // ===========================================================================
-  // MESSAGE HANDLER (the job tab drives this tab remotely)
+  // MESSAGE HANDLER (the service worker drives this tab remotely)
   // ===========================================================================
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
-    // The only message this script answers. Inject, wait out the generation, hand the reply
-    // back. The caller stays on the job page the whole time — nothing here touches focus.
-    if (msg && msg.type === 'INJECT_AND_HARVEST') {
-      (async function () {
-        try {
-          await injectText(String(msg.text || ''));
-          var reply = await waitForGenerationComplete();
-          sendResponse({ ok: true, reply: reply });
-        } catch (e) {
-          sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
-        }
-      })();
+    // Put the prompt in and submit it. Returns as soon as it is sent — waiting out the answer
+    // is the service worker's job. The caller stays on the job page; nothing here takes focus.
+    if (msg && msg.type === 'INJECT_PROMPT') {
+      injectText(String(msg.text || ''))
+        .then(function () { sendResponse({ ok: true }); })
+        .catch(function (e) { sendResponse({ ok: false, error: (e && e.message) || String(e) }); });
+      return true;
+    }
+
+    // A synchronous DOM read, answered the instant the message arrives.
+    //
+    // This replaced a setInterval that used to live here. Chrome throttles timers in hidden tabs
+    // to once a second, and to once a *minute* once the tab has been hidden for five minutes —
+    // which a ChatGPT tab left open in the background always has been. That is why generation
+    // looked instant when you switched to the tab and took minutes when you didn't. Message
+    // delivery is not throttled, so the poll now runs in the service worker and this side only
+    // answers questions.
+    if (msg && msg.type === 'GET_GENERATION_STATE') {
+      var text = '';
+      var streaming = false;
+      try { text = extractLastAssistantMessage() || ''; } catch (e) { text = ''; }
+      try { streaming = isStreaming(); } catch (e) { streaming = false; }
+      sendResponse({ ok: true, text: text, streaming: streaming });
       return true;
     }
   });

@@ -28,6 +28,14 @@ public static class FastFeed
             .ToArray();
         if (parts.Length < 3) return null;
 
+        // The first segment is the resume id, which the prompt defines as "a 5-character
+        // alphanumeric id". Insisting on that shape is what keeps ordinary prose out: the
+        // sentence "Collaborated with senior engineers, QA, and product stakeholders on
+        // implementation, documentation, code reviews, and production support activities."
+        // has plenty of comma-segments, and a truncated reply once recorded it as a bid at
+        // company "QA". Deliberately stricter than the JS port.
+        if (!LooksLikeResumeId(parts[0])) return null;
+
         return new Parsed(
             ResumeId: parts[0],
             Company: parts[1],
@@ -86,6 +94,19 @@ public static class FastFeed
         }
         return new SplitResult(full.TrimEnd(), "", null);
     }
+
+    /// <summary>Longest plausible resume id. The contract says five characters; this is slack.</summary>
+    private const int MaxResumeIdLength = 24;
+
+    /// <summary>
+    /// A resume id is a bare token — no whitespace, and short. Prose fails both tests, which is
+    /// the point: it is the only thing separating a real fast-feed line from a sentence that
+    /// happens to contain commas.
+    /// </summary>
+    private static bool LooksLikeResumeId(string segment) =>
+        segment.Length > 0 &&
+        segment.Length <= MaxResumeIdLength &&
+        !segment.Any(char.IsWhiteSpace);
 
     /// <summary>
     /// A section header with its value on the same line: <c>[Label]: value</c>. Deliberately
