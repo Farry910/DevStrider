@@ -9,17 +9,23 @@
       <!-- Sync card -->
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Sync with shared cluster" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Sync with the shared database" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Sync uploads your bids + interviews updated since the last run, and downloads everyone else's. Only company / role / status / stacks / dates are shared — URLs, JDs, GPT content, and comments stay private to you."/>
+                     Text="Two ways to sync, both doing the same push + pull: automatically on a schedule, and on demand with the button below. Either one uploads your bids and interviews changed since the last run and downloads everyone else's.&#x0A;&#x0A;Shared: company, role, status, stacks, dates and the job description. Not shared: job URLs, generated resume text, meeting links and your comments."/>
 
           <Grid Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="140"/>
               <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="Last sync" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
-            <TextBlock Grid.Column="1" Text="{Binding LastSyncDisplay}" FontFamily="Consolas" VerticalAlignment="Center"/>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Last sync" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,0,4"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LastSyncDisplay}" FontFamily="Consolas" VerticalAlignment="Center" Margin="0,0,0,4"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Automatic" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding AutoSyncDisplay}" VerticalAlignment="Center" TextWrapping="Wrap"/>
           </Grid>
 
           <StackPanel Orientation="Horizontal">
@@ -41,93 +47,36 @@
         </StackPanel>
       </Border>
 
-      <!-- Legacy import card -->
+      <!-- Shared-database status. Read-only: the app issues no DDL, so nothing here can
+           create, alter or drop anything. The schema is applied by hand from
+           desktop/shared-db-schema.sql. -->
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Import from legacy database (one-time)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Shared database status" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Pull your web-app data into local Mongo. Each web-app group becomes its own local profile and the matching bids / interviews / links attach to it. Safe to re-run — upserts are keyed on the legacy _id, so the same row never imports twice."/>
+                     Text="DevStrider's three tables and how many rows each holds. A count of -1 means the table is missing — apply desktop/shared-db-schema.sql to the database. DevStrider never creates or alters tables itself, so it is safe to point at a database shared with other applications."/>
 
-          <Grid Margin="0,0,0,12">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="140"/>
-              <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="Last imported" Foreground="{StaticResource Muted}" VerticalAlignment="Center"/>
-            <TextBlock Grid.Column="1" Text="{Binding LegacyMigratedDisplay}" FontFamily="Consolas" VerticalAlignment="Center"/>
-          </Grid>
-
-          <TextBlock Text="Email used in the web app"/>
-          <TextBox Text="{Binding LegacyEmail, UpdateSourceTrigger=PropertyChanged}"
-                   Tag="you@example.com"
-                   FontFamily="Consolas"
-                   Margin="0,2,0,8"/>
-
-          <Button Command="{Binding MigrateLegacyCommand}"
-                  IsEnabled="{Binding IsConfigured}"
-                  HorizontalAlignment="Left">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock Text="&#xE896;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-              <TextBlock Text="Import legacy data" VerticalAlignment="Center"/>
-            </StackPanel>
-          </Button>
-        </StackPanel>
-      </Border>
-
-      <!-- Reset card -->
-      <Border Style="{StaticResource Card}">
-        <StackPanel>
-          <TextBlock Text="Reset shared database" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Tick anything left over from the old web app and drop it. peerBids and peerInterviews are protected — DevStrider needs them."/>
-
-          <DataGrid ItemsSource="{Binding RemoteCollections}"
+          <DataGrid ItemsSource="{Binding RemoteTables}"
                     AutoGenerateColumns="False"
                     CanUserAddRows="False"
                     CanUserDeleteRows="False"
+                    IsReadOnly="True"
                     HeadersVisibility="Column"
                     Margin="0,0,0,8"
-                    MaxHeight="280">
+                    MaxHeight="200">
             <DataGrid.Columns>
-              <DataGridTemplateColumn Header="" Width="40" CanUserSort="False">
-                <DataGridTemplateColumn.CellTemplate>
-                  <DataTemplate>
-                    <CheckBox IsChecked="{Binding SelectedForDrop, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              HorizontalAlignment="Center"
-                              VerticalAlignment="Center">
-                      <CheckBox.Style>
-                        <Style TargetType="CheckBox">
-                          <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsKept}" Value="True">
-                              <Setter Property="IsEnabled" Value="False"/>
-                            </DataTrigger>
-                          </Style.Triggers>
-                        </Style>
-                      </CheckBox.Style>
-                    </CheckBox>
-                  </DataTemplate>
-                </DataGridTemplateColumn.CellTemplate>
-              </DataGridTemplateColumn>
-              <DataGridTextColumn Header="Collection" Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
-              <DataGridTextColumn Header="Docs"       Binding="{Binding DocumentCount}" Width="100" IsReadOnly="True"/>
-              <DataGridTextColumn Header="Protected"  Binding="{Binding IsKept}" Width="100" IsReadOnly="True"/>
+              <DataGridTextColumn Header="Table" Binding="{Binding Name}" Width="*"/>
+              <DataGridTextColumn Header="Rows"  Binding="{Binding RowCount}" Width="120"/>
             </DataGrid.Columns>
           </DataGrid>
 
-          <StackPanel Orientation="Horizontal">
-            <Button Command="{Binding LoadRemoteCollectionsCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Refresh list" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-            <Button Command="{Binding DropSelectedCollectionsCommand}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Danger}"/>
-                <TextBlock Text="Drop selected" VerticalAlignment="Center" Foreground="{StaticResource Danger}"/>
-              </StackPanel>
-            </Button>
-          </StackPanel>
+          <Button Command="{Binding LoadRemoteTablesCommand}" Style="{StaticResource GhostButton}"
+                  HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock Text="Refresh" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Button>
         </StackPanel>
       </Border>
     </StackPanel>

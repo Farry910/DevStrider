@@ -1,13 +1,14 @@
 (function () {
   'use strict';
 
-  const APP_URL = 'http://127.0.0.1:8765';
+  // No APP_URL here on purpose: every call to the desktop app goes through the service worker,
+  // so the content script never talks to localhost directly.
   const GROUP_ID = 'resume-gen-btn-group';
-  const BLUE_BTN_ID = 'resume-gen-blue';
-  const PURPLE_BTN_ID = 'resume-gen-purple';
+  const BTN_ID = 'devstrider-bid-btn';
   const MIN_JD_LENGTH = 200;
   const DEFAULT_TOP_PCT = 2.5;
-  const GROUP_HEIGHT = 90;
+  /** Drag handle (10px) + the single button (40px). Used to clamp dragging to the viewport. */
+  const GROUP_HEIGHT = 50;
   const STORAGE_KEY_TOP = 'resumeGenGroupTop';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -116,31 +117,15 @@
   }
 
   // ===========================================================================
-  // FAST-FEED + ASSISTANT HARVEST (for the manual purple button)
+  // ASSISTANT MESSAGE HARVEST
   // ===========================================================================
   function extractLastAssistantMessage() {
     var nodes = document.querySelectorAll('[data-message-author-role="assistant"]');
     if (!nodes || nodes.length === 0) return '';
     return getText(nodes[nodes.length - 1]);
   }
-  function parseFastFeedLine(line) {
-    var t = String(line || '').trim();
-    if (!t) return null;
-    var core = t;
-    if (core.charAt(0) === '[' && core.charAt(core.length - 1) === ']') core = core.slice(1, -1).trim();
-    var parts = core.split(',').map(function (p) { return p.trim(); }).filter(function (p) { return p.length > 0; });
-    if (parts.length < 3) return null;
-    return { resumeId: parts[0], company: parts[1], role: parts[2], primaryStacks: parts.slice(3) };
-  }
-  function splitTrailingFastFeed(text) {
-    var lines = String(text || '').split(/\r?\n/);
-    for (var i = lines.length - 1; i >= 0; i--) {
-      var line = lines[i].trim();
-      if (!line) continue;
-      if (parseFastFeedLine(line)) return { resumePart: lines.slice(0, i).join('\n').replace(/\s+$/, ''), fastFeedLine: line };
-    }
-    return { resumePart: String(text || '').trim(), fastFeedLine: '' };
-  }
+  // Fast-feed parsing lives in the desktop app now (FastFeed.SplitTrailing) — the extension
+  // ships the reply verbatim rather than keeping a second implementation in sync.
 
   // ===========================================================================
   // CHATGPT DOM INJECTION  (ResumeAuto — no clipboard, background-safe)
@@ -253,14 +238,8 @@
   // MESSAGE HANDLER (the job tab drives this tab remotely)
   // ===========================================================================
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
-    if (msg && msg.type === 'INJECT_TEXT') {
-      injectText(String(msg.text || '')).then(function () { sendResponse({ ok: true }); })
-        .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
-      return true;
-    }
-
-    // One-button flow: inject, wait out the generation, hand the reply back. The caller stays
-    // on the job page the whole time — nothing here touches focus.
+    // The only message this script answers. Inject, wait out the generation, hand the reply
+    // back. The caller stays on the job page the whole time — nothing here touches focus.
     if (msg && msg.type === 'INJECT_AND_HARVEST') {
       (async function () {
         try {
@@ -276,15 +255,15 @@
   });
 
   // ===========================================================================
-  // FLOATING BUTTONS (manual single-bid path — preserved)
+  // THE BUTTON  (one, on job pages)
   // ===========================================================================
-  const DEFAULT_BLUE_LABEL = 'Bid this job — generate resume + record (Ctrl+click to use selected text)';
+  const DEFAULT_LABEL = 'Bid this job — generate resume + record (Ctrl+click to use selected text)';
   var _busy = false;
 
-  function updateBlueStatus(status, iconKey, color) {
-    var btn = document.getElementById(BLUE_BTN_ID);
+  function updateStatus(status, iconKey, color) {
+    var btn = document.getElementById(BTN_ID);
     if (!btn) return;
-    btn.title = status || DEFAULT_BLUE_LABEL;
+    btn.title = status || DEFAULT_LABEL;
     var icon = btn.querySelector('span');
     if (!icon || !iconKey) return;
     icon.innerHTML = SVG_ICONS[iconKey] || SVG_ICONS.clipboard;
@@ -293,36 +272,25 @@
 
   var SVG_ICONS = {
     clipboard: '<svg viewBox="0 0 384 512" fill="currentColor" width="16" height="16"><path d="M336 64h-80c0-35.3-28.7-64-64-64s-64 28.7-64 64H48C21.5 64 0 85.5 0 112v352c0 26.5 21.5 48 48 48h288c26.5 0 48-21.5 48-48V112c0-26.5-21.5-48-48-48zM96 424c-13.3 0-24-10.7-24-24s10.7-24 24-24 24 10.7 24 24-10.7 24-24 24zm0-96c-13.3 0-24-10.7-24-24s10.7-24 24-24 24 10.7 24 24-10.7 24-24 24zm0-96c-13.3 0-24-10.7-24-24s10.7-24 24-24 24 10.7 24 24-10.7 24-24 24zm96-192c13.3 0 24 10.7 24 24s-10.7 24-24 24-24-10.7-24-24 10.7-24 24-24z"/></svg>',
-    fileWord: '<svg viewBox="0 0 384 512" fill="currentColor" width="16" height="16"><path d="M224 136V0H24C10.7 0 0 10.7 0 24v464c0 13.3 10.7 24 24 24h336c13.3 0 24-10.7 24-24V160H248c-13.2 0-24-10.8-24-24z"/></svg>',
     spinner: '<svg viewBox="0 0 512 512" fill="currentColor" width="16" height="16" style="animation:bid-spin .8s linear infinite"><path d="M304 48a48 48 0 1 1-96 0 48 48 0 0 1 96 0zm-48 368a48 48 0 1 0 0 96 48 48 0 0 0 0-96zm208-208a48 48 0 1 0 0 96 48 48 0 0 0 0-96zM96 256a48 48 0 1 0-96 0 48 48 0 0 0 96 0z"/></svg>',
     check: '<svg viewBox="0 0 512 512" fill="currentColor" width="16" height="16"><path d="M504 256c0 137-111 248-248 248S8 393 8 256 119 8 256 8s248 111 248 248zM227 387l184-184c6-6 6-16 0-23l-22-22c-7-7-17-7-23 0L216 308l-70-70c-7-6-17-6-23 0l-22 22c-7 7-7 17 0 23l104 104c6 6 16 6 22 0z"/></svg>',
     xmark: '<svg viewBox="0 0 512 512" fill="currentColor" width="16" height="16"><path d="M256 8C119 8 8 119 8 256s111 248 248 248 248-111 248-248S393 8 256 8zm121 313c5 5 5 12 0 17l-39 39c-5 5-12 5-17 0l-65-66-65 66c-5 5-12 5-17 0l-39-39c-5-5-5-12 0-17l66-65-66-65c-5-5-5-12 0-17l39-39c5-5 12-5 17 0l65 66 65-66c5-5 12-5 17 0l39 39c5 5 5 12 0 17l-66 65 66 65z"/></svg>'
   };
 
-  function updatePurpleStatus(status, iconKey, color) {
-    var btn = document.getElementById(PURPLE_BTN_ID);
-    if (!btn) return;
-    var icon = btn.querySelector('span');
-    if (!icon) return;
-    icon.innerHTML = SVG_ICONS[iconKey] || SVG_ICONS.fileWord;
-    icon.style.color = color || 'rgba(255,255,255,0.9)';
-    btn.title = status || 'Update Word & record bid in DevStrider';
-  }
-
   /**
-   * Blue is the one-button flow and lives on job pages. Purple stays as a manual fallback on the
-   * ChatGPT tab for when you want to eyeball the reply before committing it — same destination,
-   * just driven by hand.
+   * The button is a job-page tool, so the whole group is hidden on ChatGPT rather than shown
+   * greyed out — that tab is where generation happens in the background, not somewhere you act.
+   * While a bid is in flight the button is disabled so a double-click can't start a second run.
    */
   function setButtonStates() {
-    var onChatGPT = isChatGPTUrl();
-    var blueBtn = document.getElementById(BLUE_BTN_ID);
-    var purpleBtn = document.getElementById(PURPLE_BTN_ID);
-    if (blueBtn) {
-      var blueOff = onChatGPT || _busy;
-      blueBtn.disabled = blueOff; blueBtn.style.opacity = blueOff ? '0.4' : '1'; blueBtn.style.cursor = blueOff ? 'not-allowed' : 'pointer';
-    }
-    if (purpleBtn) { purpleBtn.disabled = !onChatGPT; purpleBtn.style.opacity = onChatGPT ? '1' : '0.4'; purpleBtn.style.cursor = onChatGPT ? 'pointer' : 'not-allowed'; }
+    var group = document.getElementById(GROUP_ID);
+    if (group) group.style.display = isChatGPTUrl() ? 'none' : 'flex';
+
+    var btn = document.getElementById(BTN_ID);
+    if (!btn) return;
+    btn.disabled = _busy;
+    btn.style.opacity = _busy ? '0.4' : '1';
+    btn.style.cursor = _busy ? 'wait' : 'pointer';
   }
 
   function createButtonGroup() {
@@ -342,24 +310,15 @@
     dragHandle.textContent = '⋯';
     dragHandle.title = 'Drag to move';
 
-    var blueBtn = document.createElement('button');
-    blueBtn.id = BLUE_BTN_ID; blueBtn.type = 'button'; blueBtn.title = DEFAULT_BLUE_LABEL;
-    blueBtn.style.cssText = 'all:initial;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border:none;border-bottom:1px solid rgba(255,255,255,0.04);background:transparent;cursor:pointer;';
-    blueBtn.innerHTML = '<span style="color:rgba(255,255,255,0.9);display:flex;pointer-events:none;">' + SVG_ICONS.clipboard + '</span>';
+    var btn = document.createElement('button');
+    btn.id = BTN_ID; btn.type = 'button'; btn.title = DEFAULT_LABEL;
+    btn.style.cssText = 'all:initial;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border:none;background:transparent;cursor:pointer;';
+    btn.innerHTML = '<span style="color:rgba(255,255,255,0.9);display:flex;pointer-events:none;">' + SVG_ICONS.clipboard + '</span>';
+    btn.addEventListener('mouseenter', function () { if (!btn.disabled) btn.style.background = 'rgba(255,255,255,0.08)'; });
+    btn.addEventListener('mouseleave', function () { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', onBidClick);
 
-    var purpleBtn = document.createElement('button');
-    purpleBtn.id = PURPLE_BTN_ID; purpleBtn.type = 'button'; purpleBtn.title = 'Update Word & record bid in DevStrider';
-    purpleBtn.style.cssText = 'all:initial;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border:none;background:transparent;cursor:pointer;';
-    purpleBtn.innerHTML = '<span style="color:rgba(255,255,255,0.9);display:flex;pointer-events:none;">' + SVG_ICONS.fileWord + '</span>';
-
-    [blueBtn, purpleBtn].forEach(function (b) {
-      b.addEventListener('mouseenter', function () { if (!b.disabled) b.style.background = 'rgba(255,255,255,0.08)'; });
-      b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
-    });
-    blueBtn.addEventListener('click', onBlueClick);
-    purpleBtn.addEventListener('click', onPurpleClick);
-
-    group.appendChild(dragHandle); group.appendChild(blueBtn); group.appendChild(purpleBtn);
+    group.appendChild(dragHandle); group.appendChild(btn);
 
     var dragStartY = 0, dragStartTopPx = 0;
     dragHandle.addEventListener('mousedown', function (e) {
@@ -395,22 +354,22 @@
    * You never leave this tab — keep filling in the application while it runs. The whole round
    * trip is one message to the worker; the reply carries both outcomes.
    */
-  function onBlueClick(e) {
-    var btn = document.getElementById(BLUE_BTN_ID);
+  function onBidClick(e) {
+    var btn = document.getElementById(BTN_ID);
     if (!btn || btn.disabled || _busy) return;
 
     var jd = '';
     if (e && e.ctrlKey) {
       jd = (window.getSelection() || '').toString().trim();
-      if (!jd || jd.length < MIN_JD_LENGTH) { updateBlueStatus('Select the JD text first, then Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
+      if (!jd || jd.length < MIN_JD_LENGTH) { updateStatus('Select the JD text first, then Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
     } else {
       jd = extractJobDescription();
-      if (!jd || jd.trim().length < MIN_JD_LENGTH) { updateBlueStatus('JD too short — select text & Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
+      if (!jd || jd.trim().length < MIN_JD_LENGTH) { updateStatus('JD too short — select text & Ctrl+click', 'xmark', 'rgba(255,255,255,0.5)'); return; }
     }
 
     _busy = true;
     setButtonStates();
-    updateBlueStatus('Generating resume… keep working, this runs in the background', 'spinner', 'rgba(255,255,255,0.85)');
+    updateStatus('Generating resume… keep working, this runs in the background', 'spinner', 'rgba(255,255,255,0.85)');
 
     var pending = { url: window.location.href, jobDescription: jd, savedAt: Date.now() };
     chrome.storage.local.set({ devstriderPending: pending });
@@ -420,53 +379,20 @@
       setButtonStates();
 
       if (chrome.runtime.lastError) {
-        updateBlueStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
+        updateStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
       } else if (response && response.ok) {
         // Bid recorded. The macro is reported separately — a failed macro costs you the resume
         // file, not the bid, and the two shouldn't look like one failure.
         var label = [response.company, response.role].filter(Boolean).join(' · ') || 'Bid recorded';
         if (response.macro) {
-          updateBlueStatus(('Resume + bid done — ' + label).slice(0, 60), 'check', 'rgba(255,255,255,0.95)');
+          updateStatus(('Resume + bid done — ' + label).slice(0, 60), 'check', 'rgba(255,255,255,0.95)');
         } else {
-          updateBlueStatus(('Bid recorded · macro: ' + (response.macroError || 'failed')).slice(0, 60), 'xmark', 'rgba(255,193,7,0.95)');
+          updateStatus(('Bid recorded · macro: ' + (response.macroError || 'failed')).slice(0, 60), 'xmark', 'rgba(255,193,7,0.95)');
         }
       } else {
-        updateBlueStatus('Failed: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
+        updateStatus('Failed: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
       }
-      setTimeout(function () { updateBlueStatus(DEFAULT_BLUE_LABEL, 'clipboard', 'rgba(255,255,255,0.9)'); }, 6000);
-    });
-  }
-
-  /**
-   * Manual fallback, ChatGPT tab only: commit the reply that's already on screen. Same
-   * destination as the blue button — silent macro + bid record — for when you want to read the
-   * output before committing it, or the automatic wait gave up.
-   */
-  function onPurpleClick() {
-    var btn = document.getElementById(PURPLE_BTN_ID);
-    if (!btn || btn.disabled) return;
-    btn.disabled = true;
-    updatePurpleStatus('Processing…', 'spinner', 'rgba(255,255,255,0.85)');
-
-    var reply = extractLastAssistantMessage();
-    if (!reply) {
-      updatePurpleStatus('No ChatGPT reply found on this page', 'xmark', 'rgba(255,255,255,0.5)');
-      setButtonStates();
-      return;
-    }
-
-    chrome.runtime.sendMessage({ type: 'BID_FROM_REPLY', reply: reply }, function (response) {
-      setButtonStates();
-      if (chrome.runtime.lastError) {
-        updatePurpleStatus('Error: ' + chrome.runtime.lastError.message, 'xmark', 'rgba(255,255,255,0.5)');
-      } else if (response && response.ok) {
-        var label = [response.company, response.role].filter(Boolean).join(' · ') || 'Bid recorded';
-        if (response.macro) updatePurpleStatus(('Resume + bid done — ' + label).slice(0, 60), 'check', 'rgba(255,255,255,0.95)');
-        else updatePurpleStatus(('Bid recorded · macro: ' + (response.macroError || 'failed')).slice(0, 60), 'xmark', 'rgba(255,193,7,0.95)');
-      } else {
-        updatePurpleStatus('Failed: ' + ((response && response.error) || 'app not running'), 'xmark', 'rgba(255,255,255,0.5)');
-      }
-      setTimeout(function () { updatePurpleStatus('Commit this reply — resume + bid', 'fileWord', 'rgba(255,255,255,0.9)'); }, 5000);
+      setTimeout(function () { updateStatus(DEFAULT_LABEL, 'clipboard', 'rgba(255,255,255,0.9)'); }, 6000);
     });
   }
 

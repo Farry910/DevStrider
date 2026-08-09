@@ -13,9 +13,9 @@ public class UserProfile
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
     /// <summary>
-    /// Stable nickname for this machine. Stamped as <c>OwnerUsername</c> on every row pushed
-    /// to the shared peer cluster, and used as the local match against incoming peer rows so
-    /// the sync service can skip your own contributions on pull.
+    /// Stable nickname for this machine. UNIQUE in the shared database's <c>peer_users</c> table
+    /// and the key its upsert matches on, so a reinstall lands on the existing identity. Pushed
+    /// rows reference that identity by its generated id, not by this string.
     /// </summary>
     public string Username { get; set; } = "me";
     public string DisplayName { get; set; } = "";

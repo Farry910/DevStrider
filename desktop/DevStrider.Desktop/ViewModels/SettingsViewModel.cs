@@ -10,7 +10,7 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ProfileService _profiles;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
-    private readonly AtlasContext _atlas;
+    private readonly SharedDbContext _shared;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -19,13 +19,13 @@ public partial class SettingsViewModel : ViewModelBase
         ProfileService profiles,
         LocalApiServer localApi,
         ActivityLogService activity,
-        AtlasContext atlas)
+        SharedDbContext shared)
     {
         _settings = settings;
         _profiles = profiles;
         _localApi = localApi;
         _activity = activity;
-        _atlas = atlas;
+        _shared = shared;
     }
 
     private AppSettings _model = new();
@@ -40,22 +40,22 @@ public partial class SettingsViewModel : ViewModelBase
     public string Email { get => _email; set => SetProperty(ref _email, value); }
 
     /// <summary>
-    /// Buffer for the shared-cluster password, fed by the <c>PasswordBox</c>'s
+    /// Buffer for the shared database password, fed by the <c>PasswordBox</c>'s
     /// <c>PasswordChanged</c> handler and applied to <see cref="Model"/> in
     /// <see cref="SaveAsync"/>. Empty means "leave the saved password alone" — the box always
     /// renders blank on load, so an untouched box must not wipe a working password.
     /// </summary>
-    public string SharedMongoPasswordEntry { get; set; } = "";
+    public string SharedDbPasswordEntry { get; set; } = "";
 
-    private string _sharedPasswordHint = "";
+    private string _sharedDbHint = "";
     /// <summary>Whether a password is currently saved, without rendering it into the UI.</summary>
-    public string SharedPasswordHint
+    public string SharedDbHint
     {
-        get => _sharedPasswordHint;
-        private set => SetProperty(ref _sharedPasswordHint, value);
+        get => _sharedDbHint;
+        private set => SetProperty(ref _sharedDbHint, value);
     }
 
-    /// <summary>Same "blank means keep" contract as <see cref="SharedMongoPasswordEntry"/>.</summary>
+    /// <summary>Same "blank means keep" contract as <see cref="SharedDbPasswordEntry"/>.</summary>
     public string R2SecretEntry { get; set; } = "";
 
     private string _r2SecretHint = "";
@@ -75,20 +75,63 @@ public partial class SettingsViewModel : ViewModelBase
             : $"Endpoint: {Model.R2Endpoint}/{Model.R2Bucket}";
     }
 
-    private void RefreshSharedPasswordHint() =>
-        SharedPasswordHint = !string.IsNullOrEmpty(Model.SharedMongoPassword)
-            ? "A password is saved. Leave blank to keep it; type to replace it."
-            : "No password saved — peer sync is disabled until you set one.";
+    /// <summary>
+    /// Radio-button state for the credential mode. Two bools rather than binding the raw string,
+    /// because WPF radio buttons want booleans and the persisted value stays a readable
+    /// <c>"uri"</c>/<c>"parts"</c> on the settings row.
+    /// </summary>
+    public bool IsUriMode
+    {
+        get => !string.Equals(Model.SharedDbMode, SharedDbCredentials.ModeParts, StringComparison.OrdinalIgnoreCase);
+        set
+        {
+            if (!value) return;                          // only the checked radio drives the change
+            Model.SharedDbMode = SharedDbCredentials.ModeUri;
+            OnPropertyChanged(nameof(IsUriMode));
+            OnPropertyChanged(nameof(IsPartsMode));
+            RefreshSharedDbHint();
+        }
+    }
 
-    /// <summary>Clear the saved shared-cluster password and disable peer sync.</summary>
+    public bool IsPartsMode
+    {
+        get => !IsUriMode;
+        set
+        {
+            if (!value) return;
+            Model.SharedDbMode = SharedDbCredentials.ModeParts;
+            OnPropertyChanged(nameof(IsUriMode));
+            OnPropertyChanged(nameof(IsPartsMode));
+            RefreshSharedDbHint();
+        }
+    }
+
+    private void RefreshSharedDbHint()
+    {
+        if (IsUriMode)
+        {
+            var (ok, error) = SharedDbCredentials.ValidateUri(Model.SharedDbUri);
+            SharedDbHint = string.IsNullOrEmpty(Model.SharedDbUri)
+                ? "Paste the service URI your provider gave you — peer sync is off until you do."
+                : ok ? "URI looks valid. Use Test connection to confirm the server answers."
+                     : $"Can't parse that URI: {error}";
+            return;
+        }
+
+        SharedDbHint = string.IsNullOrEmpty(Model.SharedDbPassword)
+            ? "No password saved — peer sync is disabled until you set one."
+            : "A password is saved. Leave blank to keep it; type to replace it.";
+    }
+
+    /// <summary>Clear the saved shared database password and disable peer sync.</summary>
     [RelayCommand]
     public async Task ClearSharedPasswordAsync()
     {
-        Model.SharedMongoPassword = "";
-        SharedMongoPasswordEntry = "";
+        Model.SharedDbPassword = "";
+        SharedDbPasswordEntry = "";
         await _settings.SaveAsync(Model);
-        RefreshSharedPasswordHint();
-        StatusMessage = "Shared-cluster password cleared — peer sync is now disabled.";
+        RefreshSharedDbHint();
+        StatusMessage = "Shared database password cleared — peer sync is now disabled.";
     }
 
     [RelayCommand]
@@ -103,7 +146,10 @@ public partial class SettingsViewModel : ViewModelBase
             var profile = await _profiles.GetAsync();
             Username = profile.Username;
             Email = profile.PersonalEmail ?? "";
-            RefreshSharedPasswordHint();
+            // Model was replaced wholesale, so the mode radios have to be told to re-read it.
+            OnPropertyChanged(nameof(IsUriMode));
+            OnPropertyChanged(nameof(IsPartsMode));
+            RefreshSharedDbHint();
             RefreshR2Hints();
         }
         finally { IsBusy = false; }
@@ -118,10 +164,10 @@ public partial class SettingsViewModel : ViewModelBase
             // Apply the typed password before the save. Blank means "keep what's there" — the
             // box renders empty on every load, so treating blank as "clear it" would silently
             // disable peer sync for anyone who saved an unrelated setting.
-            if (!string.IsNullOrEmpty(SharedMongoPasswordEntry))
+            if (!string.IsNullOrEmpty(SharedDbPasswordEntry))
             {
-                Model.SharedMongoPassword = SharedMongoPasswordEntry;
-                SharedMongoPasswordEntry = "";
+                Model.SharedDbPassword = SharedDbPasswordEntry;
+                SharedDbPasswordEntry = "";
             }
             if (!string.IsNullOrEmpty(R2SecretEntry))
             {
@@ -133,7 +179,7 @@ public partial class SettingsViewModel : ViewModelBase
             // Saving installed Model as the shared cache; take a fresh copy so continued
             // editing doesn't mutate what every other service is now reading.
             Model = await _settings.GetForEditAsync();
-            RefreshSharedPasswordHint();
+            RefreshSharedDbHint();
             RefreshR2Hints();
 
             var p = await _profiles.GetAsync();
@@ -169,7 +215,7 @@ public partial class SettingsViewModel : ViewModelBase
         _localApi.Start(Model.ListenerPort);
     }
 
-    /// <summary>Save current form, then ping the shared cluster — surfaces TLS / auth / DNS errors fast.</summary>
+    /// <summary>Save the form, then ping the database — surfaces TLS / auth / firewall errors fast.</summary>
     [RelayCommand]
     public async Task TestSharedConnectionAsync()
     {
@@ -177,10 +223,10 @@ public partial class SettingsViewModel : ViewModelBase
         try
         {
             await _settings.SaveAsync(Model);
-            var (ok, message) = await _atlas.TestConnectionAsync();
-            StatusMessage = ok ? $"Shared cluster reachable: {message}" : $"Shared cluster unreachable: {message}";
-            if (ok) _activity.Success("Atlas", "Connection test passed", message);
-            else _activity.Error("Atlas", "Connection test failed", message);
+            var (ok, message) = await _shared.TestConnectionAsync();
+            StatusMessage = ok ? $"Shared database reachable — {message}" : $"Shared database unreachable — {message}";
+            if (ok) _activity.Success("Peers", "Connection test passed", message);
+            else _activity.Error("Peers", "Connection test failed", message);
         }
         finally { IsBusy = false; }
     }

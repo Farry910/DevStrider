@@ -18,9 +18,43 @@ public partial class BoardRow : ObservableObject
 {
     public GroupLink Link { get; set; } = default!;
     public UserBid? Bid { get; set; }
+    /// <summary>Same job posting — this exact URL was bid before.</summary>
     public bool LinkDuplicate { get; set; }
+
+    /// <summary>Different posting, same company + role — likely the same job re-listed.</summary>
     public bool DuplicateCompanyRole { get; set; }
+
+    /// <summary>You already have an interview at this company.</summary>
     public bool CompanyInterviewWarning { get; set; }
+
+    /// <summary>
+    /// One line per warning, ready to display. Built here rather than in XAML because the two
+    /// duplicate kinds mean different things and must not read alike: one is "you bid this exact
+    /// posting already", the other is "this looks like the same job from a different listing".
+    /// </summary>
+    public string DuplicateLinkNote { get; set; } = "";
+    public string DuplicateRoleNote { get; set; } = "";
+    public string InterviewNote { get; set; } = "";
+
+    /// <summary>True when anything at all should be shown in the warning column.</summary>
+    public bool HasWarning => LinkDuplicate || DuplicateCompanyRole || CompanyInterviewWarning;
+
+    /// <summary>
+    /// Which warning leads when a row trips more than one: an exact repeat is the strongest
+    /// signal, then a prior interview at the company, then a same-role match. A semantic token
+    /// rather than an icon code — the view owns how each one looks.
+    /// </summary>
+    public string WarningKind =>
+        LinkDuplicate ? "link"
+        : CompanyInterviewWarning ? "interview"
+        : DuplicateCompanyRole ? "role"
+        : "";
+
+    /// <summary>All applicable warnings, one per line, for the row tooltip.</summary>
+    public string WarningTooltip =>
+        string.Join(Environment.NewLine,
+            new[] { DuplicateLinkNote, DuplicateRoleNote, InterviewNote }
+                .Where(t => !string.IsNullOrEmpty(t)));
 
     /// <summary>
     /// Transient (view-only) buffer for a manually-typed fast-feed line of the form
@@ -117,14 +151,39 @@ public class BidBoardService
             var c = (bid?.Company ?? "").Trim().ToLowerInvariant();
             var r = (bid?.Role ?? "").Trim().ToLowerInvariant();
 
+            // --- Warning 1: the exact same posting, bid before. ---
             var linkDup = !string.IsNullOrEmpty(l.UrlNorm) && urlCount[l.UrlNorm] > 1;
+            var linkNote = "";
+            if (linkDup)
+            {
+                var others = allLinks.Where(x => x.UrlNorm == l.UrlNorm && x.Id != l.Id)
+                                     .OrderBy(x => x.CreatedAt).ToList();
+                var first = others.FirstOrDefault();
+                linkNote = first != null
+                    ? $"Same posting: you already bid this exact URL on {first.CreatedAt.ToLocalTime():MMM d}."
+                    : "Same posting: this exact URL appears more than once.";
+            }
+
+            // --- Warning 2: a different posting for what looks like the same job. ---
             var crDup = false;
+            var roleNote = "";
             if (!string.IsNullOrEmpty(c) && !string.IsNullOrEmpty(r))
             {
                 var bucket = linksByCr.GetValueOrDefault(Key(c, r));
                 crDup = bucket != null && bucket.Count > 1 && bucket[0].Id != l.Id;
+                if (crDup)
+                {
+                    var firstCr = bucket!.OrderBy(x => x.CreatedAt).First();
+                    roleNote = $"Same role: {bid?.Company} - {bid?.Role} was bid on " +
+                               $"{firstCr.CreatedAt.ToLocalTime():MMM d} from a different listing.";
+                }
             }
+
+            // --- Warning 3: you are already interviewing at this company. ---
             var ivWarn = !string.IsNullOrEmpty(c) && interviewCompanySet.Contains(c);
+            var ivNote = ivWarn
+                ? $"Interview: you already have one scheduled or completed at {bid?.Company}."
+                : "";
 
             rows.Add(new BoardRow
             {
@@ -132,7 +191,10 @@ public class BidBoardService
                 Bid = bid,
                 LinkDuplicate = linkDup,
                 DuplicateCompanyRole = crDup,
-                CompanyInterviewWarning = ivWarn
+                CompanyInterviewWarning = ivWarn,
+                DuplicateLinkNote = linkNote,
+                DuplicateRoleNote = roleNote,
+                InterviewNote = ivNote
             });
         }
 

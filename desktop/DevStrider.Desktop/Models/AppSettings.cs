@@ -17,38 +17,30 @@ public class AppSettings
     public string MongoUri { get; set; } = "mongodb://127.0.0.1:27017";
     public string DatabaseName { get; set; } = "devstrider";
 
-    /// <summary>
-    /// **Legacy.** Full shared-cluster URI as one string. Superseded by the
-    /// <c>SharedMongoUsername</c> / <c>SharedMongoHost</c> / <c>SharedMongoPassword</c> /
-    /// <c>SharedMongoOptions</c> fields below. Kept on the schema only so existing installs
-    /// still deserialize and
-    /// <see cref="Services.SharedMongoCredentials.MigrateLegacyUriAsync"/> can split it apart —
-    /// that migration clears this field, and nothing reads it afterwards.
-    /// </summary>
-    public string SharedMongoUri { get; set; } = "";
+    // ── Shared PostgreSQL (peer database) ───────────────────────────────────
+    // Two ways to say the same thing. Providers hand out a service URI; a self-hosted box is
+    // easier to describe in parts. SharedDbMode decides which set is authoritative — the other
+    // is kept, not cleared, so switching back and forth doesn't lose what you typed.
+
+    /// <summary><c>uri</c> or <c>parts</c>. See <see cref="Services.SharedDbCredentials"/>.</summary>
+    public string SharedDbMode { get; set; } = Services.SharedDbCredentials.ModeUri;
+
+    /// <summary>Service URI, e.g. <c>postgresql://user:pass@host:5432/devstrider?sslmode=require</c>.</summary>
+    public string SharedDbUri { get; set; } = "";
+
+    public string SharedDbHost { get; set; } = "";
+    public int SharedDbPort { get; set; } = 5432;
+    public string SharedDbName { get; set; } = "devstrider";
+    public string SharedDbUser { get; set; } = "";
+
+    /// <summary>Cleartext, like every other credential here — the shared cluster is one login the whole team shares.</summary>
+    public string SharedDbPassword { get; set; } = "";
 
     /// <summary>
-    /// Shared-cluster login. Not a secret on its own (useless without the password), so it
-    /// lives in ordinary settings and stays visible/editable in the UI.
+    /// Require TLS. On for hosted Postgres (Supabase, Neon, Railway, Aiven all mandate it); turn
+    /// off only for a local box that isn't listening on TLS at all.
     /// </summary>
-    public string SharedMongoUsername { get; set; } = Services.SharedMongoCredentials.DefaultUsername;
-
-    /// <summary>Shared-cluster hostname, e.g. <c>cluster0.abcde.mongodb.net</c>. Always <c>mongodb+srv</c>.</summary>
-    public string SharedMongoHost { get; set; } = Services.SharedMongoCredentials.DefaultHost;
-
-    /// <summary>
-    /// Shared-cluster password, stored in cleartext with the rest of the settings. The cluster
-    /// uses one login shared by every install, so whatever can read this local database — a
-    /// backup, a synced folder, another account on this machine — can read and write the whole
-    /// team's peer data.
-    /// </summary>
-    public string SharedMongoPassword { get; set; } = "";
-
-    /// <summary>Query-string options appended to the composed URI, without the leading <c>?</c>.</summary>
-    public string SharedMongoOptions { get; set; } = Services.SharedMongoCredentials.DefaultOptions;
-
-    /// <summary>Database inside the shared cluster that holds <c>peerBids</c> + <c>peerInterviews</c>.</summary>
-    public string SharedDatabaseName { get; set; } = "devstrider-shared";
+    public bool SharedDbRequireSsl { get; set; } = true;
 
     /// <summary>UTC timestamp of the last successful peer sync. Drives delta queries.</summary>
     public DateTime LastSyncAt { get; set; } = DateTime.MinValue;
@@ -56,12 +48,9 @@ public class AppSettings
     /// <summary>
     /// How often the background scheduler pushes/pulls peer data, in minutes. 0 or less disables
     /// automatic sync and leaves only the manual <b>Sync now</b> button. Clamped to a 5-minute
-    /// floor at read time — the free Atlas tier has a connection budget worth respecting.
+    /// floor at read time — hosted Postgres tiers have connection budgets worth respecting.
     /// </summary>
     public int SyncIntervalMinutes { get; set; } = 60;
-
-    /// <summary>UTC timestamp of the last successful legacy-database import (web-app schema → local).</summary>
-    public DateTime LegacyMigratedAt { get; set; } = DateTime.MinValue;
 
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in

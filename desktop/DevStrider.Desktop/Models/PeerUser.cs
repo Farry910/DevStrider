@@ -10,8 +10,10 @@ namespace DevStrider.Desktop.Models;
 /// invisible.
 ///
 /// <para>
-/// Keyed by <see cref="Username"/> rather than an ObjectId, because the same person reinstalling
-/// should land on their existing row instead of creating a second identity.
+/// <see cref="RemoteId"/> is the shared database's own generated key and the target of every
+/// <c>owner_user_id</c> foreign key. <see cref="Username"/> stays UNIQUE there and is what the
+/// upsert matches on, so a reinstall lands on the existing row rather than forking a second
+/// identity — the cost being that renaming a username does fork one.
 /// </para>
 ///
 /// <para>
@@ -26,17 +28,20 @@ public class PeerUser
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    /// <summary>Stable lowercase handle. Matches <c>OwnerUsername</c> on every pushed bid/interview.</summary>
+    /// <summary>The shared database's generated <c>peer_users.id</c>. 0 until first synced.</summary>
+    public long RemoteId { get; set; }
+
+    /// <summary>Stable lowercase handle. UNIQUE in the shared database; the upsert matches on it.</summary>
     public string Username { get; set; } = "";
 
     /// <summary>Contact address. Informational — never used to authenticate.</summary>
     public string Email { get; set; } = "";
 
-    /// <summary>Human name for display, falling back to the username when unset.</summary>
-    public string DisplayName { get; set; } = "";
-
     /// <summary>The bidding identities this user owns, so the Peers tab can offer them.</summary>
     public List<PeerUserProfile> Profiles { get; set; } = new();
+
+    /// <summary>When this identity first appeared in the shared database. Never rewritten.</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

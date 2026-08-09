@@ -264,7 +264,7 @@ public sealed partial class LocalApiServer : ObservableObject
                 {
                     name = p?.Name ?? "",
                     resumePrompt = (p?.ResumePrompt ?? "").Trim(),
-                    hasMacro = !string.IsNullOrWhiteSpace(p?.MacroName) && !string.IsNullOrWhiteSpace(p?.WordDocPath)
+                    hasMacro = !string.IsNullOrWhiteSpace(p?.WordDocPath)
                 });
                 return;
             }
@@ -478,13 +478,16 @@ public sealed partial class LocalApiServer : ObservableObject
 
         var profile = _profileContext.Current;
         var docm = (profile?.WordDocPath ?? "").Trim();
-        var macro = (profile?.MacroName ?? "").Trim();
+        // Blank falls back to the standard entry point every template ships with.
+        var macro = string.IsNullOrWhiteSpace(profile?.MacroName)
+            ? WordMacroService.DefaultMacroName
+            : profile!.MacroName.Trim();
 
         WordMacroService.Result macroResult;
-        if (string.IsNullOrEmpty(docm) || string.IsNullOrEmpty(macro))
+        if (string.IsNullOrEmpty(docm))
         {
             macroResult = new WordMacroService.Result(false,
-                $"Profile '{profile?.Name}' needs a Word doc path + macro name (Profiles tab).");
+                $"Profile '{profile?.Name}' needs a Word template path (Profiles tab).");
             _activity.Warning(ExtensionSource, "Macro skipped", macroResult.Message);
         }
         else if (string.IsNullOrWhiteSpace(resumeBody))

@@ -111,16 +111,38 @@ public partial class ProfilesViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Default resume prompt that emits both markers the pipeline needs.</summary>
+    /// <summary>
+    /// Default resume prompt. Every marker here is load-bearing: the Word macro looks up each
+    /// <c>[Section]:</c> label and drops its text into the matching bookmark, so a missing label
+    /// means that part of the template comes back blank. <c>[FolderName]:</c> names the output
+    /// folder, and the final comma-separated line is what DevStrider parses to fill in the bid's
+    /// company, role, and stacks.
+    /// </summary>
     public const string DefaultResumePrompt =
         "Act as an expert resume writer. Tailor my resume to the job description below.\n" +
         "\n" +
-        "Output ONLY the finished resume text. After the resume, append exactly these two lines:\n" +
-        "[FolderName]: <short_filename_for_this_company>\n" +
+        "Output ONLY the sections listed here, each starting with its exact label on its own line,\n" +
+        "in this order and with no extra commentary:\n" +
+        "\n" +
+        "[Title]: <job title to show at the top of the resume>\n" +
+        "[Summary]: <3-4 sentence professional summary aimed at this role>\n" +
+        "[Skills]: <comma-separated skills, most relevant first>\n" +
+        "[Subtitle 1]: <most recent job title — Company — dates>\n" +
+        "[Experience 1]: <3-5 bullet lines for that role, tailored to the job description>\n" +
+        "[Subtitle 2]: <second job title — Company — dates>\n" +
+        "[Experience 2]: <3-5 bullet lines>\n" +
+        "[Subtitle 3]: <third job title — Company — dates>\n" +
+        "[Experience 3]: <3-5 bullet lines>\n" +
+        "[FolderName]: <UID>, <Company>, <Role>, <Stack1>, <Stack2>, <Stack3>\n" +
         "<UID>, <Company>, <Role>, <Stack1>, <Stack2>, <Stack3>\n" +
         "\n" +
-        "Where <UID> is a 5-character id you invent for this resume, <Company> and <Role> come " +
-        "from the job description, and the stacks are the 3-5 most important technologies.";
+        "Rules:\n" +
+        "- <UID> is a 5-character alphanumeric id you invent for this resume. Use the SAME UID on\n" +
+        "  the [FolderName] line and the final line.\n" +
+        "- <Company> and <Role> come from the job description; stacks are the 3-6 most important\n" +
+        "  technologies it names.\n" +
+        "- The last line must be the bare comma-separated line with no label and nothing after it.\n" +
+        "- Wrap emphasis in **double asterisks**; it becomes bold in the document.";
 
     [RelayCommand]
     public void UseDefaultPrompt()

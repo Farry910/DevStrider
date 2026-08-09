@@ -89,6 +89,9 @@ public partial class InterviewPanelViewModel : ViewModelBase
         {
             BidId = parent.BidId,
             ParentInterviewId = parent.Id,
+            // Same hiring process as the round it follows — this is what keeps a pipeline
+            // together for interviews that never came from a bid.
+            ProcessId = parent.ProcessId,
             ScheduledDate = date,
             ScheduledTime = time,
             InterviewType = string.IsNullOrWhiteSpace(interviewType) ? InterviewTypes.Interview : interviewType,

@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Bid Assistant",
-  "version": "3.1.0",
-  "description": "Send a job description into ChatGPT, then run your Word macro and record the bid in the local DevStrider desktop app. No clipboard.",
+  "version": "3.2.0",
+  "description": "One button on any job page: reads the job description, generates a tailored resume via a background ChatGPT tab, builds it in Word silently, and records the bid in DevStrider.",
   "icons": { "16": "icon.png", "48": "icon.png", "128": "icon.png" },
-  "permissions": ["activeTab", "storage", "tabs", "windows"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:8765/*"],
   "action": { "default_popup": "popup.html" },
   "background": { "service_worker": "background.js" },

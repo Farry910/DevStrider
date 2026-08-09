@@ -58,11 +58,10 @@ public partial class App : Application
             services.AddSingleton<AchievementService>();
             services.AddSingleton<ResumeService>();
             services.AddSingleton<ActivityLogService>();
-            services.AddSingleton<SharedMongoCredentials>();
-            services.AddSingleton<AtlasContext>();
-            services.AddSingleton<AtlasSyncService>();
+            services.AddSingleton<SharedDbCredentials>();
+            services.AddSingleton<SharedDbContext>();
+            services.AddSingleton<PeerSyncService>();
             services.AddSingleton<SyncScheduler>();
-            services.AddSingleton<LegacyMigrationService>();
             services.AddSingleton<WordMacroService>();
             services.AddSingleton<LocalApiServer>();
             services.AddSingleton<ResumeAutoIngestService>();
@@ -119,16 +118,6 @@ public partial class App : Application
                     await settingsService.LoadAsync();
 
                     var profileService = Services.GetRequiredService<ProfileService>();
-                    var sharedCreds = Services.GetRequiredService<SharedMongoCredentials>();
-                    await SettingsBootstrap.ApplyAsync(settingsService, profileService);
-
-                    // Split any legacy single-URI shared-cluster setting into its parts. Runs
-                    // right after bootstrap so an env-seeded URI is migrated on the same launch
-                    // that seeded it, and before anything can open an Atlas connection.
-                    if (await sharedCreds.MigrateLegacyUriAsync())
-                        activity.Info("Atlas", "Shared connection split",
-                            "Converted the legacy single-URI setting into separate host/username/password fields.");
-
                     // Multi-profile migration: seeds a Default profile + backfills ProfileId
                     // on legacy data. Idempotent — no-op once the seed exists.
                     var migration = Services.GetRequiredService<ProfileMigrationService>();

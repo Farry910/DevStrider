@@ -24,7 +24,7 @@
         <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="How teammates find you in the shared cluster. Your username owns the profiles you bid as — peers pick you first, then one of your profiles. There is no password: this identifies you, it doesn't authenticate you."/>
+                     Text="How teammates find you in the shared database. Your username owns the profiles you bid as — peers pick you first, then one of your profiles. There is no password: this identifies you, it doesn't authenticate you."/>
 
           <TextBlock Text="Username"/>
           <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
@@ -36,51 +36,81 @@
           <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
                    Tag="you@example.com"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
-                     Text="Contact address shown to teammates alongside your name. Visible to everyone on the shared cluster."/>
+                     Text="Contact address shown to teammates alongside your name. Visible to everyone on the shared database."/>
         </StackPanel>
       </Border>
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Peer database (shared MongoDB / Atlas)" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="Connection to the shared cluster that holds everyone's bid + interview summaries. Username and host ship with defaults; only the password is yours to enter. The password is encrypted for your Windows account and never stored in MongoDB. Clear it to disable peer sync. Sync runs from the Sharing tab."/>
+          <TextBlock Text="Peer database (shared PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
+                     Text="The database that holds everyone's bid and interview summaries. Tables are created automatically on the first sync. Shared: company, role, status, stacks, dates and the job description. Not shared: job URLs, generated resume text, meeting links and your comments."/>
 
-          <TextBlock Text="Cluster host"/>
-          <TextBox Text="{Binding Model.SharedMongoHost, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   Margin="0,2,0,8"
-                   Tag="cluster0.abcde.mongodb.net"/>
+          <!-- Two ways to describe the same server: providers hand out a URI, self-hosted is
+               easier in parts. Whichever is selected is the one that's used; the other keeps
+               what you typed. -->
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+            <RadioButton Content="Service URI" GroupName="SharedDbMode"
+                         IsChecked="{Binding IsUriMode, Mode=TwoWay}" Margin="0,0,16,0"/>
+            <RadioButton Content="Host / port / database" GroupName="SharedDbMode"
+                         IsChecked="{Binding IsPartsMode, Mode=TwoWay}"/>
+          </StackPanel>
 
-          <TextBlock Text="Username"/>
-          <TextBox Text="{Binding Model.SharedMongoUsername, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   Margin="0,2,0,8"
-                   Tag="shared-cluster user"/>
+          <!-- Mode 1: service URI -->
+          <StackPanel Visibility="{Binding IsUriMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TextBlock Text="Service URI"/>
+            <TextBox Text="{Binding Model.SharedDbUri, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Consolas"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="False"
+                     Margin="0,2,0,8"
+                     Tag="postgresql://user:password@host:5432/devstrider?sslmode=require"/>
+          </StackPanel>
 
-          <TextBlock Text="Password"/>
-          <!--
-            PasswordBox deliberately has no Text binding — WPF doesn't expose Password as a
-            DependencyProperty precisely so the plaintext never sits in the binding engine or a
-            visual-tree dump. The view-model reads it in the Save handler instead.
-          -->
-          <PasswordBox x:Name="SharedMongoPasswordBox"
-                       PasswordChanged="SharedMongoPasswordBox_PasswordChanged"
-                       FontFamily="Consolas"
-                       Margin="0,2,0,4"/>
+          <!-- Mode 2: discrete parts -->
+          <StackPanel Visibility="{Binding IsPartsMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid Margin="0,0,0,8">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="110"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                <TextBlock Text="Host"/>
+                <TextBox Text="{Binding Model.SharedDbHost, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="Consolas" Margin="0,2,0,0" Tag="db.example.com"/>
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Port"/>
+                <TextBox Text="{Binding Model.SharedDbPort, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="Consolas" Margin="0,2,0,0" Tag="5432"/>
+              </StackPanel>
+            </Grid>
+
+            <TextBlock Text="Database"/>
+            <TextBox Text="{Binding Model.SharedDbName, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Consolas" Margin="0,2,0,8" Tag="devstrider"/>
+
+            <TextBlock Text="User"/>
+            <TextBox Text="{Binding Model.SharedDbUser, UpdateSourceTrigger=PropertyChanged}"
+                     FontFamily="Consolas" Margin="0,2,0,8"/>
+
+            <TextBlock Text="Password"/>
+            <!-- PasswordBox has no bindable Password property by design, so the value reaches
+                 the view-model through a PasswordChanged handler in the code-behind. -->
+            <PasswordBox x:Name="SharedDbPasswordBox"
+                         PasswordChanged="SharedDbPasswordBox_PasswordChanged"
+                         FontFamily="Consolas"
+                         Margin="0,2,0,8"/>
+          </StackPanel>
+
+          <CheckBox Content="Require SSL/TLS"
+                    IsChecked="{Binding Model.SharedDbRequireSsl, Mode=TwoWay}"
+                    Margin="0,0,0,4"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
-                     Text="{Binding SharedPasswordHint}"/>
+                     Text="Leave on for any hosted provider — Supabase, Neon, Railway and Aiven all require it. Turn it off only for a local server that isn't listening on TLS. An explicit sslmode in the URI overrides this."/>
 
-          <TextBlock Text="Connection options"/>
-          <TextBox Text="{Binding Model.SharedMongoOptions, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   Margin="0,2,0,8"
-                   Tag="retryWrites=true&amp;w=majority"/>
-
-          <TextBlock Text="Database name"/>
-          <TextBox Text="{Binding Model.SharedDatabaseName, UpdateSourceTrigger=PropertyChanged}"
-                   Margin="0,2,0,8"
-                   Tag="devstrider-shared"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="{Binding SharedDbHint}"/>
 
           <TextBlock Text="Automatic sync interval (minutes)"/>
           <TextBox Text="{Binding Model.SyncIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
@@ -88,8 +118,6 @@
                    Tag="60"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,4"
                      Text="Peer data is pushed and pulled on this cadence in the background. 0 disables it and leaves only the Sync now button; anything under 5 is treated as 5. The first run happens a couple of minutes after launch."/>
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
-                     Text="Contains two collections — peerBids and peerInterviews. Other collections from older data can be dropped from the Sharing tab's Reset section."/>
 
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
             <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">

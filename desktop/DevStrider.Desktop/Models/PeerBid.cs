@@ -4,9 +4,9 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace DevStrider.Desktop.Models;
 
 /// <summary>
-/// A peer's bid as seen in the shared Atlas cluster (and mirrored locally for offline reads).
-/// Deliberately strips private fields (URL, JD, GPT content, comment) so peers can only see
-/// the high-level shape of each other's bids.
+/// A peer's bid as seen in the shared PostgreSQL database (and mirrored locally for offline
+/// reads). Carries the summary fields plus the job description; the job URL, the generated
+/// resume text, and the private comment stay on the originator's machine.
 ///
 /// <para>
 /// The <see cref="Id"/> is the same ObjectId as the originator's local <see cref="UserBid.Id"/>,
@@ -19,7 +19,12 @@ public class PeerBid
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
     /// <summary>The originator's team-repo nickname (<see cref="UserProfile.Username"/>).</summary>
-    public string OwnerUsername { get; set; } = "";
+    /// <summary>
+    /// Foreign key to <c>peer_users.id</c>. The username is deliberately not duplicated here —
+    /// resolve it through the mirrored <see cref="PeerUser"/> so a rename can't leave stale
+    /// copies scattered across every row.
+    /// </summary>
+    public long OwnerUserId { get; set; }
     /// <summary>FS-safe slug of the originator's profile name.</summary>
     public string OwnerProfileSlug { get; set; } = "";
     /// <summary>The originator's profile display name.</summary>
@@ -31,6 +36,13 @@ public class PeerBid
     public string Origin { get; set; } = "";
     public string ResumeId { get; set; } = "";
     public List<string> PrimaryStacks { get; set; } = new();
+
+    /// <summary>
+    /// The job description this bid was made against. Shared so a teammate picking up the role
+    /// — or preparing to interview for it — can read what was actually applied to, rather than
+    /// guessing from company and title. The job URL is deliberately not shared alongside it.
+    /// </summary>
+    public string JobDescription { get; set; } = "";
 
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

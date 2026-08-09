@@ -52,6 +52,19 @@ public class Interview
     public ObjectId BidId { get; set; }
     public ObjectId? ParentInterviewId { get; set; }
 
+    /// <summary>
+    /// Groups every round of one hiring process. The first interview of a process gets a fresh
+    /// id; each next round inherits its parent's.
+    ///
+    /// <para>
+    /// Neither existing field could do this alone: <see cref="BidId"/> is <c>Empty</c> for
+    /// interviews that came from a LinkedIn chat rather than a bid, and
+    /// <see cref="ParentInterviewId"/> is a linked list — answering "show me every round of this
+    /// process" meant walking it. One indexed id answers it directly.
+    /// </para>
+    /// </summary>
+    public ObjectId ProcessId { get; set; }
+
     public string MeetingLink { get; set; } = "";
     public string Origin { get; set; } = "";
     public string InterviewType { get; set; } = InterviewTypes.Interview;

@@ -27,19 +27,19 @@ public class AboutViewModel : ViewModelBase
 
     public string Summary =>
         "Local-first job-bid tracker. The Chrome extension records bids to the local " +
-        "HTTP listener; peers see each other's bids/interviews via the shared MongoDB " +
-        "cluster configured in Settings (Sync button on the Sharing tab triggers a " +
-        "two-way delta sync).";
+        "HTTP listener; peers see each other's bids/interviews via the shared PostgreSQL " +
+        "database configured in Settings. Sync runs hourly in the background, or on demand " +
+        "from the Sharing tab.";
 
     public string DataLocation => "MongoDB (local) · 127.0.0.1:27017/devstrider";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
     public string SharedClusterLocation =>
-        "Atlas (peer sync) · host / username / password configured in Settings → Peer database";
+        "PostgreSQL (peer sync) · configured in Settings → Peer database";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
         "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
-        "(setx DEVSTRIDER_SHARED_MONGO_URI \"mongodb+srv://…\"), restart DevStrider, then " +
+        "(setx DEVSTRIDER_SHARED_DB_URI \"postgresql://…\"), restart DevStrider, then " +
         "clear the env var if you want — values are saved to your local Mongo after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
@@ -48,12 +48,13 @@ public class AboutViewModel : ViewModelBase
     {
         Add("DEVSTRIDER_MONGO_URI",          "AppSettings.MongoUri",          "Local MongoDB connection string. Default mongodb://127.0.0.1:27017.");
         Add("DEVSTRIDER_DATABASE_NAME",      "AppSettings.DatabaseName",      "Local MongoDB database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_USERNAME",           "UserProfile.Username",          "Your username in the shared cluster. Defaults to your Windows account name.");
-        Add("DEVSTRIDER_SHARED_MONGO_URI",   "(legacy → split on first launch)", "Full Atlas URI. Deprecated: on launch it is split into the three fields below and this value is cleared.", isSecret: true);
-        Add("DEVSTRIDER_SHARED_MONGO_USER",  "AppSettings.SharedMongoUsername", "Shared-cluster username. Not a secret on its own.");
-        Add("DEVSTRIDER_SHARED_MONGO_HOST",  "AppSettings.SharedMongoHost",     "Shared-cluster host, e.g. cluster0.abcde.mongodb.net.");
-        Add("DEVSTRIDER_SHARED_MONGO_PASSWORD", "AppSettings.SharedMongoPassword", "Shared-cluster password. Stored in cleartext with the rest of the settings. Seeded only when no password is saved yet.", isSecret: true);
-        Add("DEVSTRIDER_SHARED_DATABASE",    "AppSettings.SharedDatabaseName","Shared DB name. Default 'devstrider-shared'.");
+        Add("DEVSTRIDER_USERNAME",           "UserProfile.Username",          "Your username in the shared database. Defaults to your Windows account name.");
+        Add("DEVSTRIDER_SHARED_DB_URI",      "AppSettings.SharedDbUri",       "Shared PostgreSQL service URI, e.g. postgresql://user:pass@host:5432/devstrider?sslmode=require. Seeding it selects URI mode.", isSecret: true);
+        Add("DEVSTRIDER_SHARED_DB_HOST",     "AppSettings.SharedDbHost",      "Shared PostgreSQL host. Seeding it selects host/port mode.");
+        Add("DEVSTRIDER_SHARED_DB_PORT",     "AppSettings.SharedDbPort",      "Shared PostgreSQL port. Default 5432.");
+        Add("DEVSTRIDER_SHARED_DB_NAME",     "AppSettings.SharedDbName",      "Shared PostgreSQL database name. Default 'devstrider'.");
+        Add("DEVSTRIDER_SHARED_DB_USER",     "AppSettings.SharedDbUser",      "Shared PostgreSQL user.");
+        Add("DEVSTRIDER_SHARED_DB_PASSWORD", "AppSettings.SharedDbPassword",  "Shared PostgreSQL password. Stored in cleartext with the other settings.", isSecret: true);
         Add("DEVSTRIDER_R2_ACCOUNT_ID",      "AppSettings.R2AccountId",       "Cloudflare R2 account id — the hex prefix of the r2.cloudflarestorage.com endpoint.");
         Add("DEVSTRIDER_R2_BUCKET",          "AppSettings.R2Bucket",          "R2 bucket holding shared resume files.");
         Add("DEVSTRIDER_R2_ACCESS_KEY_ID",   "AppSettings.R2AccessKeyId",     "R2 API token access key id.");

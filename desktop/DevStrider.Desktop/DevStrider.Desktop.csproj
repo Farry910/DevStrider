@@ -26,7 +26,7 @@
     <AssemblyName>DevStrider</AssemblyName>
     <!-- Bump this string on every release. The MainWindow title bar reads it at runtime
          so you can eyeball whether the build picked up the latest source. -->
-    <Version>4.2.0</Version>
+    <Version>6.2.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -47,9 +47,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver -->
+    <!-- MongoDB driver — local database, and the legacy web-app import -->
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
+
+    <!-- PostgreSQL — the shared/peer database -->
+    <PackageReference Include="Npgsql" Version="8.0.5" />
 
     <!-- DI container only — Hosting/Config/Logging aren't used in the WPF process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />

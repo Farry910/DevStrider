@@ -16,13 +16,13 @@ public partial class SettingsView : UserControl
     /// <summary>
     /// Hand the typed password to the view-model. <see cref="PasswordBox.Password"/> isn't a
     /// DependencyProperty — by design, so the plaintext never enters the binding engine — which
-    /// is why this has to be code-behind rather than a binding. The view-model holds it only
-    /// until Save encrypts it; nothing persists the cleartext.
+    /// is why this has to be code-behind rather than a binding. The view-model holds it until
+    /// Save writes it to the settings row.
     /// </summary>
-    private void SharedMongoPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+    private void SharedDbPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsViewModel vm && sender is PasswordBox box)
-            vm.SharedMongoPasswordEntry = box.Password;
+            vm.SharedDbPasswordEntry = box.Password;
     }
 
     /// <summary>Same contract as above, for the R2 secret access key.</summary>

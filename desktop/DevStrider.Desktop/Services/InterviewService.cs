@@ -36,6 +36,9 @@ public class InterviewService
         if (iv.ProfileId == ObjectId.Empty) iv.ProfileId = ActiveProfileId;
         if (iv.ProfileId == ObjectId.Empty)
             throw new InvalidOperationException("No active profile — create one in the Profiles tab first.");
+        // Every interview belongs to a process. A next round arrives with its parent's ProcessId
+        // already set (see InterviewPanelViewModel); anything else starts a new one.
+        if (iv.ProcessId == ObjectId.Empty) iv.ProcessId = ObjectId.GenerateNewId();
         iv.CreatedAt = DateTime.UtcNow;
         iv.UpdatedAt = iv.CreatedAt;
         await _db.Interviews.InsertOneAsync(iv);

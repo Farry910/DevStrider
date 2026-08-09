@@ -91,6 +91,9 @@ public partial class PeersViewModel : ViewModelBase
         _db = db;
     }
 
+    /// <summary>Mirrored identities keyed by their shared-database id — resolves owner_user_id on rows.</summary>
+    private Dictionary<long, PeerUser> _usersById = new();
+
     /// <summary>
     /// Rebuild the two pickers. Identities come from the mirror; the profile list is narrowed to
     /// the selected user, which is what makes the pair behave as user → profile rather than one
@@ -99,6 +102,9 @@ public partial class PeersViewModel : ViewModelBase
     private async Task RefreshPickersAsync()
     {
         var users = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
+        // Rows carry only owner_user_id; the username lives on the identity, so a rename can't
+        // leave stale copies behind.
+        _usersById = users.Where(u => u.RemoteId != 0).ToDictionary(u => u.RemoteId);
         users.Sort((a, b) => string.Compare(a.Username, b.Username, StringComparison.OrdinalIgnoreCase));
 
         var previousUser = UserFilter;
@@ -165,6 +171,9 @@ public partial class PeersViewModel : ViewModelBase
             // avoids building a compound Mongo filter for what is at most a few thousand rows.
             // Profile is only consulted once a user is chosen — the same profile name under two
             // different teammates is two different things.
+            string UsernameOf(long id) =>
+                _usersById.TryGetValue(id, out var u) ? u.Username : "(unknown)";
+
             bool MatchesOwner(string user, string profileName) =>
                 (string.IsNullOrEmpty(UserFilter) ||
                  string.Equals(UserFilter, user, StringComparison.OrdinalIgnoreCase))
@@ -175,10 +184,11 @@ public partial class PeersViewModel : ViewModelBase
             Bids.Clear();
             foreach (var b in bids)
             {
-                if (!MatchesOwner(b.OwnerUsername, b.OwnerProfileName)) continue;
+                var bidOwner = UsernameOf(b.OwnerUserId);
+                if (!MatchesOwner(bidOwner, b.OwnerProfileName)) continue;
                 Bids.Add(new PeerBidRow
                 {
-                    Username = b.OwnerUsername,
+                    Username = bidOwner,
                     Profile = b.OwnerProfileName,
                     Company = b.Company,
                     Role = b.Role,
@@ -194,10 +204,11 @@ public partial class PeersViewModel : ViewModelBase
             Interviews.Clear();
             foreach (var i in ivs)
             {
-                if (!MatchesOwner(i.OwnerUsername, i.OwnerProfileName)) continue;
+                var ivOwner = UsernameOf(i.OwnerUserId);
+                if (!MatchesOwner(ivOwner, i.OwnerProfileName)) continue;
                 Interviews.Add(new PeerInterviewRow
                 {
-                    Username = i.OwnerUsername,
+                    Username = ivOwner,
                     Profile = i.OwnerProfileName,
                     ScheduledDate = i.ScheduledDate,
                     ScheduledTime = i.ScheduledTime,

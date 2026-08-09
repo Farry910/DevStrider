@@ -12,11 +12,12 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_MONGO_URI         → AppSettings.MongoUri               (when default "mongodb://127.0.0.1:27017")
 ///   DEVSTRIDER_DATABASE_NAME     → AppSettings.DatabaseName            (when default "devstrider")
 ///   DEVSTRIDER_USERNAME          → UserProfile.Username                (when default "me" or current Windows user)
-///   DEVSTRIDER_SHARED_MONGO_URI  → AppSettings.SharedMongoUri          (when empty; legacy — migrated to the parts below on the same launch)
-///   DEVSTRIDER_SHARED_MONGO_USER → AppSettings.SharedMongoUsername     (when still the shipped default)
-///   DEVSTRIDER_SHARED_MONGO_HOST → AppSettings.SharedMongoHost         (when still the shipped default)
-///   DEVSTRIDER_SHARED_MONGO_PASSWORD → AppSettings.SharedMongoPassword (when empty)
-///   DEVSTRIDER_SHARED_DATABASE   → AppSettings.SharedDatabaseName      (when default "devstrider-shared")
+///   DEVSTRIDER_SHARED_DB_URI     → AppSettings.SharedDbUri              (when empty)
+///   DEVSTRIDER_SHARED_DB_HOST    → AppSettings.SharedDbHost             (when empty)
+///   DEVSTRIDER_SHARED_DB_PORT    → AppSettings.SharedDbPort             (when default 5432)
+///   DEVSTRIDER_SHARED_DB_NAME    → AppSettings.SharedDbName             (when default "devstrider")
+///   DEVSTRIDER_SHARED_DB_USER    → AppSettings.SharedDbUser             (when empty)
+///   DEVSTRIDER_SHARED_DB_PASSWORD→ AppSettings.SharedDbPassword         (when empty)
 ///   DEVSTRIDER_R2_ACCOUNT_ID     → AppSettings.R2AccountId             (when empty)
 ///   DEVSTRIDER_R2_BUCKET         → AppSettings.R2Bucket                (when empty)
 ///   DEVSTRIDER_R2_ACCESS_KEY_ID  → AppSettings.R2AccessKeyId           (when empty)
@@ -41,12 +42,32 @@ public static class SettingsBootstrap
 
         settingsDirty |= SeedIfMatch(settings.MongoUri,           "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",        v => settings.MongoUri = v);
         settingsDirty |= SeedIfMatch(settings.DatabaseName,       "devstrider",                "DEVSTRIDER_DATABASE_NAME",    v => settings.DatabaseName = v);
-        settingsDirty |= SeedIfEmpty(settings.SharedMongoUri,                                  "DEVSTRIDER_SHARED_MONGO_URI", v => settings.SharedMongoUri = v);
-        settingsDirty |= SeedIfMatch(settings.SharedMongoUsername, SharedMongoCredentials.DefaultUsername, "DEVSTRIDER_SHARED_MONGO_USER", v => settings.SharedMongoUsername = v);
-        settingsDirty |= SeedIfMatch(settings.SharedMongoHost,     SharedMongoCredentials.DefaultHost,     "DEVSTRIDER_SHARED_MONGO_HOST", v => settings.SharedMongoHost = v);
-        settingsDirty |= SeedIfMatch(settings.SharedDatabaseName, "devstrider-shared",         "DEVSTRIDER_SHARED_DATABASE",  v => settings.SharedDatabaseName = v);
 
-        settingsDirty |= SeedIfEmpty(settings.SharedMongoPassword,                             "DEVSTRIDER_SHARED_MONGO_PASSWORD", v => settings.SharedMongoPassword = v);
+
+        // Shared PostgreSQL. Seeding the URI flips the mode to "uri" so the seeded value is the
+        // one actually used; seeding a host flips it to "parts" for the same reason.
+        if (SeedIfEmpty(settings.SharedDbUri, "DEVSTRIDER_SHARED_DB_URI", v => settings.SharedDbUri = v))
+        {
+            settings.SharedDbMode = SharedDbCredentials.ModeUri;
+            settingsDirty = true;
+        }
+        if (SeedIfEmpty(settings.SharedDbHost, "DEVSTRIDER_SHARED_DB_HOST", v => settings.SharedDbHost = v))
+        {
+            settings.SharedDbMode = SharedDbCredentials.ModeParts;
+            settingsDirty = true;
+        }
+        settingsDirty |= SeedIfMatch(settings.SharedDbName, "devstrider", "DEVSTRIDER_SHARED_DB_NAME", v => settings.SharedDbName = v);
+        settingsDirty |= SeedIfEmpty(settings.SharedDbUser,             "DEVSTRIDER_SHARED_DB_USER", v => settings.SharedDbUser = v);
+        settingsDirty |= SeedIfEmpty(settings.SharedDbPassword,         "DEVSTRIDER_SHARED_DB_PASSWORD", v => settings.SharedDbPassword = v);
+        if (settings.SharedDbPort == 5432)
+        {
+            var portEnv = ReadEnv("DEVSTRIDER_SHARED_DB_PORT");
+            if (portEnv != null && int.TryParse(portEnv, out var pgPort) && pgPort > 0 && pgPort < 65536)
+            {
+                settings.SharedDbPort = pgPort;
+                settingsDirty = true;
+            }
+        }
 
         // Cloud storage (R2) — same rule: seeded once into the local settings row, then the
         // Settings UI owns them.

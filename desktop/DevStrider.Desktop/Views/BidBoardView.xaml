@@ -119,6 +119,52 @@
               SelectionMode="Extended"
               SelectionChanged="OnBidGridSelectionChanged">
       <DataGrid.Columns>
+        <!--
+          Duplicate / interview warnings. The two duplicate kinds are deliberately distinct:
+          red "!" means you bid this exact posting before, amber means a different listing for
+          what looks like the same job, and the interview flag is its own colour again. The
+          tooltip names the earlier bid and its date.
+        -->
+        <DataGridTemplateColumn Header="" Width="34" CanUserSort="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <TextBlock FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons"
+                         FontSize="13"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         ToolTip="{Binding WarningTooltip}"
+                         ToolTipService.ShowDuration="20000"
+                         Text="">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                      <!-- Exact repeat — strongest signal, red. -->
+                      <DataTrigger Binding="{Binding WarningKind}" Value="link">
+                        <Setter Property="Text" Value="&#xEA39;"/>
+                        <Setter Property="Foreground" Value="#F44336"/>
+                        <Setter Property="Visibility" Value="Visible"/>
+                      </DataTrigger>
+                      <!-- Already interviewing at this company. -->
+                      <DataTrigger Binding="{Binding WarningKind}" Value="interview">
+                        <Setter Property="Text" Value="&#xE8BD;"/>
+                        <Setter Property="Foreground" Value="#42A5F5"/>
+                        <Setter Property="Visibility" Value="Visible"/>
+                      </DataTrigger>
+                      <!-- Same company+role from a different listing — softer, amber. -->
+                      <DataTrigger Binding="{Binding WarningKind}" Value="role">
+                        <Setter Property="Text" Value="&#xE7BA;"/>
+                        <Setter Property="Foreground" Value="#FFC107"/>
+                        <Setter Property="Visibility" Value="Visible"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
         <DataGridTemplateColumn Header="URL" Width="2*" SortMemberPath="Link.Url">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>

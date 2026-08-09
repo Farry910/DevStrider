@@ -5,17 +5,28 @@ namespace DevStrider.Desktop.Models;
 
 /// <summary>
 /// A peer's interview as seen in the shared Atlas cluster (and mirrored locally).
-/// Strips private fields (meeting link, attached JD/resume, comments) so peers only see
-/// the high-level shape of each other's interview pipeline.
+/// Carries the pipeline shape plus the JD snapshot. The meeting link, the attached resume
+/// text, and private comments stay on the originator's machine.
 /// </summary>
 public class PeerInterview
 {
     [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    public string OwnerUsername { get; set; } = "";
+    /// <summary>
+    /// Foreign key to <c>peer_users.id</c>. The username is deliberately not duplicated here —
+    /// resolve it through the mirrored <see cref="PeerUser"/> so a rename can't leave stale
+    /// copies scattered across every row.
+    /// </summary>
+    public long OwnerUserId { get; set; }
     public string OwnerProfileSlug { get; set; } = "";
     public string OwnerProfileName { get; set; } = "";
+
+    /// <summary>
+    /// Groups every round of one hiring process — HR, Tech 1, Tech 2, Offer — under a single id
+    /// so a pipeline reads as one thing. Shared verbatim from the owner's local interview.
+    /// </summary>
+    public string ProcessId { get; set; } = "";
 
     public string Company { get; set; } = "";
     public string Role { get; set; } = "";
@@ -23,6 +34,13 @@ public class PeerInterview
     public string Status { get; set; } = "";
     public string Recruiter { get; set; } = "";
     public string ResumeId { get; set; } = "";
+
+    /// <summary>
+    /// JD snapshot taken when the interview was scheduled (the local
+    /// <see cref="Interview.AttachedJobDescription"/>). Shared for the same reason as on a bid:
+    /// it's what someone else needs to prepare. The meeting link is not shared.
+    /// </summary>
+    public string JobDescription { get; set; } = "";
 
     public DateTime? ScheduledDate { get; set; }
     public string ScheduledTime { get; set; } = "";

@@ -33,7 +33,7 @@
             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding DataLocation}" Margin="0,0,0,4"/>
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Local listener" Foreground="{StaticResource Muted}" Margin="0,0,12,4"/>
             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ListenerHint}" Margin="0,0,0,4"/>
-            <TextBlock Grid.Row="2" Grid.Column="0" Text="Shared cluster" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Shared database" Foreground="{StaticResource Muted}" Margin="0,0,12,0"/>
             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SharedClusterLocation}" TextWrapping="Wrap"/>
           </Grid>
         </StackPanel>
@@ -43,29 +43,45 @@
         <StackPanel>
           <TextBlock Text="How to use DevStrider" FontWeight="SemiBold" Margin="0,0,0,10"/>
 
-          <TextBlock Text="1 · One-time setup" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Text="1 · Prepare each profile's Word template" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"
+                     Text="Every profile has its own .docm — that file holds that person's layout, their bookmarks, and their macro. The document must contain nine bookmarks, which is where the generated text lands:"/>
+          <Border Background="{StaticResource SurfaceAlt}" CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+            <TextBlock FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
+                       Text="bmTitle   bmSummary   bmSkills&#x0A;bmSubtitle1   bmExperience1&#x0A;bmSubtitle2   bmExperience2&#x0A;bmSubtitle3   bmExperience3"/>
+          </Border>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"
+                     Text="The macro is called headless over COM with the resume text as its single argument, so its signature must take one String. It must NOT read the clipboard — yours stays free while a resume is generating:"/>
+          <Border Background="{StaticResource SurfaceAlt}" CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+            <TextBlock FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
+                       Text="Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
+          </Border>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Profiles tab — create a profile per real person you bid as. Give it the Word .docm holding your resume macro, the macro's name, and a resume prompt (Insert default gives a working template). Switch the active profile from the title-bar dropdown; every link, bid, and interview belongs to whichever profile was active.&#x0A;&#x0A;Settings tab — set your username and email under Identity, then the shared-cluster password under Peer database. Press Test connection to confirm the cluster answers."/>
+                     Text="The macro should fill the bookmarks from the [Section]: labels in that text, save its .docx and .pdf, and finish with Application.Quit — DevStrider treats Word closing as the signal that the run succeeded. A macro that returns without quitting will be reported as a failure after 90 seconds.&#x0A;&#x0A;A Sub with a parameter no longer appears in Word's Alt+F8 list. That's expected; it's driven by DevStrider, not by hand."/>
 
-          <TextBlock Text="2 · Install the Chrome extension" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Text="2 · Create the profile" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Profiles tab — one profile per real person you bid as. Point it at that person's .docm, leave the macro name blank to use UpdateResumeAndSwitchOriginal, and press Insert default to get a resume prompt that emits every marker the macro expects. Switch the active profile from the title-bar dropdown; every link, bid and interview belongs to whichever profile was active when it was created.&#x0A;&#x0A;Settings tab — set your username and email under Identity, then fill in the shared PostgreSQL database under Peer database (service URI, or host/port/database/user/password) and press Test connection. That both proves the server answers and creates the tables."/>
+
+          <TextBlock Text="3 · Install the Chrome extension" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
                      Text="chrome://extensions → Developer mode → Load unpacked → pick the extension folder. Keep one logged-in ChatGPT tab open in the background; the extension drives it without ever bringing it to the front. Check the popup's version pill after any update — a stale service worker is the usual cause of odd behaviour."/>
 
-          <TextBlock Text="3 · Bidding — the one button" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Text="4 · Bidding — the one button" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="On a job posting, click the floating button. It scrapes the job description, sends it to your background ChatGPT tab with your resume prompt, waits for the reply, builds the resume through Word invisibly, and records the bid — all while you stay on the job page filling in the application. Ctrl+click instead if the scraper misses and you want to use text you've selected by hand.&#x0A;&#x0A;The reply must end with a [FolderName]: line and a final 'UID, Company, Role, Stack1, Stack2' line. That last line is what fills in company, role, and stacks on the bid; without it the bid is still recorded, just bare. If a macro run fails the bid is recorded anyway — you lose the file, never the record."/>
+                     Text="On a job posting, click the floating button. It scrapes the job description, sends it to your background ChatGPT tab with your resume prompt, waits for the reply, builds the resume through Word invisibly, and records the bid — all while you stay on the job page filling in the application. Ctrl+click instead if the scraper misses and you want to use text you've selected by hand.&#x0A;&#x0A;The reply must carry every [Section]: label the macro fills, then a [FolderName]: line, then a final bare 'UID, Company, Role, Stack1, Stack2' line. That last line fills in company, role and stacks on the bid; without it the bid is still recorded, just bare. A missing [Section]: label leaves that part of the document blank. If the macro fails outright the bid is still recorded — you lose the file, never the record."/>
 
-          <TextBlock Text="4 · Tracking" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Text="5 · Tracking" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
                      Text="Bids tab is the day's board — edit a row, apply a fast-feed line by hand, or schedule an interview off a bid (the JD and resume id carry forward). Interviews tab shows a date range and can schedule the next round off an existing one. Find bid searches your history. Overview and Stats aggregate you and your synced peers."/>
 
-          <TextBlock Text="5 · Sharing with the team" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+          <TextBlock Text="6 · Sharing with the team" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Your bid and interview summaries are pushed to the shared cluster automatically — hourly by default, adjustable in Settings, and always available on demand from Sharing → Sync now. Only summaries travel: company, role, status, stacks, dates. Job URLs, job descriptions, resume text, meeting links, and comments never leave this machine.&#x0A;&#x0A;Peers tab is the other direction — pick a teammate, then one of their profiles, to see that identity's activity."/>
+                     Text="Two ways to sync, both doing the same push and pull. Automatic runs on a schedule (hourly by default, set in Settings, 0 disables it) starting a couple of minutes after launch. Manual is Sharing → Sync now. The Sharing tab shows the last sync and when the next automatic one is due; if both fire at once the second is turned away rather than run twice.&#x0A;&#x0A;Shared: company, role, status, stacks, dates and the job description. Not shared: job URLs, generated resume text, resume files, meeting links and your comments.&#x0A;&#x0A;Peers tab is the other direction — pick a teammate, then one of their profiles."/>
 
           <TextBlock Text="If something looks wrong" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="Activity tab logs every extension call, sync, and macro run with the reason it failed. Two checks catch most problems: the version pill above matches the build you expect, and the extension popup's version matches the folder you loaded. The app keeps running in the tray after you close the window — right-click the tray icon and choose Quit to actually stop it."/>
+                     Text="Activity tab logs every extension call, sync and macro run with the reason it failed.&#x0A;&#x0A;Blank sections in the document → the reply was missing those [Section]: labels; check the profile's resume prompt.&#x0A;Macro reported as failed after ~90s → the macro returned without calling Application.Quit, or it's still declared without its String parameter.&#x0A;Bid recorded with no company or role → the reply's last line wasn't the bare comma-separated one.&#x0A;Nothing happens at all → check the version pill above and the extension popup's version, and reload any job tabs you had open.&#x0A;&#x0A;The app keeps running in the tray after you close the window — right-click the tray icon and choose Quit to actually stop it."/>
         </StackPanel>
       </Border>
 

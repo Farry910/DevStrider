@@ -2,10 +2,10 @@
 
 A local-first, Windows desktop app (.NET 8 / WPF) for tracking job **bids** and **interviews**,
 auto-generating tailored **resumes** through ChatGPT, and sharing daily status with a team via a
-shared MongoDB/Atlas cluster.
+shared PostgreSQL database.
 
-- **Desktop app version:** 4.2.0
-- **Chrome extension version:** 3.1.0 (the "Bid Assistant")
+- **Desktop app version:** 6.2.0
+- **Chrome extension version:** 3.2.0 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 ---
@@ -18,7 +18,7 @@ DevStrider is the local hub of a three-part system:
  Chrome extension  ──HTTP(127.0.0.1:8765)──►  DevStrider desktop  ──►  Local MongoDB
  (job pages +                                  (WPF app + tray)         (your bids/interviews)
   ChatGPT tab)                                        │
-                                                      └──►  Shared MongoDB / Atlas (peers)
+                                                      └──►  Shared PostgreSQL (peers)
 ```
 
 1. **Record bids** — browse a job posting, the extension extracts the JD and records a bid in the
@@ -27,7 +27,7 @@ DevStrider is the local hub of a three-part system:
    your Word macro to produce the resume file and records the bid with the company/role/stacks
    parsed off the reply's fast-feed line.
 3. **Track interviews** — schedule interviews off a bid, carrying the JD + resume forward.
-4. **Share with a team** — push your bid/interview summaries to a shared cluster and pull peers'
+4. **Share with a team** — push your bid/interview summaries to a shared PostgreSQL database and pull peers'
    so everyone can see daily activity.
 
 ---
@@ -62,7 +62,7 @@ dotnet publish DevStrider.Desktop -c Release -r win-x64 `
 > **Do not** add `-p:PublishTrimmed=true` — WPF's reflection breaks under the trimmer.
 
 On first launch DevStrider creates the `devstrider` database, seeds a default profile + settings,
-and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v4.2.0`)
+and runs the multi-profile migration. The title-bar pill shows the running version (e.g. `v6.2.0`)
 so you can confirm a fresh build was picked up.
 
 ### Closing the app
@@ -115,7 +115,7 @@ Aggregate counts and a bids-per-10-minute chart, for you and any synced peers, o
 
 ### Peers
 Read-only view of peers' bids and interviews pulled from the shared cluster (company / role /
-status / stacks / dates — private fields like URLs and JDs are never shared). Filter by date + owner.
+status / stacks / dates / job description — URLs, resume text and comments are not shared). Filter by date + owner.
 
 ### Profiles (Account)
 Each **profile** is a distinct bidding identity (a real person). All workspace data — links, bids,
@@ -202,7 +202,7 @@ store: no registry, no keychain, no encrypted file.
 [`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads that row **once at
 startup** and serves every later read from memory. Before that, each of ~16 call sites re-queried
 MongoDB — `/refresh-word` hit the database on every purple click just to read a hotkey, and
-opening an Atlas connection cost two round-trips before sending a byte.
+opening a shared-database connection cost two round-trips before sending a byte.
 
 Because reads now share one instance, the rule is: `GetAsync()` returns the **cached object and
 must not be mutated**; anything that edits settings takes `GetForEditAsync()` (a copy) and hands
@@ -215,28 +215,31 @@ holding it can empty the bucket.
 
 ### Shared cluster
 
-The shared Atlas cluster uses **one login shared by every install**. That is a deliberate trade
-for a small trusted team, and it has consequences worth stating plainly:
+The shared PostgreSQL database uses **one login shared by every install**. That is a deliberate
+trade for a small trusted team, and it has consequences worth stating plainly:
 
-- Every user can read *and delete* everyone else's peer data — MongoDB has no row-level security.
+- Every user can read *and delete* everyone else's peer data — no row-level security is configured.
 - One leaked password means rotating it for every installed client at once.
 - `OwnerUsername` is self-asserted; nothing enforces that a row came from who it claims.
 
-Stored as four fields — `SharedMongoUsername`, `SharedMongoHost`, `SharedMongoPassword`,
-`SharedMongoOptions`. The full URI is composed in memory at connect time and never persisted.
+Two ways to describe the same server, chosen by a radio button in Settings → Peer database:
 
-Username and host ship with defaults so a new user only types the password (Settings → Peer
-database). The URI is assembled by
-[`SharedMongoCredentials`](DevStrider.Desktop/Services/SharedMongoCredentials.cs), which
-percent-encodes both credential halves — Atlas passwords routinely contain `@`, `:`, `/` and `%`,
-any of which corrupt a raw URI.
+1. **Service URI** — `postgresql://user:pass@host:5432/devstrider?sslmode=require`, what hosted
+   providers hand you. `postgres://` is accepted too.
+2. **Parts** — host, port, database, user, password, for anything self-hosted.
 
-**Upgrading from an older install:** earlier versions stored the whole thing as one URI string. On
-first launch the app splits it into the separate fields, clears the old value, and logs *"Shared
-connection split"* to Activity. Nothing to do by hand.
+Whichever is selected is the one used; the other keeps what you typed, so switching back and forth
+loses nothing. Both end up as one Npgsql connection string built by
+[`SharedDbCredentials`](DevStrider.Desktop/Services/SharedDbCredentials.cs), which percent-decodes
+the credentials out of a URI — generated Postgres passwords routinely contain `@`, `:`, `/` and
+`?`, and arrive encoded.
 
-Driver errors are passed through `SharedMongoCredentials.Redact` before reaching the Activity log,
-since Mongo exceptions quote the connection string — password and all — back verbatim.
+**SSL** defaults to on (`Require`: encrypt, don't demand a chain the machine can verify — hosted
+providers commonly present one it can't). Unchecking gives `Prefer`, so a local server without TLS
+still works. An explicit `sslmode` in the URI overrides the checkbox.
+
+Driver errors pass through `SharedDbCredentials.Redact` before reaching the Activity log, since a
+service URI carries the password inline.
 
 ---
 
@@ -247,7 +250,7 @@ since Mongo exceptions quote the connection string — password and all — back
 | `MSB3027: DevStrider.exe locked` on build | The app is still running — tray → **Quit** (or `taskkill /F /IM DevStrider.exe`). |
 | "MongoDB unreachable" on launch | Start the local MongoDB service. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
-| Shared cluster "unreachable / timeout" | Add your IP to the Atlas IP Access List; check firewall/VPN on port 27017; try the non-SRV URI. |
+| Shared database "unreachable / timeout" | Check host and port; allow this machine's IP in the provider's firewall; confirm the SSL setting matches what the server expects. |
 | Resume generates but no file | The Word macro must read the resume from the bridge file and emit the `[FolderName]:` filename. |
 | ChatGPT automation stalls | ChatGPT changed its DOM — the injection/completion selectors in `extension/content.js` need updating. |
 
@@ -257,7 +260,7 @@ since Mongo exceptions quote the connection string — password and all — back
 
 - **Single user per machine**, but multiple **profiles** (identities). No login/auth — the local
   HTTP listener is loopback-only.
-- Peer sync over Atlas is currently **plaintext over TLS**; the cluster's access control is the
+- Peer sync runs over TLS, but the database's own access control is the
   protection.
 - Resume generation uses the **ChatGPT web session** (free tier), not an API — hence the
   keep-a-tab-open requirement and the inherent fragility to ChatGPT UI changes.
@@ -268,6 +271,7 @@ since Mongo exceptions quote the connection string — password and all — back
 
 DevStrider began as a multi-tenant web app (React + Express + Socket.IO + Atlas) and was rewritten
 as this single-user local desktop app. The team-sync layer moved from a shared **GitHub repo** of
-daily JSON snapshots to a shared **MongoDB/Atlas** cluster (`Sharing` tab → **Sync**). The standalone
+daily JSON snapshots to a shared **MongoDB/Atlas** cluster, and in 5.0.0 to a shared
+**PostgreSQL** database (`Sharing` tab → **Sync**, plus hourly background sync). The standalone
 Python "ResumeAuto" tool was folded in as a batch **Resume auto-gen** tab, then removed again in
 4.0.0 — resume generation is now the manual blue/purple button flow only.

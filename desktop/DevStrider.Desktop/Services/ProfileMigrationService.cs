@@ -101,10 +101,76 @@ public sealed class ProfileMigrationService
             }
 
             if (settingsDirty) await _settings.SaveAsync(settings);
+
+            await BackfillInterviewProcessesAsync();
         }
         catch (Exception ex)
         {
             _activity.Error("Profiles", "Migration failed", ex.Message);
         }
     }
+    /// <summary>
+    /// Give every pre-existing interview a <see cref="Interview.ProcessId"/> so old pipelines
+    /// group like new ones. Idempotent — only rows still missing one are touched, so this is a
+    /// no-op on every launch after the first.
+    ///
+    /// <para>
+    /// Two rules, because neither existing field covers both cases: interviews created off a bid
+    /// share a <c>BidId</c>, and everything else is chained through <c>ParentInterviewId</c>, so
+    /// the chain is walked to its root and the root's id becomes the process.
+    /// </para>
+    /// </summary>
+    private async Task BackfillInterviewProcessesAsync()
+    {
+        var missing = await _db.Interviews
+            .Find(Builders<Interview>.Filter.Eq(i => i.ProcessId, ObjectId.Empty))
+            .ToListAsync();
+        if (missing.Count == 0) return;
+
+        // Whole set, so a parent that already has a process id can still be followed.
+        var all = await _db.Interviews.Find(FilterDefinition<Interview>.Empty).ToListAsync();
+        var byId = all.ToDictionary(i => i.Id);
+        var processByBid = new Dictionary<ObjectId, ObjectId>();
+        var updated = 0;
+
+        foreach (var iv in missing)
+        {
+            ObjectId process;
+
+            if (iv.BidId != ObjectId.Empty)
+            {
+                // Bid-origin: every round off one bid is one process.
+                if (!processByBid.TryGetValue(iv.BidId, out process))
+                {
+                    process = ObjectId.GenerateNewId();
+                    processByBid[iv.BidId] = process;
+                }
+            }
+            else
+            {
+                // Chat-origin: walk to the root of the parent chain. The guard is a cycle
+                // stopper — a corrupt chain shouldn't hang startup.
+                var root = iv;
+                var hops = 0;
+                while (root.ParentInterviewId is { } parentId
+                       && byId.TryGetValue(parentId, out var parent)
+                       && hops++ < 50)
+                {
+                    root = parent;
+                }
+                process = root.ProcessId != ObjectId.Empty ? root.ProcessId : root.Id;
+            }
+
+            await _db.Interviews.UpdateOneAsync(
+                Builders<Interview>.Filter.Eq(x => x.Id, iv.Id),
+                Builders<Interview>.Update.Set(x => x.ProcessId, process));
+            iv.ProcessId = process;
+            updated++;
+        }
+
+        if (updated > 0)
+            _activity.Info("Profiles", "Grouped interviews into processes",
+                $"{updated} interview(s) assigned a process id.", silent: true);
+    }
+
 }

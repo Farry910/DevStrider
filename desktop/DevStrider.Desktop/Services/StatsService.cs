@@ -87,17 +87,23 @@ public class StatsService
             }
         }
 
-        // Peer contribution comes straight from the local PeerBids mirror, filtered to
-        // the owners the user wants overlaid on the chart.
+        // Peer rows carry owner_user_id, not a username — resolve through the identity mirror
+        // so a rename can't split one person's history across two labels.
+        var (nameById, idByName) = await LoadOwnerMapAsync();
+        var includeIds = includeOwners
+            .Select(n => idByName.TryGetValue(n, out var id) ? id : 0L)
+            .Where(id => id != 0)
+            .ToList();
+
         var peerBidFilter = Builders<PeerBid>.Filter.And(
-            Builders<PeerBid>.Filter.In(b => b.OwnerUsername, includeOwners),
+            Builders<PeerBid>.Filter.In(b => b.OwnerUserId, includeIds),
             Builders<PeerBid>.Filter.Ne(b => b.Status, BidStatuses.Draft));
         var peerBids = await _db.PeerBids.Find(peerBidFilter).ToListAsync();
         foreach (var b in peerBids)
         {
             var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
             if (b.AppliedAt == null && b.FirstCreatedAt == default) ts = b.CreatedAt.ToLocalTime();
-            if (ts >= start && ts < end) Bump(b.OwnerUsername, ts);
+            if (ts >= start && ts < end) Bump(NameOf(nameById, b.OwnerUserId), ts);
         }
 
         return slots;
@@ -108,26 +114,29 @@ public class StatsService
     {
         var rows = new List<OverviewRow> { await BuildSelfAsync(fromUtc, toUtc, selfOwner) };
 
-        // Peer rows are aggregated from the local PeerBids / PeerInterviews mirrors,
-        // grouped by OwnerUsername. Counting "links" doesn't apply to peers (URLs aren't
-        // shared), so we report 0 there.
+        // Peer rows are aggregated from the local mirrors and grouped by owner id, then
+        // labelled from the identity mirror. Counting "links" doesn't apply to peers (URLs
+        // aren't shared), so we report 0 there.
+        var (nameById, idByName) = await LoadOwnerMapAsync();
+        var selfId = idByName.TryGetValue(selfOwner, out var sid) ? sid : 0L;
+
         var peerBids = await _db.PeerBids
-            .Find(b => b.OwnerUsername != selfOwner && b.UpdatedAt >= fromUtc && b.UpdatedAt < toUtc)
+            .Find(b => b.OwnerUserId != selfId && b.UpdatedAt >= fromUtc && b.UpdatedAt < toUtc)
             .ToListAsync();
         var peerIvs = await _db.PeerInterviews
-            .Find(i => i.OwnerUsername != selfOwner && i.ScheduledDate >= fromUtc && i.ScheduledDate < toUtc)
+            .Find(i => i.OwnerUserId != selfId && i.ScheduledDate >= fromUtc && i.ScheduledDate < toUtc)
             .ToListAsync();
-        var byOwner = peerBids.GroupBy(b => b.OwnerUsername);
-        foreach (var grp in byOwner)
+        foreach (var grp in peerBids.GroupBy(b => b.OwnerUserId))
         {
-            var ivsForOwner = peerIvs.Where(i => i.OwnerUsername == grp.Key).ToList();
-            rows.Add(BuildPeerOverview(grp.Key, grp.ToList(), ivsForOwner));
+            var ivsForOwner = peerIvs.Where(i => i.OwnerUserId == grp.Key).ToList();
+            rows.Add(BuildPeerOverview(NameOf(nameById, grp.Key), grp.ToList(), ivsForOwner));
         }
         // Owners that have interviews but no bids in window — still surface them.
-        foreach (var grp in peerIvs.GroupBy(i => i.OwnerUsername))
+        foreach (var grp in peerIvs.GroupBy(i => i.OwnerUserId))
         {
-            if (rows.Any(r => r.Owner == grp.Key)) continue;
-            rows.Add(BuildPeerOverview(grp.Key, new List<PeerBid>(), grp.ToList()));
+            var owner = NameOf(nameById, grp.Key);
+            if (rows.Any(r => r.Owner == owner)) continue;
+            rows.Add(BuildPeerOverview(owner, new List<PeerBid>(), grp.ToList()));
         }
         return rows;
     }
@@ -178,4 +187,26 @@ public class StatsService
             InterviewsFailed = iv.Count(i => i.Status == InterviewStatuses.Failed),
         };
     }
+    /// <summary>
+    /// Both directions of the identity map. Peer rows store only <c>owner_user_id</c>; every
+    /// label the UI shows comes from here, so one lookup serves the whole aggregation.
+    /// </summary>
+    private async Task<(Dictionary<long, string> nameById, Dictionary<string, long> idByName)> LoadOwnerMapAsync()
+    {
+        var users = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
+        var nameById = new Dictionary<long, string>();
+        var idByName = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var u in users)
+        {
+            if (u.RemoteId == 0) continue;
+            nameById[u.RemoteId] = u.Username;
+            idByName[u.Username] = u.RemoteId;
+        }
+        return (nameById, idByName);
+    }
+
+    /// <summary>Label for an owner id, falling back to something visible rather than blank.</summary>
+    private static string NameOf(Dictionary<long, string> nameById, long id) =>
+        nameById.TryGetValue(id, out var n) && !string.IsNullOrEmpty(n) ? n : $"user #{id}";
+
 }

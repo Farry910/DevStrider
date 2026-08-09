@@ -100,6 +100,9 @@ public class MongoContext
             Builders<Interview>.IndexKeys.Ascending(x => x.BidId)));
         await Interviews.Indexes.CreateOneAsync(new CreateIndexModel<Interview>(
             Builders<Interview>.IndexKeys.Descending(x => x.ScheduledDate)));
+        // "Every round of this hiring process" is the query the Interviews tab groups by.
+        await Interviews.Indexes.CreateOneAsync(new CreateIndexModel<Interview>(
+            Builders<Interview>.IndexKeys.Ascending(x => x.ProcessId).Ascending(x => x.ScheduledDate)));
 
         await Achievements.Indexes.CreateOneAsync(new CreateIndexModel<Achievement>(
             Builders<Achievement>.IndexKeys
@@ -114,9 +117,11 @@ public class MongoContext
 
         // Peer mirror — index by Owner + Updated for the Peers tab's date+owner filters.
         await PeerBids.Indexes.CreateOneAsync(new CreateIndexModel<PeerBid>(
-            Builders<PeerBid>.IndexKeys.Ascending(x => x.OwnerUsername).Descending(x => x.UpdatedAt)));
+            Builders<PeerBid>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt)));
         await PeerInterviews.Indexes.CreateOneAsync(new CreateIndexModel<PeerInterview>(
-            Builders<PeerInterview>.IndexKeys.Ascending(x => x.OwnerUsername).Ascending(x => x.ScheduledDate)));
+            Builders<PeerInterview>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.ScheduledDate)));
+        await PeerInterviews.Indexes.CreateOneAsync(new CreateIndexModel<PeerInterview>(
+            Builders<PeerInterview>.IndexKeys.Ascending(x => x.ProcessId)));
 
         // Team identities are upserted by username on every sync, so that lookup must be unique
         // and indexed — otherwise a reinstall could quietly create a second row for one person.

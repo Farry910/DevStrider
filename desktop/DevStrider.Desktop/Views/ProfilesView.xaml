@@ -87,13 +87,15 @@
                     Content="&#xE8E5;"/>
           </Grid>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
-                     Text="When this profile is active, /refresh-word from the extension targets this .docm."/>
+                     Text="The .docm holding this person's resume layout, bookmarks and macro. Each profile has its own — that's what makes the output theirs."/>
 
-          <TextBlock Text="Word macro name (run by name via COM, headless)"/>
+          <TextBlock Text="Word macro name"/>
           <TextBox Text="{Binding Selected.MacroName, UpdateSourceTrigger=PropertyChanged}"
                    FontFamily="Consolas"
-                   Tag="e.g. UpdateResumeAndSwitchOriginal"
-                   Margin="0,2,0,12"/>
+                   Tag="UpdateResumeAndSwitchOriginal"
+                   Margin="0,2,0,4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+                     Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
 
           <Grid Margin="0,0,0,2">
             <Grid.ColumnDefinitions>

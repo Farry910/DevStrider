@@ -3,7 +3,7 @@ using DevStrider.Desktop.Models;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// Runs <see cref="AtlasSyncService.SyncAsync"/> on a timer so peers see your activity without
+/// Runs <see cref="PeerSyncService.SyncAsync"/> on a timer so peers see your activity without
 /// anyone remembering to press <b>Sync now</b>.
 ///
 /// <para>
@@ -14,7 +14,7 @@ namespace DevStrider.Desktop.Services;
 /// </para>
 ///
 /// <para>
-/// Overlap is handled inside <see cref="AtlasSyncService"/>, which turns away a second concurrent
+/// Overlap is handled inside <see cref="PeerSyncService"/>, which turns away a second concurrent
 /// caller — so a slow scheduled run and an impatient manual click can't both advance the sync
 /// marker.
 /// </para>
@@ -23,33 +23,43 @@ public sealed class SyncScheduler : IDisposable
 {
     /// <summary>
     /// Grace period before the first sync. Startup is already doing index creation, migrations
-    /// and profile init; piling a cluster round-trip on top just makes the window slower to
+    /// and profile init; piling a database round-trip on top just makes the window slower to
     /// appear.
     /// </summary>
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
 
-    /// <summary>Floor on the configured interval, to stay friendly to the free Atlas tier.</summary>
+    /// <summary>Floor on the configured interval — hosted Postgres tiers cap connections.</summary>
     private static readonly TimeSpan MinInterval = TimeSpan.FromMinutes(5);
 
-    /// <summary>Retry cadence while the cluster is unconfigured or unreachable.</summary>
+    /// <summary>Retry cadence while the shared database is unconfigured or unreachable.</summary>
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(15);
 
-    private readonly AtlasSyncService _sync;
-    private readonly AtlasContext _atlas;
+    private readonly PeerSyncService _sync;
+    private readonly SharedDbContext _shared;
     private readonly SettingsService _settings;
     private readonly ActivityLogService _activity;
 
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
+    /// <summary>
+    /// When the next automatic pass is due, or null when nothing is scheduled. Surfaced on the
+    /// Sharing tab so the two ways of syncing — this and the manual button — are both visible
+    /// rather than one of them being invisible machinery.
+    /// </summary>
+    public DateTime? NextRunAt { get; private set; }
+
+    /// <summary>Outcome of the last automatic pass, for the same reason.</summary>
+    public string LastAutoResult { get; private set; } = "";
+
     public SyncScheduler(
-        AtlasSyncService sync,
-        AtlasContext atlas,
+        PeerSyncService sync,
+        SharedDbContext shared,
         SettingsService settings,
         ActivityLogService activity)
     {
         _sync = sync;
-        _atlas = atlas;
+        _shared = shared;
         _settings = settings;
         _activity = activity;
     }
@@ -70,15 +80,18 @@ public sealed class SyncScheduler : IDisposable
         _cts.Dispose();
         _cts = null;
         _loop = null;
+        NextRunAt = null;
     }
 
     private async Task RunAsync(CancellationToken ct)
     {
+        NextRunAt = DateTime.Now.Add(StartupDelay);
         if (!await DelayAsync(StartupDelay, ct)) return;
 
         while (!ct.IsCancellationRequested)
         {
             var wait = await TickAsync();
+            NextRunAt = DateTime.Now.Add(wait);
             if (!await DelayAsync(wait, ct)) return;
         }
     }
@@ -91,10 +104,10 @@ public sealed class SyncScheduler : IDisposable
             var s = await _settings.GetAsync();
             if (s.SyncIntervalMinutes <= 0) return RetryInterval;  // disabled — re-check later
 
-            if (!await _atlas.IsConfiguredAsync()) return RetryInterval;
+            if (!await _shared.IsConfiguredAsync()) return RetryInterval;
 
             // SyncAsync never throws and logs its own outcome to Activity.
-            await _sync.SyncAsync();
+            LastAutoResult = await _sync.SyncAsync();
 
             var configured = TimeSpan.FromMinutes(s.SyncIntervalMinutes);
             return configured < MinInterval ? MinInterval : configured;
@@ -102,7 +115,7 @@ public sealed class SyncScheduler : IDisposable
         catch (Exception ex)
         {
             // Defensive: a scheduler that dies silently is worse than one that logs and retries.
-            _activity.Warning("Atlas", "Scheduled sync failed", SharedMongoCredentials.Redact(ex.Message), silent: true);
+            _activity.Warning("Peers", "Scheduled sync failed", SharedDbCredentials.Redact(ex.Message), silent: true);
             return RetryInterval;
         }
     }

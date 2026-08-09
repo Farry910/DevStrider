@@ -6,70 +6,83 @@ using DevStrider.Desktop.Views;
 namespace DevStrider.Desktop.ViewModels;
 
 /// <summary>
-/// Peer sync hub. One Sync button does push + pull against the shared Atlas cluster; the
-/// Reset section lists every collection in the shared DB so the user can prune legacy data
-/// left over from the old web app.
+/// Peer sync hub. <b>Sync now</b> does one push + pull against the shared PostgreSQL database;
+/// the background scheduler does the same thing hourly. The status grid reports DevStrider's own
+/// tables and their row counts — the app owns no DDL, so there is nothing here that can alter or
+/// remove them.
 /// </summary>
 public partial class SharingViewModel : ViewModelBase
 {
-    private readonly AtlasSyncService _sync;
-    private readonly AtlasContext _atlas;
+    private readonly PeerSyncService _sync;
+    private readonly SharedDbContext _shared;
     private readonly SettingsService _settings;
     private readonly ActivityLogService _activity;
-    private readonly LegacyMigrationService _legacy;
+    private readonly SyncScheduler _scheduler;
 
     public SharingViewModel(
-        AtlasSyncService sync,
-        AtlasContext atlas,
+        PeerSyncService sync,
+        SharedDbContext shared,
         SettingsService settings,
         ActivityLogService activity,
-        LegacyMigrationService legacy)
+        SyncScheduler scheduler)
     {
         _sync = sync;
-        _atlas = atlas;
+        _shared = shared;
         _settings = settings;
         _activity = activity;
-        _legacy = legacy;
+        _scheduler = scheduler;
     }
 
     private string _lastSyncDisplay = "Never";
     public string LastSyncDisplay { get => _lastSyncDisplay; set => SetProperty(ref _lastSyncDisplay, value); }
 
-    private string _legacyMigratedDisplay = "Never";
-    public string LegacyMigratedDisplay { get => _legacyMigratedDisplay; set => SetProperty(ref _legacyMigratedDisplay, value); }
+    /// <summary>
+    /// State of the automatic half of syncing. There are two ways data moves — this scheduler
+    /// and the Sync now button — and a background job you can't see is one you can't trust, so
+    /// its cadence and next run are reported next to the manual control.
+    /// </summary>
+    private string _autoSyncDisplay = "";
+    public string AutoSyncDisplay { get => _autoSyncDisplay; set => SetProperty(ref _autoSyncDisplay, value); }
 
-    private string _legacyEmail = "";
-    public string LegacyEmail { get => _legacyEmail; set => SetProperty(ref _legacyEmail, value); }
-
-    /// <summary>True when the shared cluster has a username, host, and a stored password.</summary>
+    /// <summary>True once the shared database has enough configuration to connect.</summary>
     private bool _isConfigured;
     public bool IsConfigured { get => _isConfigured; set => SetProperty(ref _isConfigured, value); }
 
-    /// <summary>Collections discovered in the shared cluster — feeds the Reset section grid.</summary>
-    public ObservableCollection<RemoteCollectionRow> RemoteCollections { get; } = new();
+    /// <summary>Tables discovered in the shared database — feeds the Reset section grid.</summary>
+    public ObservableCollection<RemoteTableRow> RemoteTables { get; } = new();
 
     [RelayCommand]
     public async Task LoadAsync()
     {
         var s = await _settings.GetAsync();
-        // Ask AtlasContext rather than reading one field: "configured" now means username,
-        // host, and password are all present.
-        IsConfigured = await _atlas.IsConfiguredAsync();
+        IsConfigured = await _shared.IsConfiguredAsync();
         LastSyncDisplay = s.LastSyncAt > DateTime.MinValue
             ? $"{s.LastSyncAt:yyyy-MM-dd HH:mm:ss} UTC"
             : "Never";
-        LegacyMigratedDisplay = s.LegacyMigratedAt > DateTime.MinValue
-            ? $"{s.LegacyMigratedAt:yyyy-MM-dd HH:mm:ss} UTC"
-            : "Never";
-        if (IsConfigured)
+
+        if (s.SyncIntervalMinutes <= 0)
         {
-            try { await LoadRemoteCollectionsAsync(); }
-            catch { /* details logged to Activity; keep the tab clean */ }
+            AutoSyncDisplay = "Off — only the Sync now button syncs. Set an interval in Settings to enable it.";
+        }
+        else if (_scheduler.NextRunAt is { } next)
+        {
+            var mins = Math.Max(0, (int)Math.Round((next - DateTime.Now).TotalMinutes));
+            AutoSyncDisplay = $"Every {s.SyncIntervalMinutes} min · next run in about {mins} min";
         }
         else
         {
-            RemoteCollections.Clear();
-            StatusMessage = "Shared MongoDB URI isn't configured — set it in Settings.";
+            AutoSyncDisplay = $"Every {s.SyncIntervalMinutes} min · first run a couple of minutes after launch";
+        }
+
+        if (IsConfigured)
+        {
+            try { await LoadRemoteTablesAsync(); }
+            catch { /* details go to Activity; keep the tab clean */ }
+        }
+        else
+        {
+            RemoteTables.Clear();
+            StatusMessage = "Shared database isn't configured — set it in Settings → Peer database.";
         }
     }
 
@@ -87,122 +100,46 @@ public partial class SharingViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    /// <summary>
-    /// Pull this user's data from the legacy web-app collections in Atlas
-    /// (users / groups / grouplinks / userbids / interviews) into local Mongo.
-    /// Each legacy group becomes its own local profile; bids + interviews +
-    /// links attach to the matching profile. Idempotent — re-running picks up
-    /// any new web-app rows.
-    /// </summary>
+    /// <summary>List tables in the shared database with their row counts.</summary>
     [RelayCommand]
-    public async Task MigrateLegacyAsync()
-    {
-        var email = (LegacyEmail ?? "").Trim();
-        if (email.Length == 0)
-        {
-            StatusMessage = "Enter the email you used in the web app first.";
-            return;
-        }
-        IsBusy = true;
-        try
-        {
-            StatusMessage = $"Pulling legacy data for {email}…";
-            var result = await _legacy.MigrateAsync(email);
-            StatusMessage = result.Summary;
-            await LoadAsync();
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = "Legacy import failed — see Activity for details.";
-            _activity.Error("Migration", "Legacy import crashed", ex.Message);
-        }
-        finally { IsBusy = false; }
-    }
-
-    /// <summary>List collections on the shared cluster + their document counts.</summary>
-    [RelayCommand]
-    public async Task LoadRemoteCollectionsAsync()
+    public async Task LoadRemoteTablesAsync()
     {
         if (!IsConfigured) return;
         IsBusy = true;
         try
         {
-            RemoteCollections.Clear();
-            var names = await _atlas.ListCollectionsAsync();
-            var db = await _atlas.GetDatabaseAsync();
-            foreach (var name in names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+            RemoteTables.Clear();
+            // Only DevStrider's own tables. This database can be shared with other applications,
+            // and listing theirs served no purpose once the drop tool was removed.
+            var present = await _shared.ListTablesAsync();
+            foreach (var name in SharedDbContext.OwnedTables)
             {
-                long count;
-                try
-                {
-                    count = await db.GetCollection<MongoDB.Bson.BsonDocument>(name)
-                        .CountDocumentsAsync(MongoDB.Driver.FilterDefinition<MongoDB.Bson.BsonDocument>.Empty);
-                }
-                catch { count = -1; }
-                RemoteCollections.Add(new RemoteCollectionRow
+                RemoteTables.Add(new RemoteTableRow
                 {
                     Name = name,
-                    DocumentCount = count,
-                    IsKept = name is "peerBids" or "peerInterviews",
+                    RowCount = present.Contains(name) ? await _shared.CountRowsAsync(name) : -1,
                 });
             }
+            var missing = SharedDbContext.OwnedTables.Where(t => !present.Contains(t)).ToList();
+            StatusMessage = missing.Count > 0
+                ? $"Missing: {string.Join(", ", missing)} — run shared-db-schema.sql against this database."
+                : "";
         }
         catch (Exception ex)
         {
-            // Full detail goes to Activity (where rows are copyable). The Sharing tab
-            // intentionally stays free of stack-trace clutter.
+            // Full detail goes to Activity, where rows are copyable. This tab stays clean.
             StatusMessage = "";
-            _activity.Error("Atlas", "List collections failed", ex.Message);
+            _activity.Error("Peers", "List tables failed", SharedDbCredentials.Redact(ex.Message));
         }
         finally { IsBusy = false; }
     }
 
-    /// <summary>Drop every collection the user has flagged for removal.</summary>
-    [RelayCommand]
-    public async Task DropSelectedCollectionsAsync()
-    {
-        var toDrop = RemoteCollections.Where(r => r.SelectedForDrop && !r.IsKept).ToList();
-        if (toDrop.Count == 0)
-        {
-            StatusMessage = "Nothing selected to drop.";
-            return;
-        }
-        var names = string.Join(", ", toDrop.Select(r => r.Name));
-        var ok = ConfirmDialog.Ask(
-            System.Windows.Application.Current?.MainWindow,
-            "Drop these collections?",
-            $"Permanently drop from shared cluster:\n\n{names}\n\nThis can't be undone. " +
-            "DevStrider's own collections (peerBids, peerInterviews) are protected.",
-            okText: "Drop");
-        if (!ok) return;
-
-        IsBusy = true;
-        try
-        {
-            foreach (var row in toDrop)
-            {
-                await _atlas.DropCollectionAsync(row.Name);
-                _activity.Success("Atlas", "Dropped collection", row.Name);
-            }
-            await LoadRemoteCollectionsAsync();
-            StatusMessage = $"Dropped {toDrop.Count} collection(s).";
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = "Drop failed — see Activity for details.";
-            _activity.Error("Atlas", "Drop collection failed", ex.Message);
-        }
-        finally { IsBusy = false; }
-    }
 }
 
-/// <summary>One row in the Reset-DB grid.</summary>
-public class RemoteCollectionRow
+/// <summary>One row in the shared-database status grid. Read-only — the app issues no DDL.</summary>
+public class RemoteTableRow
 {
     public string Name { get; set; } = "";
     /// <summary>-1 when the count query failed.</summary>
-    public long DocumentCount { get; set; }
-    /// <summary>true for the two collections DevStrider 3.x owns; checkbox is disabled.</summary>
-    public bool IsKept { get; set; }
-    public bool SelectedForDrop { get; set; }
+    public long RowCount { get; set; }
 }
