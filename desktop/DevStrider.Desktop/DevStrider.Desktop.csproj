@@ -36,7 +36,7 @@
       peer_users created_at NOT NULL violation, .2 the stale username_1 unique index, .3 the
       immutable _id on the identity mirror's ReplaceOne.
     -->
-    <Version>7.4.0</Version>
+    <Version>7.6.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

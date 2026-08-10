@@ -31,9 +31,6 @@ public sealed class SharedDbContext
 
     public Task<bool> IsConfiguredAsync() => _credentials.IsConfiguredAsync();
 
-    /// <summary>Real host and port, before proxy substitution — what the proxy test dials.</summary>
-    public Task<(string host, int port)> ResolveTargetAsync() => _credentials.ResolveTargetAsync();
-
     /// <summary>
     /// An open connection. Caller disposes.
     ///

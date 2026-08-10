@@ -40,33 +40,10 @@ public sealed class SharedDbCredentials
     private static readonly string[] AcceptedSchemes = { "postgresql", "postgres" };
 
     private readonly SettingsService _settings;
-    private readonly ProxyTunnelService _proxy;
 
-    public SharedDbCredentials(SettingsService settings, ProxyTunnelService proxy)
+    public SharedDbCredentials(SettingsService settings)
     {
         _settings = settings;
-        _proxy = proxy;
-    }
-
-    /// <summary>
-    /// Swap the real host and port for a loopback tunnel when the proxy is on, so the provider
-    /// sees the proxy's allowlisted address instead of this machine's.
-    ///
-    /// <para>
-    /// Everything else about the connection string is untouched — including
-    /// <c>SslMode=Require</c>, which must stay as-is: Npgsql would be dialling
-    /// <c>127.0.0.1</c>, and no server certificate names that, so any mode that validates
-    /// hostnames would reject every proxied connection. See <see cref="ProxyTunnelService"/>.
-    /// </para>
-    /// </summary>
-    private async Task<NpgsqlConnectionStringBuilder> ApplyProxyAsync(NpgsqlConnectionStringBuilder builder)
-    {
-        if (!await _proxy.IsEnabledAsync()) return builder;
-
-        var (host, port) = await _proxy.GetLoopbackEndpointAsync(builder.Host!, builder.Port);
-        builder.Host = host;
-        builder.Port = port;
-        return builder;
     }
 
     /// <summary>True once the active mode has everything it needs to attempt a connection.</summary>
@@ -95,7 +72,7 @@ public sealed class SharedDbCredentials
             var (builder, error) = ParseUri(s.SharedDbUri, s.SharedDbRequireSsl);
             if (builder == null)
                 throw new InvalidOperationException(error ?? "Shared database URI isn't set — Settings → Peer database.");
-            return (await ApplyProxyAsync(builder)).ConnectionString;
+            return builder.ConnectionString;
         }
 
         if (string.IsNullOrWhiteSpace(s.SharedDbHost))
@@ -105,29 +82,13 @@ public sealed class SharedDbCredentials
         if (string.IsNullOrWhiteSpace(s.SharedDbUser))
             throw new InvalidOperationException("Shared database user isn't set — Settings → Peer database.");
 
-        return (await ApplyProxyAsync(NewBuilder(
+        return NewBuilder(
             host: s.SharedDbHost.Trim(),
             port: s.SharedDbPort > 0 ? s.SharedDbPort : DefaultPort,
             database: s.SharedDbName.Trim(),
             username: s.SharedDbUser.Trim(),
             password: s.SharedDbPassword ?? "",
-            requireSsl: s.SharedDbRequireSsl))).ConnectionString;
-    }
-
-    /// <summary>
-    /// The real host and port, before any proxy substitution. The proxy test needs the true
-    /// destination — handshaking to <c>127.0.0.1</c> would prove nothing. Returns an empty host
-    /// when the shared database isn't configured yet.
-    /// </summary>
-    public async Task<(string host, int port)> ResolveTargetAsync()
-    {
-        var s = await _settings.GetAsync();
-        if (IsUriMode(s))
-        {
-            var (builder, _) = ParseUri(s.SharedDbUri, s.SharedDbRequireSsl);
-            return builder is null ? ("", 0) : (builder.Host ?? "", builder.Port);
-        }
-        return (s.SharedDbHost?.Trim() ?? "", s.SharedDbPort > 0 ? s.SharedDbPort : DefaultPort);
+            requireSsl: s.SharedDbRequireSsl).ConnectionString;
     }
 
     /// <summary>Validate a URI without connecting — powers the inline hint in Settings.</summary>
