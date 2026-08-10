@@ -123,11 +123,29 @@ public class MongoContext
         await PeerInterviews.Indexes.CreateOneAsync(new CreateIndexModel<PeerInterview>(
             Builders<PeerInterview>.IndexKeys.Ascending(x => x.ProcessId)));
 
-        // Team identities are upserted by username on every sync, so that lookup must be unique
-        // and indexed — otherwise a reinstall could quietly create a second row for one person.
+        // The mirror holds one row per (person, profile), so a username legitimately repeats —
+        // anyone running two profiles has two rows. An older unique-on-username index survives
+        // in databases created before that change and rejects the second one with
+        // "E11000 duplicate key ... index: username_1", which aborts sync before it can push
+        // anything. Creating the new indexes does not remove it, so drop it explicitly.
+        try
+        {
+            await PeerUsers.Indexes.DropOneAsync("username_1");
+        }
+        catch (MongoCommandException)
+        {
+            // Already gone, which is the normal case on a database created after the change.
+        }
+
+        // RemoteId is the shared database's identity for a (person, profile) pair — the real key
+        // of this mirror, and what the pull deletes and rebuilds against.
         await PeerUsers.Indexes.CreateOneAsync(new CreateIndexModel<PeerUser>(
-            Builders<PeerUser>.IndexKeys.Ascending(x => x.Username),
+            Builders<PeerUser>.IndexKeys.Ascending(x => x.RemoteId),
             new CreateIndexOptions { Unique = true }));
+
+        // Drives the Peers tab's person → profile cascade.
+        await PeerUsers.Indexes.CreateOneAsync(new CreateIndexModel<PeerUser>(
+            Builders<PeerUser>.IndexKeys.Ascending(x => x.Username).Ascending(x => x.ProfileSlug)));
 
         // Per-profile filtering hits these indexes for every Bid board / Interview load.
         await Links.Indexes.CreateOneAsync(new CreateIndexModel<GroupLink>(

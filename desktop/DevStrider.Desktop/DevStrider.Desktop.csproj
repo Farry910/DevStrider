@@ -2,7 +2,12 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!--
+      .NET 10 (LTS, supported to Nov 2028). .NET 8 leaves support on 10 Nov 2026, and the machine
+      that builds this only ever had a preview 8 SDK, which is what made Npgsql fail with
+      MissingMethodException on DbBatchCommand.CreateParameter().
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <!--
       We compose WPF + WinForms in the same process so we can use
@@ -26,7 +31,12 @@
     <AssemblyName>DevStrider</AssemblyName>
     <!-- Bump this string on every release. The MainWindow title bar reads it at runtime
          so you can eyeball whether the build picked up the latest source. -->
-    <Version>7.1.1</Version>
+    <!--
+      Patch number counts bug fixes since the minor. 7.2.0 was the .NET 10 retarget; .1 the
+      peer_users created_at NOT NULL violation, .2 the stale username_1 unique index, .3 the
+      immutable _id on the identity mirror's ReplaceOne.
+    -->
+    <Version>7.2.3</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

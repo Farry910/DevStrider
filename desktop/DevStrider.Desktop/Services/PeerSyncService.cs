@@ -160,8 +160,8 @@ public sealed class PeerSyncService
         foreach (var prof in profiles)
         {
             await using var cmd = new NpgsqlCommand("""
-                INSERT INTO peer_users (username, profile_slug, profile_name, email, updated_at)
-                VALUES (@u, @ps, @pn, @e, @t)
+                INSERT INTO peer_users (username, profile_slug, profile_name, email, created_at, updated_at)
+                VALUES (@u, @ps, @pn, @e, @t, @t)
                 ON CONFLICT (username, profile_slug) DO UPDATE SET
                     profile_name = EXCLUDED.profile_name,
                     email        = EXCLUDED.email,
@@ -173,8 +173,12 @@ public sealed class PeerSyncService
             cmd.Parameters.AddWithValue("pn", prof.Name ?? "");
             cmd.Parameters.AddWithValue("e", email);
             cmd.Parameters.AddWithValue("t", SharedDbContext.Utc(DateTime.UtcNow));
-            // created_at takes its column default on insert and is absent from the DO UPDATE
-            // list, so it records first appearance and never moves.
+            // created_at is written explicitly rather than left to the column default. The
+            // deployed table turned out not to have one, and every sync died on
+            // "null value in column created_at violates not-null constraint" before a single
+            // identity was published — which stopped push and pull too, since they run after.
+            // peer_bids and peer_interviews always supplied it; this was the odd one out.
+            // Still absent from the DO UPDATE list, so it records first appearance and never moves.
             var id = Convert.ToInt64(await cmd.ExecuteScalarAsync() ?? 0L);
             if (id == 0)
                 throw new InvalidOperationException($"Shared database returned no id for profile '{prof.Name}'.");
@@ -211,17 +215,20 @@ public sealed class PeerSyncService
             });
         }
 
-        foreach (var u in seen)
-        {
-            await _local.PeerUsers.ReplaceOneAsync(
-                Builders<PeerUser>.Filter.Eq(x => x.RemoteId, u.RemoteId),
-                u,
-                new ReplaceOptions { IsUpsert = true });
-        }
-
-        // Prune the local mirror only. The shared rows themselves are never deleted.
-        var ids = seen.Select(u => u.RemoteId).ToList();
-        await _local.PeerUsers.DeleteManyAsync(Builders<PeerUser>.Filter.Nin(x => x.RemoteId, ids));
+        // Rebuild the mirror wholesale instead of upserting row by row.
+        //
+        // ReplaceOne matched on RemoteId handed Mongo a freshly constructed document whose
+        // generated _id differed from the stored one, and _id is immutable — every sync after
+        // the first died with "the (immutable) field '_id' was found to have been altered".
+        //
+        // A wholesale rebuild is also what this method already claimed to do, and what the
+        // picker needs: a profile someone renamed or deleted has to stop appearing. The set is
+        // one row per teammate profile, so the cost is negligible.
+        //
+        // Local mirror only — the shared rows themselves are never deleted.
+        await _local.PeerUsers.DeleteManyAsync(Builders<PeerUser>.Filter.Empty);
+        if (seen.Count > 0)
+            await _local.PeerUsers.InsertManyAsync(seen);
     }
 
     // ── bids ────────────────────────────────────────────────────────────────
