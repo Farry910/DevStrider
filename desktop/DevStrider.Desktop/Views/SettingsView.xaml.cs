@@ -31,4 +31,11 @@ public partial class SettingsView : UserControl
         if (DataContext is SettingsViewModel vm && sender is PasswordBox box)
             vm.R2SecretEntry = box.Password;
     }
+
+    /// <summary>Same contract as above, for the outbound proxy password.</summary>
+    private void ProxyPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SettingsViewModel vm && sender is PasswordBox box)
+            vm.ProxyPasswordEntry = box.Password;
+    }
 }

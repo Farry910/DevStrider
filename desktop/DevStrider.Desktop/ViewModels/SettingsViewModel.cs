@@ -20,7 +20,8 @@ public partial class SettingsViewModel : ViewModelBase
         LocalApiServer localApi,
         ActivityLogService activity,
         SharedDbContext shared,
-        R2StorageService storage)
+        R2StorageService storage,
+        ProxyTunnelService proxy)
     {
         _settings = settings;
         _profiles = profiles;
@@ -28,9 +29,52 @@ public partial class SettingsViewModel : ViewModelBase
         _activity = activity;
         _shared = shared;
         _storage = storage;
+        _proxy = proxy;
     }
 
+    private readonly ProxyTunnelService _proxy;
+
     private readonly R2StorageService _storage;
+
+    // ── Outbound proxy ──────────────────────────────────────────────────────
+
+    /// <summary>Buffer for the proxy password, same contract as the other PasswordBoxes:
+    /// blank means "leave the saved one alone", so an untouched box can't wipe a working one.</summary>
+    public string ProxyPasswordEntry { get; set; } = "";
+
+    private string _proxyTestResult = "";
+    public string ProxyTestResult { get => _proxyTestResult; private set => SetProperty(ref _proxyTestResult, value); }
+
+    public string[] ProxyKinds { get; } = { ProxyTunnelKinds.Socks5, ProxyTunnelKinds.Http };
+
+    /// <summary>
+    /// Dial the proxy and complete a handshake to the configured database host, without sending
+    /// a query. Separated from Test connection so a failure says which hop broke — a proxy that
+    /// refuses CONNECT and a database that is down both look like the same timeout otherwise.
+    /// </summary>
+    [RelayCommand]
+    public async Task TestProxyAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            ProxyTestResult = "Testing…";
+            await SaveAsync();   // the service reads from the settings row, not these text boxes
+
+            var (host, port) = await _shared.ResolveTargetAsync();
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                ProxyTestResult = "Set the shared database host first — the proxy is tested against it.";
+                return;
+            }
+
+            var (ok, message) = await _proxy.TestAsync(host, port);
+            ProxyTestResult = message;
+            if (ok) _activity.Success("Settings", "Proxy test passed", message);
+            else _activity.Warning("Settings", "Proxy test failed", message);
+        }
+        finally { IsBusy = false; }
+    }
 
     private string _r2TestResult = "";
     public string R2TestResult { get => _r2TestResult; private set => SetProperty(ref _r2TestResult, value); }
@@ -202,6 +246,11 @@ public partial class SettingsViewModel : ViewModelBase
             {
                 Model.R2SecretAccessKey = R2SecretEntry;
                 R2SecretEntry = "";
+            }
+            if (!string.IsNullOrEmpty(ProxyPasswordEntry))
+            {
+                Model.ProxyPassword = ProxyPasswordEntry;
+                ProxyPasswordEntry = "";
             }
 
             await _settings.SaveAsync(Model);

@@ -60,6 +60,9 @@ public partial class App : Application
             services.AddSingleton<ActivityLogService>();
             services.AddSingleton<SharedDbCredentials>();
             services.AddSingleton<SharedDbContext>();
+            // Registered before SharedDbCredentials, which depends on it to swap the host for a
+            // loopback tunnel when the proxy is enabled.
+            services.AddSingleton<ProxyTunnelService>();
             services.AddSingleton<R2StorageService>();
             services.AddSingleton<PeerSyncService>();
             services.AddSingleton<SyncScheduler>();
@@ -206,6 +209,8 @@ public partial class App : Application
         {
             (Services?.GetService(typeof(ResumeAutoIngestService)) as ResumeAutoIngestService)?.Dispose();
             (Services?.GetService(typeof(SyncScheduler)) as SyncScheduler)?.Dispose();
+            // Stops the loopback listeners; without this they survive until process exit.
+            (Services?.GetService(typeof(ProxyTunnelService)) as ProxyTunnelService)?.Dispose();
         }
         catch { /* ignore */ }
         Tray?.Dispose();

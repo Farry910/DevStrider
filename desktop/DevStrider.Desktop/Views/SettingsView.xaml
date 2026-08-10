@@ -144,6 +144,55 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
+          <TextBlock Text="Outbound proxy (shared database)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="Hosted Postgres providers allow connections by source IP. If this machine's address changes, that allowlist goes stale and the only symptom is a timeout — the provider drops the packets rather than refusing them. Routing through a proxy whose address is allowlisted keeps the source stable. Applies to the shared database only; Cloudflare R2 is not affected."/>
+
+          <CheckBox IsChecked="{Binding Model.ProxyEnabled}" Margin="0,0,0,8"
+                    Content="Route shared-database connections through a proxy"/>
+
+          <TextBlock Text="Type"/>
+          <ComboBox ItemsSource="{Binding ProxyKinds}"
+                    SelectedItem="{Binding Model.ProxyKind, UpdateSourceTrigger=PropertyChanged}"
+                    Margin="0,2,0,4"/>
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="socks5 handles any TCP and is the usual choice. http only works if the proxy allows CONNECT to a non-443 port, which many refuse."/>
+
+          <TextBlock Text="Proxy host"/>
+          <TextBox Text="{Binding Model.ProxyHost, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8"/>
+
+          <TextBlock Text="Proxy port"/>
+          <TextBox Text="{Binding Model.ProxyPort, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8"/>
+
+          <TextBlock Text="Username (blank if the proxy needs no login)"/>
+          <TextBox Text="{Binding Model.ProxyUsername, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8"/>
+
+          <TextBlock Text="Password"/>
+          <PasswordBox x:Name="ProxyPasswordBox"
+                       PasswordChanged="ProxyPasswordBox_PasswordChanged"
+                       FontFamily="Consolas"
+                       Margin="0,2,0,8"/>
+
+          <!-- Tested separately from the database so a failure says which hop broke: a proxy
+               that refuses CONNECT and a database that is down look identical otherwise. -->
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding TestProxyCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Test proxy" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <TextBlock Text="{Binding ProxyTestResult}" VerticalAlignment="Center" TextWrapping="Wrap"
+                       Foreground="{StaticResource Muted}"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
           <TextBlock Text="Cloud storage (Cloudflare R2)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
                      Text="Bucket that holds resume files shared with peers. Like the peer database, these are stored in the local database and loaded at startup. An API token with object-write permission can also delete objects — everyone holding it can empty the bucket."/>

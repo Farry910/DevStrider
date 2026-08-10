@@ -4,6 +4,17 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace DevStrider.Desktop.Models;
 
 /// <summary>
+/// Proxy protocols. Persisted verbatim in <see cref="AppSettings.ProxyKind"/>, so these strings
+/// ARE the stored value — declared here rather than on the service so the model doesn't have to
+/// reach into Services for its own constants.
+/// </summary>
+public static class ProxyTunnelKinds
+{
+    public const string Socks5 = "socks5";
+    public const string Http = "http";
+}
+
+/// <summary>
 /// One-row singleton holding install-level settings. <see cref="MongoContext"/> reads it on
 /// startup; the Settings UI is the editor. Unknown fields are tolerated (BSON convention)
 /// so removed fields from older installs deserialize quietly.
@@ -110,6 +121,32 @@ public class AppSettings
     [BsonIgnore]
     public string R2Endpoint =>
         string.IsNullOrWhiteSpace(R2AccountId) ? "" : $"https://{R2AccountId.Trim()}.r2.cloudflarestorage.com";
+
+    // ── Outbound proxy ──────────────────────────────────────────────────────
+    // Hosted Postgres providers allowlist by source IP. On a connection with a dynamic address
+    // that allowlist goes stale without warning — the symptom is a plain timeout, since the
+    // provider drops the packets rather than refusing them. Routing through a proxy with a
+    // fixed, allowlisted address makes the source address stable.
+    //
+    // Applies to the shared database only. R2 is reached over HTTPS through the AWS SDK and
+    // does not go through this.
+
+    public bool ProxyEnabled { get; set; }
+
+    /// <summary>
+    /// <c>socks5</c> (default) or <c>http</c>. SOCKS5 handles any TCP; HTTP proxies only work
+    /// here if they permit the CONNECT verb to a non-443 port, which many refuse.
+    /// </summary>
+    public string ProxyKind { get; set; } = ProxyTunnelKinds.Socks5;
+
+    public string ProxyHost { get; set; } = "";
+    public int ProxyPort { get; set; }
+
+    /// <summary>Blank for an unauthenticated proxy.</summary>
+    public string ProxyUsername { get; set; } = "";
+
+    /// <summary>Cleartext, like every other credential on this row.</summary>
+    public string ProxyPassword { get; set; } = "";
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
