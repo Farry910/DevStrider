@@ -34,6 +34,14 @@ public sealed class PeerInterviewRow
     public string Role { get; set; } = "";
     public string Recruiter { get; set; } = "";
     public string ResumeId { get; set; } = "";
+
+    /// <summary>
+    /// R2 object key for the resume this peer attached, or empty. Carried on the row so the
+    /// Download button binds directly — the file is fetched from R2 with your own credentials,
+    /// so nothing about the peer's setup is needed to read it.
+    /// </summary>
+    public string ResumeObjectKey { get; set; } = "";
+    public string ResumeFileName { get; set; } = "";
 }
 
 public partial class PeersViewModel : ViewModelBase
@@ -86,9 +94,48 @@ public partial class PeersViewModel : ViewModelBase
     private string _profileFilter = "";
     public string ProfileFilter { get => _profileFilter; set { if (SetProperty(ref _profileFilter, value)) _ = LoadAsync(); } }
 
-    public PeersViewModel(MongoContext db)
+    private readonly R2StorageService _storage;
+
+    public PeersViewModel(MongoContext db, R2StorageService storage)
     {
         _db = db;
+        _storage = storage;
+    }
+
+    /// <summary>
+    /// Download a teammate's interview resume from R2 and open it.
+    ///
+    /// <para>
+    /// Only the object key travels through the shared database; the bytes stay in R2 and are
+    /// fetched with <i>your</i> credentials. So this needs nothing from the peer beyond the key
+    /// they published — and it works even if they are offline.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    public async Task OpenPeerResumeAsync(object? param)
+    {
+        if (param is not PeerInterviewRow row) return;
+        if (string.IsNullOrWhiteSpace(row.ResumeObjectKey))
+        {
+            StatusMessage = "That interview has no resume attached.";
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = $"Downloading {row.ResumeFileName}…";
+            var (path, message) = await _storage.DownloadToTempAsync(row.ResumeObjectKey, row.ResumeFileName);
+            StatusMessage = message;
+            if (path is null) return;
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex) { StatusMessage = $"Couldn't open the file: {ex.Message}"; }
+        finally { IsBusy = false; }
     }
 
     /// <summary>Mirrored identities keyed by their shared-database id — resolves owner_user_id on rows.</summary>
@@ -232,7 +279,9 @@ public partial class PeersViewModel : ViewModelBase
                     Company = i.Company,
                     Role = i.Role,
                     Recruiter = i.Recruiter,
-                    ResumeId = i.ResumeId
+                    ResumeId = i.ResumeId,
+                    ResumeObjectKey = i.ResumeObjectKey,
+                    ResumeFileName = i.ResumeFileName
                 });
             }
 

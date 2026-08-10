@@ -59,6 +59,35 @@
           </DataGridComboBoxColumn.ItemsSource>
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="UID"        Binding="{Binding ResumeId}" Width="80"/>
+        <!-- The resume document itself, in Cloudflare R2. Separate from the UID column, which is
+             only the fast-feed identifier: this is the file you walk into the interview with. -->
+        <DataGridTemplateColumn Header="Resume" Width="150" CanUserSort="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal">
+                <Button Command="{Binding DataContext.UploadResumeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Attach a resume file and upload it to cloud storage"
+                        Content="&#xE898;"/>
+                <!-- Open and Remove stay hidden until something is attached, so the row does not
+                     offer actions that can only fail. -->
+                <Button Command="{Binding DataContext.OpenResumeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="{Binding ResumeFileName, StringFormat='Open {0}'}"
+                        Visibility="{Binding ResumeObjectKey, Converter={StaticResource NonEmptyToVisible}}"
+                        Content="&#xE8E5;"/>
+                <Button Command="{Binding DataContext.RemoveResumeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                        CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                        Style="{StaticResource DangerIconButton}"
+                        ToolTip="Remove the resume from cloud storage"
+                        Visibility="{Binding ResumeObjectKey, Converter={StaticResource NonEmptyToVisible}}"
+                        Content="&#xE74D;"/>
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTemplateColumn Header="Actions" Width="150" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>

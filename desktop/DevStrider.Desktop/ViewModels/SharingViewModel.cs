@@ -100,6 +100,36 @@ public partial class SharingViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
+    /// <summary>
+    /// Clear the delta marker and sync, so every local bid and interview is sent again.
+    ///
+    /// <para>
+    /// Needed because "already synced" is tracked by one timestamp on this machine, not by a flag
+    /// on each row. If the shared tables are rebuilt — recreated to add a column, restored from a
+    /// backup, pointed at a different server — the remote rows are gone but this machine still
+    /// believes it sent them, and normal syncs push nothing for ever. Every push is an upsert on
+    /// the row's own id, so re-sending is harmless.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    public async Task ResyncAllAsync()
+    {
+        if (!IsConfigured) return;
+        IsBusy = true;
+        try
+        {
+            StatusMessage = "Re-sending everything…";
+            var s = await _settings.GetForEditAsync();
+            s.LastSyncAt = DateTime.MinValue;
+            await _settings.SaveAsync(s);
+            _activity.Info("Peers", "Full resync", "Delta marker cleared — every bid and interview will be pushed.");
+
+            StatusMessage = await _sync.SyncAsync();
+            await LoadAsync();
+        }
+        finally { IsBusy = false; }
+    }
+
     /// <summary>List tables in the shared database with their row counts.</summary>
     [RelayCommand]
     public async Task LoadRemoteTablesAsync()

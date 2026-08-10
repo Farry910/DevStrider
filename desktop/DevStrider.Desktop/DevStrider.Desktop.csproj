@@ -36,7 +36,7 @@
       peer_users created_at NOT NULL violation, .2 the stale username_1 unique index, .3 the
       immutable _id on the identity mirror's ReplaceOne.
     -->
-    <Version>7.2.3</Version>
+    <Version>7.4.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -63,6 +63,11 @@
 
     <!-- PostgreSQL â€” the shared/peer database -->
     <PackageReference Include="Npgsql" Version="8.0.5" />
+
+    <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
+         https://<account>.r2.cloudflarestorage.com with region "auto" and path-style
+         addressing. Hand-rolling SigV4 would be a lot of security-critical code for no gain. -->
+    <PackageReference Include="AWSSDK.S3" Version="3.7.416.4" />
 
     <!-- DI container only â€” Hosting/Config/Logging aren't used in the WPF process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />

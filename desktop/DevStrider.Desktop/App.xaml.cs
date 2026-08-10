@@ -60,6 +60,7 @@ public partial class App : Application
             services.AddSingleton<ActivityLogService>();
             services.AddSingleton<SharedDbCredentials>();
             services.AddSingleton<SharedDbContext>();
+            services.AddSingleton<R2StorageService>();
             services.AddSingleton<PeerSyncService>();
             services.AddSingleton<SyncScheduler>();
             services.AddSingleton<WordMacroService>();

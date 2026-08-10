@@ -19,13 +19,42 @@ public partial class SettingsViewModel : ViewModelBase
         ProfileService profiles,
         LocalApiServer localApi,
         ActivityLogService activity,
-        SharedDbContext shared)
+        SharedDbContext shared,
+        R2StorageService storage)
     {
         _settings = settings;
         _profiles = profiles;
         _localApi = localApi;
         _activity = activity;
         _shared = shared;
+        _storage = storage;
+    }
+
+    private readonly R2StorageService _storage;
+
+    private string _r2TestResult = "";
+    public string R2TestResult { get => _r2TestResult; private set => SetProperty(ref _r2TestResult, value); }
+
+    /// <summary>
+    /// Prove the R2 credentials from Settings. Without this the first sign of a bad token is a
+    /// failed upload, long after the fields were filled in and forgotten about.
+    /// </summary>
+    [RelayCommand]
+    public async Task TestR2Async()
+    {
+        IsBusy = true;
+        try
+        {
+            R2TestResult = "Testing…";
+            // Save first: the service reads credentials from the settings row, so an untested
+            // edit sitting in the text boxes would otherwise be invisible to it.
+            await SaveAsync();
+            var result = await _storage.TestAsync();
+            R2TestResult = result.Message;
+            if (result.Ok) _activity.Success("Settings", "Cloud storage test passed", result.Message);
+            else _activity.Warning("Settings", "Cloud storage test failed", result.Message);
+        }
+        finally { IsBusy = false; }
     }
 
     private AppSettings _model = new();

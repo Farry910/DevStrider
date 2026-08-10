@@ -9,6 +9,8 @@ namespace DevStrider.Desktop.ViewModels;
 public partial class InterviewPanelViewModel : ViewModelBase
 {
     private readonly InterviewService _service;
+    private readonly R2StorageService _storage;
+    private readonly ProfileService _profile;
 
     public ObservableCollection<Interview> Items { get; } = new();
 
@@ -18,9 +20,13 @@ public partial class InterviewPanelViewModel : ViewModelBase
     private DateTime _to = DateTime.Today.AddDays(14);
     public DateTime To { get => _to; set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); } }
 
-    public InterviewPanelViewModel(InterviewService service, ProfileContext profileContext)
+    public InterviewPanelViewModel(
+        InterviewService service, ProfileContext profileContext,
+        R2StorageService storage, ProfileService profile)
     {
         _service = service;
+        _storage = storage;
+        _profile = profile;
         profileContext.ProfileChanged += () =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
@@ -70,6 +76,109 @@ public partial class InterviewPanelViewModel : ViewModelBase
         await _service.DeleteAsync(iv.Id);
         await ReloadAsync();
         StatusMessage = $"Deleted: {label}";
+    }
+
+    // ── Resume file in Cloudflare R2 ────────────────────────────────────────
+
+    /// <summary>
+    /// Attach a resume document to this interview and upload it to R2.
+    ///
+    /// <para>
+    /// The macro already writes a .docx and .pdf to disk when a bid is generated, but they only
+    /// ever existed on the machine that produced them. Putting the file behind the interview it
+    /// belongs to means it is there when the interview actually happens — and, once synced, a
+    /// teammate can pull the same document.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    public async Task UploadResumeAsync(object? param)
+    {
+        if (param is not Interview iv) return;
+        if (!await _storage.IsConfiguredAsync())
+        {
+            StatusMessage = "Cloud storage isn't configured — Settings → Cloud storage (Cloudflare R2).";
+            return;
+        }
+
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = $"Resume for {iv.Company} · {iv.InterviewType}",
+            Filter = "Resume documents|*.pdf;*.docx;*.doc;*.rtf;*.odt;*.txt|All files|*.*",
+            CheckFileExists = true,
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = "Uploading…";
+            var username = (await _profile.GetAsync()).Username ?? "";
+            var result = await _storage.UploadAsync(iv, dlg.FileName, username);
+            StatusMessage = result.Message;
+            if (!result.Ok) return;
+
+            // Persist the pointer, and bump UpdatedAt so the next sync carries it to peers.
+            await _service.UpdateAsync(iv);
+            await ReloadAsync();
+        }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>
+    /// Download the attached resume and hand it to the shell. Works for a peer's interview too —
+    /// the object key is all that's needed, so nothing extra is required to read someone else's.
+    /// </summary>
+    [RelayCommand]
+    public async Task OpenResumeAsync(object? param)
+    {
+        var (key, name) = param switch
+        {
+            Interview iv => (iv.ResumeObjectKey, iv.ResumeFileName),
+            PeerInterview pv => (pv.ResumeObjectKey, pv.ResumeFileName),
+            _ => ("", ""),
+        };
+        if (string.IsNullOrWhiteSpace(key)) { StatusMessage = "No resume attached."; return; }
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = "Downloading…";
+            var (path, message) = await _storage.DownloadToTempAsync(key, name);
+            StatusMessage = message;
+            if (path is null) return;
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
+            {
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex) { StatusMessage = $"Couldn't open the file: {ex.Message}"; }
+        finally { IsBusy = false; }
+    }
+
+    /// <summary>Delete the object from R2 and clear the interview's pointer.</summary>
+    [RelayCommand]
+    public async Task RemoveResumeAsync(object? param)
+    {
+        if (param is not Interview iv) return;
+        if (string.IsNullOrWhiteSpace(iv.ResumeObjectKey)) return;
+
+        var ok = ConfirmDialog.Ask(
+            System.Windows.Application.Current?.MainWindow,
+            "Remove resume?",
+            $"{iv.ResumeFileName}\n\nDeletes the file from cloud storage. Peers will lose access to it too.");
+        if (!ok) return;
+
+        IsBusy = true;
+        try
+        {
+            var result = await _storage.DeleteAsync(iv);
+            StatusMessage = result.Message;
+            if (!result.Ok) return;
+            await _service.UpdateAsync(iv);
+            await ReloadAsync();
+        }
+        finally { IsBusy = false; }
     }
 
     /// <summary>Open a modal with the interview's attached JD text.</summary>

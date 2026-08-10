@@ -76,6 +76,22 @@
             <DataGridTextColumn Header="Role"      Binding="{Binding Role}"     Width="*"/>
             <DataGridTextColumn Header="Recruiter" Binding="{Binding Recruiter}" Width="140"/>
             <DataGridTextColumn Header="UID"       Binding="{Binding ResumeId}" Width="80"/>
+            <!-- The peer's actual resume document, pulled straight from R2 with your own
+                 credentials. Hidden unless they attached one, so the column never offers a
+                 download that cannot succeed. -->
+            <DataGridTemplateColumn Header="Resume" Width="80" CanUserSort="False">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Button Command="{Binding DataContext.OpenPeerResumeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                          CommandParameter="{Binding ., FallbackValue={x:Null}, TargetNullValue={x:Null}}"
+                          Style="{StaticResource IconButton}"
+                          HorizontalAlignment="Left"
+                          ToolTip="{Binding ResumeFileName, StringFormat='Download {0}'}"
+                          Visibility="{Binding ResumeObjectKey, Converter={StaticResource NonEmptyToVisible}}"
+                          Content="&#xE896;"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>

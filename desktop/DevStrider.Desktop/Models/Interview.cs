@@ -98,6 +98,25 @@ public class Interview
     /// <summary>Resume snapshot at apply time.</summary>
     public string AttachedResumeContent { get; set; } = "";
 
+    // ── Resume file in Cloudflare R2 ────────────────────────────────────────
+    // AttachedResumeContent above is the resume *text* captured at apply time. These point at
+    // the actual document the candidate walks in with — the .docx/.pdf the Word macro produced,
+    // which until now existed only on the machine that generated it.
+
+    /// <summary>
+    /// R2 object key, or empty when nothing is attached. Shared with peers so a teammate can
+    /// download the same file; see <c>peer_interviews.resume_object_key</c>.
+    /// </summary>
+    public string ResumeObjectKey { get; set; } = "";
+
+    /// <summary>Original filename, kept so downloads land with a meaningful name.</summary>
+    public string ResumeFileName { get; set; } = "";
+
+    public long ResumeSizeBytes { get; set; }
+
+    /// <summary>Null when nothing has been uploaded.</summary>
+    public DateTime? ResumeUploadedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

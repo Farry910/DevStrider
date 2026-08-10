@@ -173,8 +173,21 @@
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
                      Text="{Binding R2SecretHint}"/>
 
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
                      Text="{Binding R2EndpointDisplay}"/>
+
+          <!-- Prove the token here rather than discovering it is wrong halfway through an
+               upload the user believed had worked. -->
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding TestR2Command}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE753;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Test cloud storage" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <TextBlock Text="{Binding R2TestResult}" VerticalAlignment="Center" TextWrapping="Wrap"
+                       Foreground="{StaticResource Muted}"/>
+          </StackPanel>
         </StackPanel>
       </Border>
 

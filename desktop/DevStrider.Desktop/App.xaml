@@ -12,6 +12,7 @@
 
       <!-- Shared converters used across views. -->
       <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+      <views:NonEmptyToVisibleConverter x:Key="NonEmptyToVisible"/>
 
       <!-- DataTemplates wire the right View to each ViewModel as Content of the shell ContentControl. -->
       <DataTemplate DataType="{x:Type vm:BidBoardViewModel}">

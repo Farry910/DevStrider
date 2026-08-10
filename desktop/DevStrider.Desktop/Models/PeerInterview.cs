@@ -52,6 +52,16 @@ public class PeerInterview
     public string ScheduledTime { get; set; } = "";
     public int? DurationMinutes { get; set; }
 
+    /// <summary>
+    /// R2 object key for the resume the owner attached, or empty. Sharing the key rather than the
+    /// bytes is the whole point of putting resumes in R2: the shared database stays small, and a
+    /// teammate downloads straight from storage with their own credentials.
+    /// </summary>
+    public string ResumeObjectKey { get; set; } = "";
+
+    /// <summary>Original filename, so a peer's download lands with a meaningful name.</summary>
+    public string ResumeFileName { get; set; } = "";
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

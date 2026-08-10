@@ -37,10 +37,21 @@
                 <TextBlock Text="Sync now" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding LoadCommand}" Style="{StaticResource GhostButton}">
+            <Button Command="{Binding LoadCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBlock Text="Refresh status" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <!-- "Already synced" is one timestamp on this machine, not a flag per row. If the
+                 shared tables are rebuilt, this is the only way to make them whole again. -->
+            <Button Command="{Binding ResyncAllCommand}"
+                    IsEnabled="{Binding IsConfigured}"
+                    Style="{StaticResource GhostButton}"
+                    ToolTip="Clear the sync marker and push every bid and interview again. Safe to repeat — every write is an upsert.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE117;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Re-send everything" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
           </StackPanel>

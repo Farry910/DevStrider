@@ -110,8 +110,21 @@ public sealed class PeerSyncService
             await PullIdentitiesAsync(conn);
 
             var mine = idByProfile.Values.ToList();
-            pushedBids = await PushBidsAsync(conn, idByProfile, lastSync);
-            pushedIvs = await PushInterviewsAsync(conn, idByProfile, lastSync);
+
+            // peer_interviews.bid_id is a foreign key into peer_bids, but the two tables are
+            // filtered by the same delta window independently. Edit an interview and its bid
+            // falls outside the window, so the interview pushes against a bid that was never
+            // sent and Postgres rejects it with peer_interviews_bid_id_fkey. Collect the bids
+            // the outgoing interviews depend on and push those too, whatever their own
+            // timestamp says.
+            var outgoingIvs = await _local.Interviews.Find(i => i.UpdatedAt > lastSync).ToListAsync();
+            var referencedBids = outgoingIvs
+                .Where(i => i.BidId != MongoDB.Bson.ObjectId.Empty)
+                .Select(i => i.BidId)
+                .ToHashSet();
+
+            (pushedBids, var pushedBidIds) = await PushBidsAsync(conn, idByProfile, lastSync, referencedBids);
+            pushedIvs = await PushInterviewsAsync(conn, idByProfile, outgoingIvs, pushedBidIds);
             pulledBids = await PullBidsAsync(conn, mine, lastSync);
             pulledIvs = await PullInterviewsAsync(conn, mine, lastSync);
 
@@ -233,15 +246,35 @@ public sealed class PeerSyncService
 
     // ── bids ────────────────────────────────────────────────────────────────
 
-    private async Task<int> PushBidsAsync(
-        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, DateTime since)
+    /// <summary>
+    /// Push bids changed since <paramref name="since"/>, plus any named in
+    /// <paramref name="alsoInclude"/> regardless of their timestamp — those are bids that
+    /// outgoing interviews point at, and the foreign key needs them present.
+    /// </summary>
+    /// <returns>How many were pushed, and which ids are now known to exist remotely.</returns>
+    private async Task<(int pushed, HashSet<MongoDB.Bson.ObjectId> pushedIds)> PushBidsAsync(
+        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, DateTime since,
+        HashSet<MongoDB.Bson.ObjectId> alsoInclude)
     {
         var mine = await _local.Bids.Find(b => b.UpdatedAt > since).ToListAsync();
+
+        var extra = alsoInclude.Except(mine.Select(b => b.Id)).ToList();
+        if (extra.Count > 0)
+        {
+            mine.AddRange(await _local.Bids
+                .Find(Builders<UserBid>.Filter.In(b => b.Id, extra))
+                .ToListAsync());
+        }
+
         var n = 0;
+        var skipped = 0;
+        var pushedIds = new HashSet<MongoDB.Bson.ObjectId>();
         foreach (var b in mine)
         {
-            // No published identity for this profile means it is not ours to push.
-            if (!idByProfile.TryGetValue(b.ProfileId, out var ownerId)) continue;
+            // No published identity for this profile means it is not ours to push. Counted rather
+            // than dropped in silence: the marker advances on success, so a silently skipped bid
+            // is never offered again — it just quietly never reaches the shared database.
+            if (!idByProfile.TryGetValue(b.ProfileId, out var ownerId)) { skipped++; continue; }
 
             await using var cmd = new NpgsqlCommand("""
                 INSERT INTO peer_bids (id, owner_user_id,
@@ -279,8 +312,12 @@ public sealed class PeerSyncService
 
             await cmd.ExecuteNonQueryAsync();
             n++;
+            pushedIds.Add(b.Id);
         }
-        return n;
+        if (skipped > 0)
+            _activity.Warning("Peers", "Bids not pushed",
+                $"{skipped} bid(s) belong to a profile with no published identity and were skipped.");
+        return (n, pushedIds);
     }
 
     private async Task<int> PullBidsAsync(NpgsqlConnection conn, List<long> mine, DateTime since)
@@ -330,21 +367,40 @@ public sealed class PeerSyncService
 
     // ── interviews ──────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Push the interviews the caller already selected. <paramref name="pushedBidIds"/> is the set
+    /// of bids known to exist remotely after the bid push; a reference to anything outside it is
+    /// written as NULL rather than risking the foreign key.
+    /// </summary>
     private async Task<int> PushInterviewsAsync(
-        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile, DateTime since)
+        NpgsqlConnection conn, Dictionary<MongoDB.Bson.ObjectId, long> idByProfile,
+        List<Interview> mine, HashSet<MongoDB.Bson.ObjectId> pushedBidIds)
     {
-        var mine = await _local.Interviews.Find(i => i.UpdatedAt > since).ToListAsync();
         var n = 0;
+        var skipped = 0;
+        var orphaned = 0;
         foreach (var iv in mine)
         {
-            if (!idByProfile.TryGetValue(iv.ProfileId, out var ownerId)) continue;
+            // Counted, not dropped in silence — see the note in PushBidsAsync.
+            if (!idByProfile.TryGetValue(iv.ProfileId, out var ownerId)) { skipped++; continue; }
+
+            // The bid this came from, but only if it actually reached the shared database. A bid
+            // that was deleted locally, or skipped because its profile has no published identity,
+            // would otherwise fail the whole sync on peer_interviews_bid_id_fkey — and losing the
+            // link is far better than losing the interview.
+            var bidRef = iv.BidId != MongoDB.Bson.ObjectId.Empty && pushedBidIds.Contains(iv.BidId)
+                ? iv.BidId
+                : MongoDB.Bson.ObjectId.Empty;
+            if (iv.BidId != MongoDB.Bson.ObjectId.Empty && bidRef == MongoDB.Bson.ObjectId.Empty) orphaned++;
 
             await using var cmd = new NpgsqlCommand("""
                 INSERT INTO peer_interviews (id, owner_user_id, bid_id,
                                              process_id, company, role, interview_type, status, recruiter, resume_id,
                                              job_description, scheduled_date, scheduled_time,
-                                             duration_minutes, created_at, updated_at)
-                VALUES (@id, @ou, @bd, @pr, @co, @ro, @it, @st, @rc, @ri, @jd, @sd, @sti, @dm, @ca, @ua)
+                                             duration_minutes, resume_object_key, resume_file_name,
+                                             created_at, updated_at)
+                VALUES (@id, @ou, @bd, @pr, @co, @ro, @it, @st, @rc, @ri, @jd, @sd, @sti, @dm,
+                        @rok, @rfn, @ca, @ua)
                 ON CONFLICT (id) DO UPDATE SET
                     owner_user_id      = EXCLUDED.owner_user_id,
                     bid_id             = EXCLUDED.bid_id,
@@ -359,6 +415,8 @@ public sealed class PeerSyncService
                     scheduled_date     = EXCLUDED.scheduled_date,
                     scheduled_time     = EXCLUDED.scheduled_time,
                     duration_minutes   = EXCLUDED.duration_minutes,
+                    resume_object_key  = EXCLUDED.resume_object_key,
+                    resume_file_name   = EXCLUDED.resume_file_name,
                     updated_at         = EXCLUDED.updated_at
                 """, conn);
 
@@ -367,7 +425,7 @@ public sealed class PeerSyncService
             // Empty means the interview never came from a bid -- send NULL, not "", so the
             // foreign key and "no bid" read the same way in SQL as they do here.
             cmd.Parameters.AddWithValue("bd",
-                iv.BidId == MongoDB.Bson.ObjectId.Empty ? DBNull.Value : iv.BidId.ToString());
+                bidRef == MongoDB.Bson.ObjectId.Empty ? DBNull.Value : bidRef.ToString());
             cmd.Parameters.AddWithValue("pr", iv.ProcessId == MongoDB.Bson.ObjectId.Empty ? "" : iv.ProcessId.ToString());
             cmd.Parameters.AddWithValue("co", iv.Company ?? "");
             cmd.Parameters.AddWithValue("ro", iv.Role ?? "");
@@ -379,12 +437,23 @@ public sealed class PeerSyncService
             cmd.Parameters.AddWithValue("sd", (object?)SharedDbContext.Utc(iv.ScheduledDate) ?? DBNull.Value);
             cmd.Parameters.AddWithValue("sti", iv.ScheduledTime ?? "");
             cmd.Parameters.AddWithValue("dm", (object?)iv.DurationMinutes ?? DBNull.Value);
+            // The key, not the file. Peers download from R2 with their own credentials, so the
+            // shared database carries a pointer and stays small.
+            cmd.Parameters.AddWithValue("rok", iv.ResumeObjectKey ?? "");
+            cmd.Parameters.AddWithValue("rfn", iv.ResumeFileName ?? "");
             cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(iv.CreatedAt));
             cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(iv.UpdatedAt));
 
             await cmd.ExecuteNonQueryAsync();
             n++;
         }
+        if (skipped > 0)
+            _activity.Warning("Peers", "Interviews not pushed",
+                $"{skipped} interview(s) belong to a profile with no published identity and were skipped.");
+        if (orphaned > 0)
+            _activity.Warning("Peers", "Interview bid link dropped",
+                $"{orphaned} interview(s) reference a bid that isn't in the shared database; " +
+                "sent with no bid link rather than failing the sync.");
         return n;
     }
 
@@ -394,7 +463,7 @@ public sealed class PeerSyncService
             SELECT id, owner_user_id, process_id,
                    company, role, interview_type, status, recruiter, resume_id, job_description,
                    scheduled_date, scheduled_time, duration_minutes, created_at, updated_at,
-                   bid_id
+                   bid_id, resume_object_key, resume_file_name
             FROM peer_interviews
             WHERE updated_at > @since AND NOT (owner_user_id = ANY(@mine))
             """, conn);
@@ -426,6 +495,8 @@ public sealed class PeerSyncService
                     UpdatedAt = r.GetDateTime(14),
                     BidId = r.IsDBNull(15) || !MongoDB.Bson.ObjectId.TryParse(r.GetString(15), out var bid)
                         ? MongoDB.Bson.ObjectId.Empty : bid,
+                    ResumeObjectKey = r.IsDBNull(16) ? "" : r.GetString(16),
+                    ResumeFileName = r.IsDBNull(17) ? "" : r.GetString(17),
                 });
             }
         }
