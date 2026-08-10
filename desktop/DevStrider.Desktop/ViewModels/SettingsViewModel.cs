@@ -250,7 +250,14 @@ public partial class SettingsViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            await _settings.SaveAsync(Model);
+            // This must be the view-model's SaveAsync, not _settings.SaveAsync(Model).
+            //
+            // A PasswordBox can't be data-bound — the plaintext never enters the binding engine
+            // — so a typed password sits in SharedDbPasswordEntry until SaveAsync copies it onto
+            // Model. Saving Model directly skipped that: the test ran with no password ("No
+            // password has been provided but the backend requires one") and, worse, persisted
+            // the empty one over a working password.
+            await SaveAsync();
             var (ok, message) = await _shared.TestConnectionAsync();
             StatusMessage = ok ? $"Shared database reachable — {message}" : $"Shared database unreachable — {message}";
             if (ok) _activity.Success("Peers", "Connection test passed", message);
