@@ -195,6 +195,17 @@ function Get-MacroErrorTail {
     } catch { return '' }
 }
 
+function Test-DispatchFailure([string]$message) {
+    # Errors raised BEFORE the macro body is entered: a name Word can't find, a Sub whose
+    # signature doesn't take the single string argument, or a disabled project. Those are real
+    # failures, and they identify themselves by message.
+    #
+    # Everything else that threw has already run the macro to completion — overwhelmingly
+    # 0x800A9C68, which is just Application.Quit collapsing the RPC channel while this very call
+    # is still on the stack.
+    return $message -match 'Number of parameters|does not match the expected|member not found|DISP_E_MEMBERNOTFOUND|0x80020003|cannot be found|has been disabled'
+}
+
 function Test-WordAlive {
     # Prefer the process handle. Probing the COM proxy is unreliable: once Word has quit,
     # PowerShell's adapter returns $null for $word.Name instead of throwing, so a try/catch
@@ -270,21 +281,17 @@ try {
         throw "Macro reported: $macroError"
     }
 
-    if ($runFailed) {
-        # Run threw but the macro logged nothing. Either it quit Word mid-call (success, and the
-        # HRESULT is just the channel collapsing) or the call never reached the macro at all --
-        # a missing name, a disabled project. Word still being here separates the two.
-        #
-        # This has to be a poll, not a sleep: Word takes a few seconds to finish exiting after
-        # Application.Quit, so a fixed wait either reports a good run as failed or pads every
-        # genuine failure. A macro that never dispatched leaves Word untouched, so it costs the
-        # full window -- paid only on a misconfiguration, and it stops the 90-second silence.
-        $deadline = (Get-Date).AddSeconds(12)
-        while ((Get-Date) -lt $deadline -and (Test-WordAlive)) { Start-Sleep -Milliseconds 250 }
-        if (Test-WordAlive) {
-            Close-OurWork
-            throw "Macro call failed: $runFailed"
-        }
+    # Run threw but the macro logged nothing, so the only question left is whether it ever
+    # reached the macro. The message answers that; whether Word has finished exiting does not.
+    #
+    # This used to poll up to 12 seconds for the process to disappear and call the run failed if
+    # it hadn't. That was a race, not a test: a longer resume means a slower PDF export and a
+    # slower shutdown, and on a machine where Word was already running there is no PID of ours to
+    # watch at all. It reported failure on runs that had produced the .docx, the .pdf and the
+    # recorded bid — and cost up to twelve seconds doing it.
+    if ($runFailed -and (Test-DispatchFailure $runFailed)) {
+        Close-OurWork
+        throw "Macro call failed: $runFailed"
     }
 
     # No-op when the macro already quit; tidies up when it did not.
