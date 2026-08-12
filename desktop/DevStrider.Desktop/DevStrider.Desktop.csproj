@@ -34,9 +34,12 @@
     <!--
       Patch number counts bug fixes since the minor. 7.2.0 was the .NET 10 retarget; .1 the
       peer_users created_at NOT NULL violation, .2 the stale username_1 unique index, .3 the
-      immutable _id on the identity mirror's ReplaceOne.
+      immutable _id on the identity mirror's ReplaceOne. 7.7.0 dropped the PowerShell hop from
+      the resume macro and made the Word instance warm + prewarmed. 7.8.0 deleted the retired
+      resume-storage feature — a minor, not a patch, since it removes types rather than fixing
+      behaviour.
     -->
-    <Version>7.6.2</Version>
+    <Version>7.8.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

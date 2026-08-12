@@ -53,9 +53,6 @@ public class MongoContext
     public IMongoCollection<AppSettings> Settings =>
         Database.GetCollection<AppSettings>("settings");
 
-    public IMongoCollection<Resume> Resumes =>
-        Database.GetCollection<Resume>("resumes");
-
     /// <summary>Local mirror of peer bids pulled from the shared Atlas cluster.</summary>
     public IMongoCollection<PeerBid> PeerBids =>
         Database.GetCollection<PeerBid>("peerBids");
@@ -109,11 +106,6 @@ public class MongoContext
                 .Ascending(x => x.Kind)
                 .Ascending(x => x.PeriodKey),
             new CreateIndexOptions { Unique = true }));
-
-        await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
-            Builders<Resume>.IndexKeys.Ascending(x => x.Uid)));
-        await Resumes.Indexes.CreateOneAsync(new CreateIndexModel<Resume>(
-            Builders<Resume>.IndexKeys.Descending(x => x.UploadedAt)));
 
         // Peer mirror — index by Owner + Updated for the Peers tab's date+owner filters.
         await PeerBids.Indexes.CreateOneAsync(new CreateIndexModel<PeerBid>(

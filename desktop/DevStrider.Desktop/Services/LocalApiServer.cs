@@ -254,6 +254,12 @@ public sealed partial class LocalApiServer : ObservableObject
                 return;
             }
 
+            if (ctx.Request.HttpMethod == "POST" && path == "/prewarm")
+            {
+                await HandlePrewarmAsync(ctx);
+                return;
+            }
+
             if (ctx.Request.HttpMethod == "GET" && path == "/active-profile")
             {
                 // The extension opens a *fresh* ChatGPT chat per bid, so it has to send the
@@ -431,6 +437,31 @@ public sealed partial class LocalApiServer : ObservableObject
         });
     }
 
+
+    /// <summary>
+    /// Fired by the extension the instant the prompt is submitted to ChatGPT, so Word can be
+    /// launched and the template opened during the thirty-odd seconds ChatGPT spends writing.
+    /// That work used to happen after the reply landed, with the user watching.
+    ///
+    /// <para>
+    /// Answers immediately and never fails the caller: a prewarm is an optimisation, and
+    /// <see cref="HandleGenerateResumeAsync"/> opens whatever is still missing. Blocking here
+    /// would stall the extension's own generation loop for the sake of work it doesn't need yet.
+    /// </para>
+    /// </summary>
+    private async Task HandlePrewarmAsync(HttpListenerContext ctx)
+    {
+        _ = await ReadBodyAsync(ctx);
+
+        var docm = (_profileContext.Current?.WordDocPath ?? "").Trim();
+        if (!string.IsNullOrEmpty(docm))
+        {
+            // Deliberately not awaited — the response goes back now, Word warms up behind it.
+            _ = Task.Run(() => _wordMacro.PrewarmAsync(docm));
+        }
+
+        await WriteJsonAsync(ctx, 200, new { ok = true, warming = !string.IsNullOrEmpty(docm) });
+    }
 
     /// <summary>
     /// The one-button flow: the extension hands over a finished ChatGPT reply, we build the

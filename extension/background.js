@@ -6,6 +6,7 @@
 //   job tab clicks the button
 //     → GET  /active-profile   (fetch the resume prompt)
 //     → INJECT_PROMPT         (drive the *background* ChatGPT tab, never focusing it)
+//     → POST /prewarm          (launch Word + open the template *while* ChatGPT writes)
 //     → poll GET_GENERATION_STATE until the reply settles (the loop lives here, not in the tab)
 //     → POST /generate-resume  (silent Word macro + record the bid)
 //     → reply back to the job tab
@@ -47,13 +48,19 @@ function fetchActiveProfile(callback) {
 // minutes — which a ChatGPT tab left open in the background always has been. A service worker
 // has no document, so none of that applies to it, and the content script answers each poll the
 // moment it arrives.
-const GEN_POLL_MS = 1500;
+const GEN_POLL_MS = 500;
 const GEN_TIMEOUT_MS = 300000;
 // How long the reply must stay byte-identical before we call it finished. This is wall clock,
 // not a tick count: ticks used to be driven by DOM mutations, so two firing in quick succession
 // mid-stream could declare a half-written resume complete — which is how a bid once got recorded
 // from a sentence in the middle of an experience section.
-const GEN_QUIET_MS = 3000;
+//
+// Two budgets, because the two cases are not the same question. With a [FolderName]: line the
+// reply has *proven* it is whole, so the quiet period is only guarding against the DOM settling
+// — a few hundred milliseconds. Without one there is no end-of-reply marker at all and the wait
+// is the only evidence there is, so it stays long. The old code charged the long-marker case
+// 3s and the no-marker case 15s; the 3s bought nothing that 600ms doesn't.
+const GEN_QUIET_COMPLETE_MS = 600;
 // Grace for replies with no [FolderName]: line, where we have no positive end-of-reply marker.
 const GEN_SETTLED_MS = 15000;
 
@@ -92,14 +99,23 @@ function waitForGeneration(tabId, callback) {
       // Settled means: not streaming, and the text has stopped changing. With a [FolderName]:
       // line we know the reply is whole and a short quiet period is enough; without one we wait
       // longer, because there is nothing to distinguish "finished" from "paused mid-sentence".
-      var settled = !resp.streaming && quietFor >= GEN_QUIET_MS &&
-                    (looksComplete(text) || quietFor >= GEN_SETTLED_MS);
+      var settled = !resp.streaming && (looksComplete(text)
+        ? quietFor >= GEN_QUIET_COMPLETE_MS
+        : quietFor >= GEN_SETTLED_MS);
 
       if (settled && text.length >= 20) { callback({ ok: true, reply: text }); return; }
       setTimeout(poll, GEN_POLL_MS);
     });
   }
   poll();
+}
+
+// Tell the app a generation is under way so it can get Word up and the template open before the
+// text exists. Fire-and-forget on purpose: the reply is 30-60 seconds away and nothing in this
+// flow depends on the outcome, so a failure here just means the macro pays for the launch itself.
+function prewarmWord() {
+  fetchWithTimeout(APP_URL + "/prewarm", { method: "POST" }, 5000)
+    .catch(function () { /* app not running, or no template on the profile — not our problem */ });
 }
 
 // Ask the app to build the resume silently and record the bid. `reply` is the full ChatGPT
@@ -145,6 +161,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
         chrome.tabs.sendMessage(chatTabId, { type: "INJECT_PROMPT", text: payload }, function (resp) {
           if (chrome.runtime.lastError) { sendResponse({ ok: false, error: chrome.runtime.lastError.message }); return; }
           if (!resp || !resp.ok) { sendResponse({ ok: false, error: (resp && resp.error) || "ChatGPT tab didn't respond" }); return; }
+          // The prompt is in and ChatGPT is writing. Everything Word needs doing can happen now,
+          // in parallel with that, instead of after it.
+          prewarmWord();
           waitForGeneration(chatTabId, function (gen) {
             if (!gen.ok) { sendResponse({ ok: false, error: gen.error }); return; }
             postGenerateResume({ url: url, jobDescription: jd }, gen.reply, sendResponse);

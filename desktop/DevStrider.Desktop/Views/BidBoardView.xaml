@@ -183,9 +183,9 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <!-- Bid.ResumeId is the resume's UID (e.g. "7mK92") — the filename prefix of the
-             resume file the user uploaded for this job. Lets the Interview row's download
-             button resolve back to a file via ResumeService.GetByUidAsync. -->
+        <!-- Bid.ResumeId is the resume's UID (e.g. "7mK92"), read off the fast-feed line and
+             also the prefix of the output folder the Word macro writes into. Carried onto the
+             Interview row at scheduling time so a round can be traced back to what was sent. -->
         <DataGridTextColumn Header="UID"        Binding="{Binding Bid.ResumeId}" Width="80"/>
         <DataGridTextColumn Header="Company"    Binding="{Binding Bid.Company}" Width="*"/>
         <DataGridTextColumn Header="Role"       Binding="{Binding Bid.Role}" Width="*"/>

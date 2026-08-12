@@ -56,7 +56,6 @@ public partial class App : Application
             services.AddSingleton<InterviewService>();
             services.AddSingleton<StatsService>();
             services.AddSingleton<AchievementService>();
-            services.AddSingleton<ResumeService>();
             services.AddSingleton<ActivityLogService>();
             services.AddSingleton<SharedDbCredentials>();
             services.AddSingleton<SharedDbContext>();
@@ -65,7 +64,6 @@ public partial class App : Application
             services.AddSingleton<SyncScheduler>();
             services.AddSingleton<WordMacroService>();
             services.AddSingleton<LocalApiServer>();
-            services.AddSingleton<ResumeAutoIngestService>();
 
             services.AddSingleton<BidBoardViewModel>();
             services.AddSingleton<InterviewPanelViewModel>();
@@ -204,8 +202,10 @@ public partial class App : Application
         catch { /* shutting down anyway */ }
         try
         {
-            (Services?.GetService(typeof(ResumeAutoIngestService)) as ResumeAutoIngestService)?.Dispose();
             (Services?.GetService(typeof(SyncScheduler)) as SyncScheduler)?.Dispose();
+            // Must run before the Kill() below: the warm Word instance is invisible, so an
+            // orphaned WINWORD.EXE is one the user can only find in Task Manager.
+            (Services?.GetService(typeof(WordMacroService)) as WordMacroService)?.Dispose();
         }
         catch { /* ignore */ }
         Tray?.Dispose();

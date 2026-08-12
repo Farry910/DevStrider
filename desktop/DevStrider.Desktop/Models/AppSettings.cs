@@ -77,9 +77,11 @@ public class AppSettings
     public string WordHotkey { get; set; } = "F9";
 
     /// <summary>
-    /// Folder the Word macro saves generated resume files into. **No longer used** for
-    /// auto-ingest — resumes aren't stored or shared. Kept on the schema only so old docs
-    /// deserialize cleanly.
+    /// Dead field. It once pointed at the folder a <c>FileSystemWatcher</c> scraped generated
+    /// resumes out of, into a <c>resumes</c> collection nothing read; that whole feature is
+    /// gone. Each profile's macro hardcodes its own output root, so nothing here needs to know
+    /// it. Kept on the schema only so settings documents written before the removal still
+    /// deserialize — do not wire anything new to it.
     /// </summary>
     public string ResumeOutputFolder { get; set; } = "";
 
