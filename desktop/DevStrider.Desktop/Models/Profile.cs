@@ -35,9 +35,15 @@ public class Profile
     public string ResumePrompt { get; set; } = "";
 
     /// <summary>
-    /// Name of the VBA macro inside <see cref="WordDocPath"/> to invoke via COM
-    /// (e.g. "UpdateResumeAndSwitchOriginal"). Migrated from ResumeAuto's <c>macro_name</c>.
-    /// Empty = fall back to the legacy F9-hotkey trigger.
+    /// Name of the VBA macro inside <see cref="WordDocPath"/> to invoke via COM. Migrated from
+    /// ResumeAuto's <c>macro_name</c>; new profiles are seeded with
+    /// <c>WordMacroService.DefaultMacroName</c> by <c>ProfilesService.CreateAsync</c>.
+    ///
+    /// <para>
+    /// Empty resolves to that same default at call time — it does <i>not</i> fall back to the
+    /// legacy F9-hotkey trigger, whatever this comment used to claim. Profiles created before
+    /// the field was seeded still hold "" and behave identically.
+    /// </para>
     /// </summary>
     public string MacroName { get; set; } = "";
 

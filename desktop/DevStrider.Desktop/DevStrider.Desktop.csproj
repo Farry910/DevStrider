@@ -37,9 +37,10 @@
       immutable _id on the identity mirror's ReplaceOne. 7.7.0 dropped the PowerShell hop from
       the resume macro and made the Word instance warm + prewarmed. 7.8.0 deleted the retired
       resume-storage feature — a minor, not a patch, since it removes types rather than fixing
-      behaviour.
+      behaviour. 7.9.0 made the Profiles editor scroll with its action row pinned, so Save can no
+      longer be clipped off the bottom at small window sizes.
     -->
-    <Version>7.8.0</Version>
+    <Version>7.9.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

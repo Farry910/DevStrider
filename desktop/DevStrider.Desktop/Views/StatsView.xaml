@@ -36,8 +36,11 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
+    <!-- Fills whatever the header and the filter chips leave behind. The chart used to be pinned
+         at 360px, which overflowed the moment the chips wrapped to a second row on a narrow
+         window — and wasted the space on a tall one. -->
     <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Border}" BorderThickness="1" Padding="6">
-      <lvc:CartesianChart x:Name="Chart" Height="360"/>
+      <lvc:CartesianChart x:Name="Chart" MinHeight="200"/>
     </Border>
   </DockPanel>
 </UserControl>

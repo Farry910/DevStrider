@@ -24,9 +24,21 @@ public class ProfilesService
     public Task<Profile?> GetAsync(ObjectId id) =>
         _db.BidProfiles.Find(p => p.Id == id).FirstOrDefaultAsync()!;
 
+    /// <summary>
+    /// The only place a <see cref="Profile"/> is constructed — the Profiles tab and the
+    /// single-profile migration both come through here.
+    /// </summary>
     public async Task<Profile> CreateAsync(string name, string wordDocPath = "")
     {
-        var p = new Profile { Name = (name ?? "").Trim(), WordDocPath = wordDocPath ?? "" };
+        var p = new Profile
+        {
+            Name = (name ?? "").Trim(),
+            WordDocPath = wordDocPath ?? "",
+            // Every template ships with this entry point, so seed it rather than leaving the
+            // field blank. Blank has always resolved to the same name at call time, but only
+            // after the UI had shown an empty box that looked like something still to fill in.
+            MacroName = WordMacroService.DefaultMacroName,
+        };
         if (p.Name.Length == 0) p.Name = "Profile";
         await _db.BidProfiles.InsertOneAsync(p);
         return p;

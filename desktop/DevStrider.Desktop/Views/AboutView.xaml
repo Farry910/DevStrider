@@ -1,7 +1,9 @@
 <UserControl x:Class="DevStrider.Desktop.Views.AboutView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <ScrollViewer VerticalScrollBarVisibility="Auto">
+  <!-- Padding keeps the scrollbar off the text: below ~900px the content area is narrower than
+       the MaxWidth below, so the column runs right up to where the bar appears. -->
+  <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
     <StackPanel MaxWidth="760" HorizontalAlignment="Left">
       <TextBlock Text="About" Style="{StaticResource H1}"/>
 

@@ -39,8 +39,8 @@
 
     <Grid>
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="240"/>
-        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="240" MinWidth="160"/>
+        <ColumnDefinition Width="*" MinWidth="360"/>
       </Grid.ColumnDefinitions>
 
       <!-- Profile list -->
@@ -50,95 +50,150 @@
           <ListBox ItemsSource="{Binding Profiles}"
                    SelectedItem="{Binding Selected, Mode=TwoWay}"
                    BorderThickness="0"
-                   Background="Transparent">
+                   Background="Transparent"
+                   ScrollViewer.VerticalScrollBarVisibility="Auto">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <TextBlock Text="{Binding Name}" Margin="0,4"/>
+                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" Margin="0,4"/>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
         </DockPanel>
       </Border>
 
-      <!-- Editor -->
+      <!--
+        Editor.
+
+        The form used to be one StackPanel, which hands its children unlimited height: on any
+        window shorter than the content the action row at the bottom was simply cut off, with no
+        scrollbar to reach it. Now the actions are docked FIRST, so DockPanel reserves their
+        height before the scroll region gets what's left — they cannot be pushed off-screen at
+        any resolution — and the form scrolls underneath them.
+      -->
       <Border Grid.Column="1" Style="{StaticResource Card}">
-        <StackPanel IsEnabled="{Binding Selected, Converter={x:Null}}">
-          <TextBlock Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <DockPanel IsEnabled="{Binding Selected, Converter={x:Null}}">
 
-          <TextBlock Text="Real name (shown in the title bar)"/>
-          <TextBox Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}"
-                   Tag="e.g. Fernando Garcia"
-                   Margin="0,2,0,12"/>
+          <!-- Declared before the ScrollViewer on purpose: DockPanel allocates in declaration
+               order, so this keeps its height and the scroller absorbs the shortfall. -->
+          <Border DockPanel.Dock="Bottom"
+                  BorderBrush="{StaticResource Border}"
+                  BorderThickness="0,1,0,0"
+                  Margin="0,10,0,0"
+                  Padding="0,10,0,0">
+            <!-- WrapPanel, not StackPanel: on a narrow window the three buttons drop onto a
+                 second line instead of the last one running off the edge of the card. -->
+            <WrapPanel Orientation="Horizontal">
+              <Button Command="{Binding SaveProfileCommand}" Margin="0,0,8,4">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                  <TextBlock Text="Save" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
+              <Button Command="{Binding SetActiveCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,4">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE7B7;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                  <TextBlock Text="Set active" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
+              <Button Command="{Binding DeleteProfileCommand}" Style="{StaticResource GhostButton}" Margin="0,0,0,4">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Danger}"/>
+                  <TextBlock Text="Delete" VerticalAlignment="Center" Foreground="{StaticResource Danger}"/>
+                </StackPanel>
+              </Button>
+            </WrapPanel>
+          </Border>
 
-          <TextBlock Text="Word document path (.docm with the macro)"/>
-          <Grid Margin="0,2,0,4">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Grid.Column="0"
-                     Text="{Binding Selected.WordDocPath, UpdateSourceTrigger=PropertyChanged}"
-                     FontFamily="Consolas"
-                     Tag="C:\Users\you\Documents\Resume Generator.docm"/>
-            <Button Grid.Column="1" Margin="6,0,0,0"
-                    Command="{Binding BrowseWordPathCommand}"
-                    Style="{StaticResource IconButton}"
-                    ToolTip="Browse for Word document"
-                    Content="&#xE8E5;"/>
-          </Grid>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
-                     Text="The .docm holding this person's resume layout, bookmarks and macro. Each profile has its own — that's what makes the output theirs."/>
+          <ScrollViewer x:Name="EditorScroll"
+                        VerticalScrollBarVisibility="Auto"
+                        Padding="0,0,6,0">
+            <!--
+              MinHeight tracks the viewport so the starred row below still has somewhere to
+              stretch into. Without it a ScrollViewer measures its child at infinite height, the
+              star collapses to the textbox's minimum, and the prompt box would stay small no
+              matter how tall the window got.
+            -->
+            <Grid MinHeight="{Binding ViewportHeight, ElementName=EditorScroll}">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>   <!-- 0  section title -->
+                <RowDefinition Height="Auto"/>   <!-- 1  name label -->
+                <RowDefinition Height="Auto"/>   <!-- 2  name box -->
+                <RowDefinition Height="Auto"/>   <!-- 3  doc path label -->
+                <RowDefinition Height="Auto"/>   <!-- 4  doc path box + browse -->
+                <RowDefinition Height="Auto"/>   <!-- 5  doc path help -->
+                <RowDefinition Height="Auto"/>   <!-- 6  macro label -->
+                <RowDefinition Height="Auto"/>   <!-- 7  macro box -->
+                <RowDefinition Height="Auto"/>   <!-- 8  macro help -->
+                <RowDefinition Height="Auto"/>   <!-- 9  prompt label + insert default -->
+                <RowDefinition Height="*" MinHeight="120"/>  <!-- 10 prompt box, takes the slack -->
+                <RowDefinition Height="Auto"/>   <!-- 11 prompt help -->
+              </Grid.RowDefinitions>
 
-          <TextBlock Text="Word macro name"/>
-          <TextBox Text="{Binding Selected.MacroName, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   Tag="UpdateResumeAndSwitchOriginal"
-                   Margin="0,2,0,4"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
-                     Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
+              <TextBlock Grid.Row="0" Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
-          <Grid Margin="0,0,0,2">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="Resume prompt (sent to ChatGPT before each job description)" VerticalAlignment="Center"/>
-            <Button Grid.Column="1" Command="{Binding UseDefaultPromptCommand}" Style="{StaticResource GhostButton}" Padding="8,2">
-              <TextBlock Text="Insert default" FontSize="11"/>
-            </Button>
-          </Grid>
-          <TextBox Text="{Binding Selected.ResumePrompt, UpdateSourceTrigger=PropertyChanged}"
-                   AcceptsReturn="True"
-                   TextWrapping="Wrap"
-                   VerticalScrollBarVisibility="Auto"
-                   Height="120"
-                   FontFamily="Consolas"
-                   Tag="Act as an expert resume writer. Tailor my resume to this job description…"
-                   Margin="0,2,0,4"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
-                     Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
+              <TextBlock Grid.Row="1" Text="Real name (shown in the title bar)"/>
+              <TextBox Grid.Row="2"
+                       Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}"
+                       Tag="e.g. Fernando Garcia"
+                       Margin="0,2,0,12"/>
 
-          <StackPanel Orientation="Horizontal">
-            <Button Command="{Binding SaveProfileCommand}" Margin="0,0,8,0">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Save" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-            <Button Command="{Binding SetActiveCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE7B7;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Set active" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-            <Button Command="{Binding DeleteProfileCommand}" Style="{StaticResource GhostButton}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Danger}"/>
-                <TextBlock Text="Delete" VerticalAlignment="Center" Foreground="{StaticResource Danger}"/>
-              </StackPanel>
-            </Button>
-          </StackPanel>
-        </StackPanel>
+              <TextBlock Grid.Row="3" Text="Word document path (.docm with the macro)"/>
+              <Grid Grid.Row="4" Margin="0,2,0,4">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0"
+                         Text="{Binding Selected.WordDocPath, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="Consolas"
+                         Tag="C:\Users\you\Documents\Resume Generator.docm"/>
+                <Button Grid.Column="1" Margin="6,0,0,0"
+                        Command="{Binding BrowseWordPathCommand}"
+                        Style="{StaticResource IconButton}"
+                        ToolTip="Browse for Word document"
+                        Content="&#xE8E5;"/>
+              </Grid>
+              <TextBlock Grid.Row="5" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+                         Text="The .docm holding this person's resume layout, bookmarks and macro. Each profile has its own — that's what makes the output theirs."/>
+
+              <TextBlock Grid.Row="6" Text="Word macro name"/>
+              <TextBox Grid.Row="7"
+                       Text="{Binding Selected.MacroName, UpdateSourceTrigger=PropertyChanged}"
+                       FontFamily="Consolas"
+                       Tag="UpdateResumeAndSwitchOriginal"
+                       Margin="0,2,0,4"/>
+              <TextBlock Grid.Row="8" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+                         Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
+
+              <Grid Grid.Row="9" Margin="0,0,0,2">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Resume prompt (sent to ChatGPT before each job description)"
+                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Button Grid.Column="1" Command="{Binding UseDefaultPromptCommand}" Style="{StaticResource GhostButton}" Padding="8,2"
+                        VerticalAlignment="Center">
+                  <TextBlock Text="Insert default" FontSize="11"/>
+                </Button>
+              </Grid>
+              <!-- Stretches into whatever height is spare. The prompt is the one field here
+                   people actually read and edit at length, so it gets the slack rather than a
+                   fixed 120px that was too small on a big screen and too big on a laptop. -->
+              <TextBox Grid.Row="10"
+                       Text="{Binding Selected.ResumePrompt, UpdateSourceTrigger=PropertyChanged}"
+                       AcceptsReturn="True"
+                       TextWrapping="Wrap"
+                       VerticalScrollBarVisibility="Auto"
+                       VerticalAlignment="Stretch"
+                       FontFamily="Consolas"
+                       Tag="Act as an expert resume writer. Tailor my resume to this job description…"
+                       Margin="0,2,0,4"/>
+              <TextBlock Grid.Row="11" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,0"
+                         Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
+            </Grid>
+          </ScrollViewer>
+        </DockPanel>
       </Border>
     </Grid>
   </DockPanel>
