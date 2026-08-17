@@ -1,11 +1,15 @@
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
 
 namespace DevStrider.Desktop.Models;
 
 public static class BidStatuses
 {
+    /// <summary>
+    /// The URL has been captured but nothing has been bid yet. This is what a bare job link
+    /// <i>is</i> — see the note on <see cref="UserBid"/> about the merge.
+    /// </summary>
     public const string Draft = "draft";
+
     public const string Applied = "applied";
     public const string Screening = "screening";
     public const string PhoneScreening = "phone_screening";
@@ -22,15 +26,50 @@ public static class BidStatuses
     };
 }
 
+/// <summary>
+/// A job posting and the bid made against it — one row, one thing.
+///
+/// <para>
+/// These used to be two: a <c>GroupLink</c> holding the URL, and a bid pointing at it. The
+/// relationship was always one-to-one, and a link with no bid behind it is exactly what
+/// <see cref="BidStatuses.Draft"/> already means. So the row is created when the URL is captured
+/// and filled in when the bid is actually made.
+/// </para>
+///
+/// <para>
+/// Three columns died in that merge and are not coming back: the link's applied-company /
+/// applied-role / applied-stacks snapshot duplicated <see cref="Company"/> / <see cref="Role"/> /
+/// <see cref="PrimaryStacks"/> with a fallback between them, and its shared job description was a
+/// second copy of <see cref="JobDescription"/> that the JD viewer already fell back to.
+/// </para>
+/// </summary>
 public class UserBid
 {
-    [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> on legacy rows until the migration backfills them.</summary>
+    /// <summary>Owning account — <c>app_user.id</c>. Stamped by the repository on write.</summary>
+    public long UserId { get; set; }
+
+    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> until a profile is stamped on.</summary>
     public ObjectId ProfileId { get; set; }
 
-    public ObjectId GroupLinkId { get; set; }
+    // ── the posting ─────────────────────────────────────────────────────────
+
+    public string Url { get; set; } = "";
+
+    /// <summary>
+    /// Canonical form for dedup: lower-cased href with trailing slash trimmed; query + hash
+    /// preserved. Different query strings are different postings, deliberately.
+    /// </summary>
+    public string UrlNorm { get; set; } = "";
+
+    /// <summary>
+    /// Set when the posting is written off as not worth bidding on. Distinct from simply having
+    /// no bid yet, which is <see cref="BidStatuses.Draft"/>.
+    /// </summary>
+    public DateTime? MarkedUselessAt { get; set; }
+
+    // ── the bid ─────────────────────────────────────────────────────────────
 
     public string ResumeId { get; set; } = "";
     public string Company { get; set; } = "";
@@ -44,16 +83,14 @@ public class UserBid
     public string GptResumeContent { get; set; } = "";
     public string Comment { get; set; } = "";
 
+    /// <summary>When the URL was captured. Immutable — edits move <see cref="UpdatedAt"/>.</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    /// <summary>Immutable row-creation timestamp; never moves on edits.</summary>
-    public DateTime FirstCreatedAt { get; set; } = DateTime.UtcNow;
-
     /// <summary>
-    /// First moment the bid moved off `draft`. Stays null while the row is still an "empty" draft;
-    /// set once and locked. Used by anything that needs to count "real" bids by apply time rather
-    /// than row-creation time (e.g. the bids-per-10-min chart).
+    /// First moment the row moved off <see cref="BidStatuses.Draft"/>. Set once and then locked.
+    /// Anything counting real bids by when they were sent reads this rather than
+    /// <see cref="CreatedAt"/>, which is only when the link was seen.
     /// </summary>
     public DateTime? AppliedAt { get; set; }
 }

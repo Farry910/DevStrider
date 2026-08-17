@@ -1,61 +1,35 @@
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
-
 namespace DevStrider.Desktop.Models;
 
 /// <summary>
-/// Single-user profile for this local install. The role/title for each Experience entry lives in
-/// the bid body's [Subtitle N] line (sourced from GPT output) rather than the profile.
+/// The DevStrider account — one row per <c>app_user</c> that has ever logged in, created on first
+/// successful login.
+///
+/// <para>
+/// The company portal owns the account itself: email, password, verification, role. This is only
+/// what DevStrider knows about it, and it is deliberately thin. Everything describing a
+/// <i>person being bid for</i> — name, CV, contact details — is on <see cref="Profile"/>, because
+/// one account runs several of those.
+/// </para>
 /// </summary>
 public class UserProfile
 {
-    [BsonId]
-    public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
+    /// <summary><c>app_user.id</c>. The identity every owned row carries.</summary>
+    public long UserId { get; set; }
 
     /// <summary>
-    /// Stable nickname for this machine. UNIQUE in the shared database's <c>peer_users</c> table
-    /// and the key its upsert matches on, so a reinstall lands on the existing identity. Pushed
-    /// rows reference that identity by its generated id, not by this string.
+    /// The DevStrider user name — one per account. Lower-cased with spaces as dashes; unique
+    /// across the team. Display only: nothing references it, so renaming is safe.
     /// </summary>
-    public string Username { get; set; } = "me";
-    public string DisplayName { get; set; } = "";
-    public string Headline { get; set; } = "";
-    public string Location { get; set; } = "";
-    public string Phone { get; set; } = "";
-    public string PersonalEmail { get; set; } = "";
-    public string LinkedinUrl { get; set; } = "";
+    public string Username { get; set; } = "";
 
-    public List<Education> Education { get; set; } = new();
-    public List<Certification> Certifications { get; set; } = new();
-    public List<Experience> Experiences { get; set; } = new();
-
+    /// <summary>
+    /// Targets are per person, not per bidding identity: someone running three profiles has one
+    /// daily bid target, not three. The achievement counters have always worked this way.
+    /// </summary>
     public Goals Goals { get; set; } = new();
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-}
-
-public class Education
-{
-    public string Degree { get; set; } = "";
-    public string School { get; set; } = "";
-    public string Location { get; set; } = "";
-    public int? StartYear { get; set; }
-    public int? EndYear { get; set; }
-}
-
-public class Certification
-{
-    public string Name { get; set; } = "";
-    public string Issuer { get; set; } = "";
-    public int? Year { get; set; }
-}
-
-public class Experience
-{
-    public string Company { get; set; } = "";
-    public string Location { get; set; } = "";
-    public int? StartYear { get; set; }
-    public int? EndYear { get; set; }
 }
 
 public class Goals

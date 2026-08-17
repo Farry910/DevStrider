@@ -61,12 +61,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver â€” local database, and the legacy web-app import -->
+    <!-- MongoDB driver â€” read-only now: the one-time import of a machine's old local
+         database. ObjectId is still the identity type everywhere, hence MongoDB.Bson. -->
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
 
-    <!-- PostgreSQL â€” the shared/peer database -->
+    <!-- PostgreSQL â€” the shared database, which is now the only store -->
     <PackageReference Include="Npgsql" Version="8.0.5" />
+
+    <!-- Login verifies against app_user.password_hash, which the company portal writes
+         as bcrypt. Verify only â€” DevStrider never creates accounts or sets passwords. -->
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
 
     <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
          https://<account>.r2.cloudflarestorage.com with region "auto" and path-style

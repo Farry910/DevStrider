@@ -1,5 +1,4 @@
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization.Attributes;
 
 namespace DevStrider.Desktop.Models;
 
@@ -43,10 +42,12 @@ public static class InterviewTypes
 
 public class Interview
 {
-    [BsonId]
     public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
 
-    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> on legacy rows until the migration backfills them.</summary>
+    /// <summary>Owning account — <c>app_user.id</c>. Stamped by the repository on write.</summary>
+    public long UserId { get; set; }
+
+    /// <summary>Owning profile. <see cref="ObjectId.Empty"/> until a profile is stamped on.</summary>
     public ObjectId ProfileId { get; set; }
 
     public ObjectId BidId { get; set; }
@@ -72,12 +73,6 @@ public class Interview
     public string Role { get; set; } = "";
     public string Recruiter { get; set; } = "";
 
-    /// <summary>
-    /// Some legacy docs persisted this field as a single comma-separated string instead of
-    /// a BSON array. <see cref="FlexibleStringListSerializer"/> accepts either form on read
-    /// and always writes back the array form.
-    /// </summary>
-    [BsonSerializer(typeof(FlexibleStringListSerializer))]
     public List<string> AdditionalAttendees { get; set; } = new();
 
     /// <summary>

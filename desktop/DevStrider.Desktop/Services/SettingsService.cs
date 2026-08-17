@@ -5,15 +5,20 @@ using MongoDB.Driver;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// The singleton <see cref="AppSettings"/> row, loaded once at startup and served from memory
+/// The single <see cref="AppSettings"/> record, loaded once at startup and served from memory
 /// thereafter.
 ///
 /// <para>
-/// Every credential the app holds — the shared-cluster password, the R2 token — lives on that row
-/// in the local database, so this is the single place they are read from. Before caching, each of
-/// the ~16 call sites re-queried MongoDB: <c>/refresh-word</c> hit the database on every purple
-/// click just to read a hotkey, and opening an Atlas connection cost two round-trips before it
-/// sent a byte.
+/// Every credential the app holds — the shared-cluster password, the R2 token — lives on it, so
+/// this is the single place they are read from. Before caching, each of the ~16 call sites
+/// re-queried the database: <c>/refresh-word</c> hit it on every purple click just to read a
+/// hotkey.
+/// </para>
+///
+/// <para>
+/// Storage is <see cref="SettingsStore"/>'s JSON file, not either database — see that class for
+/// why. Installs created before that change keep their settings: the first load with no file
+/// present imports the old MongoDB row, writes it out, and never looks at Mongo again.
 /// </para>
 ///
 /// <para>
@@ -25,9 +30,10 @@ namespace DevStrider.Desktop.Services;
 /// </summary>
 public class SettingsService
 {
-    private readonly MongoContext _db;
+    private readonly SettingsStore _store;
+    private readonly MongoContext _mongo;
 
-    /// <summary>Guards the first load so concurrent callers don't each hit MongoDB.</summary>
+    /// <summary>Guards the first load so concurrent callers don't each hit the disk.</summary>
     private readonly SemaphoreSlim _loadLock = new(1, 1);
 
     /// <summary>
@@ -36,7 +42,11 @@ public class SettingsService
     /// </summary>
     private volatile AppSettings? _cached;
 
-    public SettingsService(MongoContext db) => _db = db;
+    public SettingsService(SettingsStore store, MongoContext mongo)
+    {
+        _store = store;
+        _mongo = mongo;
+    }
 
     /// <summary>
     /// The loaded settings, or <c>null</c> before <see cref="LoadAsync"/> completes. For code
@@ -46,7 +56,7 @@ public class SettingsService
 
     /// <summary>
     /// Populate the cache. Called once during startup, before anything else reads settings;
-    /// safe to call again to force a re-read from the database.
+    /// safe to call again to force a re-read from disk.
     /// </summary>
     public async Task<AppSettings> LoadAsync()
     {
@@ -87,20 +97,51 @@ public class SettingsService
     public async Task SaveAsync(AppSettings s)
     {
         s.UpdatedAt = DateTime.UtcNow;
-        await _db.Settings.ReplaceOneAsync(
-            Builders<AppSettings>.Filter.Eq(x => x.Id, s.Id),
-            s,
-            new ReplaceOptions { IsUpsert = true });
+        s.DataSource = DataSources.Normalize(s.DataSource);
+        await _store.SaveAsync(s);
         _cached = s;
     }
 
-    /// <summary>Read the singleton row, seeding defaults on first run.</summary>
+    /// <summary>
+    /// Read the settings file, seeding it on first run. Order matters: the old MongoDB row is
+    /// preferred over bare defaults so an existing install doesn't wake up with its shared-database
+    /// password gone.
+    /// </summary>
     private async Task<AppSettings> FetchOrSeedAsync()
     {
-        var doc = await _db.Settings.Find(FilterDefinition<AppSettings>.Empty).FirstOrDefaultAsync();
-        if (doc != null) return doc;
-        var seed = new AppSettings();
-        await _db.Settings.InsertOneAsync(seed);
+        var fromFile = _store.Load();
+        if (fromFile != null)
+        {
+            fromFile.DataSource = DataSources.Normalize(fromFile.DataSource);
+            return fromFile;
+        }
+
+        var seed = await ImportFromMongoAsync() ?? new AppSettings();
+        seed.DataSource = DataSources.Normalize(seed.DataSource);
+        _store.Save(seed);
         return seed;
+    }
+
+    /// <summary>
+    /// One-time lift of the legacy <c>settings</c> collection into the file. Returns null when
+    /// there's nothing to import — including when MongoDB isn't running, which is the expected
+    /// case on an install that has already finished the migration and uninstalled it.
+    /// </summary>
+    private async Task<AppSettings?> ImportFromMongoAsync()
+    {
+        try
+        {
+            // Short leash. MongoContext already caps server selection, but this runs on the
+            // startup path with a window waiting to appear, so it gets its own ceiling too.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await _mongo.Settings
+                .Find(FilterDefinition<AppSettings>.Empty)
+                .FirstOrDefaultAsync(cts.Token);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"No legacy settings to import: {ex.Message}");
+            return null;
+        }
     }
 }
