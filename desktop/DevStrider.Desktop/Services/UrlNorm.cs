@@ -2,7 +2,8 @@ namespace DevStrider.Desktop.Services;
 
 /// <summary>
 /// Strict URL normalization for dedup: lowercase, trim trailing slash, keep query + hash.
-/// Mirrors the strict rule the web app moved to — different queries = different jobs.
+/// Different queries are different jobs, deliberately: a posting reached through two tracking
+/// links is two rows, and merging them would hide that you bid the same job twice.
 /// </summary>
 public static class UrlNorm
 {

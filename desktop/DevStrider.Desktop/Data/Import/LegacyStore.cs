@@ -132,8 +132,8 @@ public class LegacyProfile
 }
 
 /// <summary>
-/// The old singleton profile row. Its CV fields now belong to each <see cref="Profile"/>, and its
-/// username and goals to the account — see <see cref="UserProfile"/>.
+/// The old singleton profile row. Only the fields DevStrider still has somewhere to put are
+/// mapped: the CV and the goal targets it also carried have no home any more.
 /// </summary>
 public class LegacyUserProfile
 {
@@ -145,10 +145,6 @@ public class LegacyUserProfile
     public string Phone { get; set; } = "";
     public string PersonalEmail { get; set; } = "";
     public string LinkedinUrl { get; set; } = "";
-    public List<Education> Education { get; set; } = new();
-    public List<Certification> Certifications { get; set; } = new();
-    public List<Experience> Experiences { get; set; } = new();
-    public Goals Goals { get; set; } = new();
 }
 
 /// <summary>The link half of what is now one <see cref="UserBid"/> row.</summary>

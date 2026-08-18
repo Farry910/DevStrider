@@ -10,7 +10,7 @@
 --
 --  ⚠ THIS DATABASE IS SHARED WITH THE COMPANY PORTAL.
 --
---  The DROP statements below name DevStrider's eight tables explicitly and nothing else.
+--  The DROP statements below name DevStrider's four tables explicitly and nothing else.
 --  Never replace them with anything that enumerates tables — a wildcard drop here would
 --  take out roughly fifty tables belonging to the portal.
 --
@@ -35,14 +35,18 @@
 
 -- ── 0. Drop ─────────────────────────────────────────────────────────────────────────
 -- Children before parents. CASCADE also removes the foreign keys pointing in.
-DROP TABLE IF EXISTS ds_achievements   CASCADE;
 DROP TABLE IF EXISTS ds_interviews     CASCADE;
 DROP TABLE IF EXISTS ds_bids           CASCADE;
+DROP TABLE IF EXISTS ds_profiles       CASCADE;
+DROP TABLE IF EXISTS ds_users          CASCADE;
+
+-- Retired in 8.1.0. Named here so a database created by an earlier version of this file is
+-- cleaned up when it is re-run: the CV moved into each profile's .docm, where it was being
+-- maintained anyway, and the achievement counters had no reader.
+DROP TABLE IF EXISTS ds_achievements   CASCADE;
 DROP TABLE IF EXISTS ds_experiences    CASCADE;
 DROP TABLE IF EXISTS ds_certifications CASCADE;
 DROP TABLE IF EXISTS ds_education      CASCADE;
-DROP TABLE IF EXISTS ds_profiles       CASCADE;
-DROP TABLE IF EXISTS ds_users          CASCADE;
 
 
 -- ── About the shape of these tables ─────────────────────────────────────────────────
@@ -54,10 +58,8 @@ DROP TABLE IF EXISTS ds_users          CASCADE;
 --  `user_id` is the person, and it is `app_user.id` rather than a name. Every table under
 --  a profile carries it, and every query DevStrider issues filters on it. Bids and
 --  interviews could have been reached through profile_id alone — ObjectIds are unique —
---  but the queries that are NOT profile-scoped (the achievement counters, which are per
---  person and not per bidding identity) would then have had no way to tell your rows from
---  a teammate's. In one shared database that is the difference between counting your bids
---  and counting everybody's.
+--  but in one shared database, "my rows" is a predicate rather than a given, and this is
+--  that predicate. It is also what the Peers tab inverts to show everybody else.
 --
 --  Why the id and not the username: a username is display text and the user can change it.
 --  The old design keyed rows by that string, so a rename orphaned every row behind it.
@@ -65,52 +67,56 @@ DROP TABLE IF EXISTS ds_users          CASCADE;
 --  `profile_id` deliberately has NO foreign key, and holds '' rather than NULL for "none".
 --  '' is how ObjectId.Empty round-trips, and rows legitimately sit there: the app repairs
 --  unassigned rows by stamping the active profile onto them, which an FK would forbid.
---  The CV tables below DO have one — those rows are only ever created through a profile.
 
 
 -- ── 1. The person ───────────────────────────────────────────────────────────────────
 -- One row per app_user who has ever logged into DevStrider, created on first login.
--- The portal owns the account; this owns what DevStrider knows about it.
---
--- Goals live here rather than on a profile because they are per person: someone running
--- three bidding identities has one daily bid target, not three.
+-- The portal owns the account; this owns what DevStrider knows about it, which is very
+-- little on purpose — the account is the thing every owned row hangs off, not a place to
+-- describe someone.
 CREATE TABLE ds_users (
-    user_id             BIGINT      PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-    -- The devstrider user name — one per account. Lower-cased with spaces as dashes; the
-    -- app normalises before writing, and this constraint is on the normalised form.
-    username            TEXT        NOT NULL,
-    bids_per_day        INTEGER     NOT NULL DEFAULT 0,
-    interviews_per_week INTEGER     NOT NULL DEFAULT 0,
-    offers_per_month    INTEGER     NOT NULL DEFAULT 0,
-    created_at          TIMESTAMPTZ NOT NULL,
-    updated_at          TIMESTAMPTZ NOT NULL,
+    user_id    BIGINT      PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+    -- The DevStrider user name, and it IS the portal address on app_user.email. Login
+    -- re-asserts it on every sign-in, so there is never a second answer to who someone is.
+    username   TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT ds_users_username_key UNIQUE (username)
 );
 
 
 -- ── 2. Bidding identities ───────────────────────────────────────────────────────────
 -- The title-bar profile switcher. One account has several; each represents a different
--- real person whose bids and interviews are tracked in isolation — which is why the CV
--- hangs off this table and not off ds_users.
+-- real person whose bids and interviews are tracked in isolation.
 --
 -- word_doc_path and macro_name name a file on one Windows machine. They mean nothing on
 -- another, but they travel with the profile so a reinstall restores them.
+--
+-- The CV is NOT here. Education, certifications and work history used to be three child
+-- tables off this one; they are gone. That material lives in the profile's .docm, which is
+-- where it was being written and maintained anyway — keeping a second copy in here meant
+-- two versions of one CV, and the database's copy was the one nobody updated. DevStrider
+-- does not read a CV, does not render one, and does not need to know what is in it.
 CREATE TABLE ds_profiles (
-    id             TEXT        PRIMARY KEY,
-    user_id        BIGINT      NOT NULL REFERENCES ds_users(user_id) ON DELETE CASCADE,
-    name           TEXT        NOT NULL DEFAULT '',   -- real human name, shown in the switcher
-    slug           TEXT        NOT NULL DEFAULT '',   -- FS-safe; used in snapshot filenames
-    word_doc_path  TEXT        NOT NULL DEFAULT '',
-    macro_name     TEXT        NOT NULL DEFAULT '',
-    resume_prompt  TEXT        NOT NULL DEFAULT '',
-    headline       TEXT        NOT NULL DEFAULT '',
-    location       TEXT        NOT NULL DEFAULT '',
-    phone          TEXT        NOT NULL DEFAULT '',
+    id                TEXT        PRIMARY KEY,
+    user_id           BIGINT      NOT NULL REFERENCES ds_users(user_id) ON DELETE CASCADE,
+    name              TEXT        NOT NULL DEFAULT '',   -- real human name, shown in the switcher
+    slug              TEXT        NOT NULL DEFAULT '',   -- FS-safe; used in snapshot filenames
+    word_doc_path     TEXT        NOT NULL DEFAULT '',
+    macro_name        TEXT        NOT NULL DEFAULT '',
+    resume_prompt     TEXT        NOT NULL DEFAULT '',
+    headline          TEXT        NOT NULL DEFAULT '',
+    location          TEXT        NOT NULL DEFAULT '',
+    phone             TEXT        NOT NULL DEFAULT '',
     -- The address that goes on the resume. NOT the login — that is app_user.email.
-    personal_email TEXT        NOT NULL DEFAULT '',
-    linkedin_url   TEXT        NOT NULL DEFAULT '',
-    created_at     TIMESTAMPTZ NOT NULL,
-    updated_at     TIMESTAMPTZ NOT NULL,
+    personal_email    TEXT        NOT NULL DEFAULT '',
+    linkedin_url      TEXT        NOT NULL DEFAULT '',
+    -- The one line of CV worth answering a question about: "BSc Computer Science — MIT".
+    -- Free text, never parsed. It exists so the portal can ask who holds what without
+    -- DevStrider carrying a whole education history it has no use for.
+    highest_education TEXT        NOT NULL DEFAULT '',
+    created_at        TIMESTAMPTZ NOT NULL,
+    updated_at        TIMESTAMPTZ NOT NULL,
     -- Two people can both have a profile slugged "default"; one person cannot.
     CONSTRAINT ds_profiles_slug_key UNIQUE (user_id, slug)
 );
@@ -118,56 +124,7 @@ CREATE TABLE ds_profiles (
 CREATE INDEX ix_ds_profiles_user ON ds_profiles (user_id, created_at);
 
 
--- ── 3. The CV ───────────────────────────────────────────────────────────────────────
--- One row per entry, so the portal can query across them ("who holds an AWS cert").
---
--- sort_order is not decoration: a CV is an ordered document and rows have no inherent
--- order. DevStrider writes the list position; anything reading these must ORDER BY it or
--- the resume comes out shuffled.
---
--- Years are INTEGER and nullable — "2019" with no month is what a CV actually states, and
--- NULL is the ongoing role or the unfinished degree.
-
-CREATE TABLE ds_education (
-    id         TEXT    PRIMARY KEY,
-    profile_id TEXT    NOT NULL REFERENCES ds_profiles(id) ON DELETE CASCADE,
-    degree     TEXT    NOT NULL DEFAULT '',
-    school     TEXT    NOT NULL DEFAULT '',
-    location   TEXT    NOT NULL DEFAULT '',
-    start_year INTEGER,
-    end_year   INTEGER,
-    sort_order INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX ix_ds_education_profile ON ds_education (profile_id, sort_order);
-
-
-CREATE TABLE ds_certifications (
-    id         TEXT    PRIMARY KEY,
-    profile_id TEXT    NOT NULL REFERENCES ds_profiles(id) ON DELETE CASCADE,
-    name       TEXT    NOT NULL DEFAULT '',
-    issuer     TEXT    NOT NULL DEFAULT '',
-    year       INTEGER,
-    sort_order INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX ix_ds_certifications_profile ON ds_certifications (profile_id, sort_order);
-
-
-CREATE TABLE ds_experiences (
-    id         TEXT    PRIMARY KEY,
-    profile_id TEXT    NOT NULL REFERENCES ds_profiles(id) ON DELETE CASCADE,
-    company    TEXT    NOT NULL DEFAULT '',
-    location   TEXT    NOT NULL DEFAULT '',
-    start_year INTEGER,
-    end_year   INTEGER,
-    sort_order INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX ix_ds_experiences_profile ON ds_experiences (profile_id, sort_order);
-
-
--- ── 4. Bids ─────────────────────────────────────────────────────────────────────────
+-- ── 3. Bids ─────────────────────────────────────────────────────────────────────────
 -- A bid and the job posting it was made against are one row.
 --
 -- They used to be two — a `links` collection with the URL, and a bid pointing at it — but
@@ -221,7 +178,7 @@ CREATE INDEX ix_ds_bids_profile_upd ON ds_bids (profile_id, updated_at DESC);
 CREATE INDEX ix_ds_bids_user_upd    ON ds_bids (user_id, updated_at DESC);
 
 
--- ── 5. Interviews ───────────────────────────────────────────────────────────────────
+-- ── 4. Interviews ───────────────────────────────────────────────────────────────────
 -- bid_id and process_id hold '' rather than NULL for "none", matching how the app's
 -- ObjectId.Empty round-trips. An interview that came from a LinkedIn chat genuinely has
 -- no bid behind it. resume_object_key points at Cloudflare R2; the file itself is never
@@ -264,37 +221,20 @@ CREATE INDEX ix_ds_ivs_process  ON ds_interviews (process_id);
 CREATE INDEX ix_ds_ivs_user_upd ON ds_interviews (user_id, updated_at DESC);
 
 
--- ── 6. Achievements ─────────────────────────────────────────────────────────────────
--- One row per goal actually hit, so a streak survives a reinstall. Per person and not per
--- profile, for the same reason the goals themselves are.
-CREATE TABLE ds_achievements (
-    id           TEXT        PRIMARY KEY,
-    user_id      BIGINT      NOT NULL REFERENCES ds_users(user_id) ON DELETE CASCADE,
-    kind         TEXT        NOT NULL,   -- daily_bids | weekly_interviews | monthly_offers
-    period_key   TEXT        NOT NULL,   -- '2026-05-25' | '2026-W21' | '2026-05'
-    metric_value INTEGER     NOT NULL DEFAULT 0,
-    target       INTEGER     NOT NULL DEFAULT 0,
-    achieved_at  TIMESTAMPTZ NOT NULL,
-    -- One award per person per period. This is what makes the write an upsert.
-    CONSTRAINT ds_achievements_period_key UNIQUE (user_id, kind, period_key)
-);
-
-
--- ── 7. Verify ───────────────────────────────────────────────────────────────────────
--- Eight rows, with these column counts. Anything else means part of this file didn't run:
---     ds_achievements    7
+-- ── 5. Verify ───────────────────────────────────────────────────────────────────────
+-- Four rows, with these column counts. Anything else means part of this file didn't run:
 --     ds_bids           18
---     ds_certifications  6
---     ds_education       8
---     ds_experiences     7
 --     ds_interviews     27
---     ds_profiles       14
---     ds_users           7
+--     ds_profiles       15
+--     ds_users           4
+--
+-- Four and not eight: ds_education, ds_certifications, ds_experiences and ds_achievements
+-- were dropped in 8.1.0. If they still show up here, the DROP section at the top did not
+-- run — which is fine for the app, but they are dead weight nobody writes to.
 SELECT table_name, count(*) AS columns
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name IN ('ds_users', 'ds_profiles', 'ds_education', 'ds_certifications',
-                     'ds_experiences', 'ds_bids', 'ds_interviews', 'ds_achievements')
+  AND table_name IN ('ds_users', 'ds_profiles', 'ds_bids', 'ds_interviews')
 GROUP BY table_name
 ORDER BY table_name;
 
@@ -302,7 +242,7 @@ ORDER BY table_name;
 
 
 -- =====================================================================================
---  8. Retiring the peer_* tables — RUN LAST, AND ONLY WHEN EVERY MACHINE IS MIGRATED
+--  6. Retiring the peer_* tables — RUN LAST, AND ONLY WHEN EVERY MACHINE IS MIGRATED
 -- =====================================================================================
 --
 --  peer_users / peer_bids / peer_interviews were a stripped mirror: each machine kept its

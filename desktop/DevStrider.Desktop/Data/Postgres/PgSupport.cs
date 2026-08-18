@@ -126,15 +126,4 @@ public abstract class PgRepository
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Several statements as one unit. Used where a write spans tables — saving a profile
-    /// rewrites its CV rows, and a half-applied save would leave a resume missing its education.
-    /// </summary>
-    protected async Task InTransactionAsync(Func<NpgsqlConnection, NpgsqlTransaction, Task> body)
-    {
-        await using var conn = await _db.OpenAsync();
-        await using var tx = await conn.BeginTransactionAsync();
-        await body(conn, tx);
-        await tx.CommitAsync();
-    }
 }

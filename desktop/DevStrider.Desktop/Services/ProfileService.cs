@@ -4,7 +4,7 @@ using DevStrider.Desktop.Models;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// The signed-in account's <c>ds_users</c> row — goals, and the name the rest of the team sees.
+/// The signed-in account's <c>ds_users</c> row — the name the rest of the team sees, and little else.
 ///
 /// <para>
 /// Distinct from <see cref="ProfilesService"/> (plural), which manages the bidding identities. One
@@ -14,7 +14,7 @@ namespace DevStrider.Desktop.Services;
 /// <para>
 /// The row is created by <see cref="AuthService"/> on first successful login, so by the time any
 /// of this runs it exists. <see cref="GetAsync"/> still tolerates its absence rather than
-/// throwing — a missing row should degrade to zeroed goals, not to a dead Settings tab.
+/// throwing — a missing row should degrade to a blank name, not to a dead Settings tab.
 /// </para>
 /// </summary>
 public class ProfileService

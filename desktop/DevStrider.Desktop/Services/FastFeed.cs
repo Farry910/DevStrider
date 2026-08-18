@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// C# port of <c>server/src/utils/parseFastFeed.js</c>. The Bid-Assistant Chrome extension
+/// The one line that turns a captured URL into a recorded bid. The Bid-Assistant Chrome extension
 /// produces a one-line summary in the format
 /// <c>"resumeId, Company, Role, Skill1, Skill2, …"</c> (optionally wrapped in <c>[...]</c>)
 /// and either sends it as a standalone <c>fastFeedInput</c> field or appends it as the last

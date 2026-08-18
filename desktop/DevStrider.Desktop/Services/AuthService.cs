@@ -22,9 +22,9 @@ public readonly record struct SignInResult(bool Ok, string Message, long UserId)
 /// <para>
 /// An address with no <c>app_user</c> row cannot sign in and cannot be created here: holding a
 /// portal account is the only way to become a DevStrider user. The <c>ds_users</c> row that
-/// carries goals and achievements is seeded from that account on first successful login, and its
-/// name is the portal's address rather than anything typed here — one account, one identity, and
-/// no second place for it to drift.
+/// records who someone is on the team is seeded from that account on first successful login, and
+/// its name is the portal's address rather than anything typed here — one account, one identity,
+/// and no second place for it to drift.
 /// </para>
 /// </summary>
 public sealed class AuthService
@@ -98,7 +98,21 @@ public sealed class AuthService
                 return SignInResult.Fail(
                     "This account's email address hasn't been verified yet. Confirm it in the portal, then sign in here.");
 
-            await EnsureDsUserAsync(conn, id, address, ct);
+            // Its own catch, not the outer one. Both this and the SELECT above can raise 42P01, but
+            // they mean opposite things: no app_user is the wrong database entirely, while no
+            // ds_users is the right database with the schema not yet applied. Letting the outer
+            // handler answer for both told people to fix a connection that was already correct.
+            try
+            {
+                await EnsureDsUserAsync(conn, id, address, ct);
+            }
+            catch (PostgresException ex) when (ex.SqlState == "42P01")
+            {
+                return SignInResult.Fail(
+                    "Your account is fine, but DevStrider's tables aren't in this database yet. "
+                    + "Run desktop/shared-db-schema.sql against it once — for the whole team, not "
+                    + "per machine — then sign in again.");
+            }
 
             _session.SignIn(id, address);
             _activity.Success("Login", "Signed in", address);
@@ -131,8 +145,8 @@ public sealed class AuthService
     /// </para>
     ///
     /// <para>
-    /// The goal columns are left to their defaults on insert and never touched here. They are the
-    /// user's own targets; re-asserting them on each login would reset them on every launch.
+    /// There is nothing else on the row to write. Goals and achievement counters used to live here
+    /// and are gone — nothing read them.
     /// </para>
     /// </summary>
     private static async Task EnsureDsUserAsync(

@@ -11,8 +11,7 @@ namespace DevStrider.Desktop.Data.Postgres;
 /// <summary>The <c>ds_users</c> row for the signed-in account.</summary>
 public sealed class PgAccountRepository : PgRepository, IAccountRepository
 {
-    private const string Cols =
-        "user_id, username, bids_per_day, interviews_per_week, offers_per_month, created_at, updated_at";
+    private const string Cols = "user_id, username, created_at, updated_at";
 
     public PgAccountRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
 
@@ -22,28 +21,26 @@ public sealed class PgAccountRepository : PgRepository, IAccountRepository
             cmd => cmd.Parameters.AddWithValue("uid", UserId),
             Map);
 
+    /// <summary>
+    /// Rarely called. <see cref="Services.AuthService"/> writes this row at sign-in, and there is
+    /// nothing left on it that the app edits afterwards — the username is the portal's address and
+    /// is re-asserted from there.
+    /// </summary>
     public Task UpsertAsync(UserProfile a)
     {
         a.UserId = UserId;
         a.UpdatedAt = DateTime.UtcNow;
         return ExecuteAsync("""
-            INSERT INTO ds_users (user_id, username, bids_per_day, interviews_per_week,
-                                  offers_per_month, created_at, updated_at)
-            VALUES (@uid, @un, @bpd, @ipw, @opm, @ca, @ua)
+            INSERT INTO ds_users (user_id, username, created_at, updated_at)
+            VALUES (@uid, @un, @ca, @ua)
             ON CONFLICT (user_id) DO UPDATE SET
-                username            = EXCLUDED.username,
-                bids_per_day        = EXCLUDED.bids_per_day,
-                interviews_per_week = EXCLUDED.interviews_per_week,
-                offers_per_month    = EXCLUDED.offers_per_month,
-                updated_at          = EXCLUDED.updated_at
+                username   = EXCLUDED.username,
+                updated_at = EXCLUDED.updated_at
             """,
             cmd =>
             {
                 cmd.Parameters.AddWithValue("uid", a.UserId);
                 cmd.Parameters.AddWithValue("un", a.Username ?? "");
-                cmd.Parameters.AddWithValue("bpd", a.Goals.BidsPerDay);
-                cmd.Parameters.AddWithValue("ipw", a.Goals.InterviewsPerWeek);
-                cmd.Parameters.AddWithValue("opm", a.Goals.OffersPerMonth);
                 cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(a.CreatedAt));
                 cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(a.UpdatedAt));
             });
@@ -62,48 +59,28 @@ public sealed class PgAccountRepository : PgRepository, IAccountRepository
     {
         UserId = r.GetInt64(0),
         Username = Pg.Text(r, 1),
-        Goals = new Goals
-        {
-            BidsPerDay = r.GetInt32(2),
-            InterviewsPerWeek = r.GetInt32(3),
-            OffersPerMonth = r.GetInt32(4),
-        },
-        CreatedAt = r.GetDateTime(5),
-        UpdatedAt = r.GetDateTime(6),
+        CreatedAt = r.GetDateTime(2),
+        UpdatedAt = r.GetDateTime(3),
     };
 }
 
-/// <summary>
-/// Bidding identities, each loaded with its CV.
-///
-/// <para>
-/// The CV tables are rewritten wholesale on save — delete the profile's rows, insert the list as
-/// it now stands — inside one transaction. Diffing them would buy nothing: the editor hands back
-/// the whole list, entries have no identity a user would recognise, and their order is data, so a
-/// merge would still have to renumber every row.
-/// </para>
-/// </summary>
+/// <summary>Bidding identities. One row each — the CV lives in the profile's .docm.</summary>
 public sealed class PgProfileRepository : PgRepository, IProfileRepository
 {
     private const string Cols =
         "id, user_id, name, word_doc_path, macro_name, resume_prompt, headline, location, " +
-        "phone, personal_email, linkedin_url, created_at, updated_at";
+        "phone, personal_email, linkedin_url, highest_education, created_at, updated_at";
 
     public PgProfileRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
 
-    public async Task<List<Profile>> ListAsync()
-    {
-        var profiles = await ListAsync(
+    public Task<List<Profile>> ListAsync() =>
+        ListAsync(
             $"SELECT {Cols} FROM ds_profiles WHERE user_id = @uid ORDER BY created_at",
             cmd => cmd.Parameters.AddWithValue("uid", UserId),
             Map);
-        await AttachCvAsync(profiles);
-        return profiles;
-    }
 
-    public async Task<Profile?> GetAsync(ObjectId id)
-    {
-        var profile = await FirstOrDefaultAsync(
+    public Task<Profile?> GetAsync(ObjectId id) =>
+        FirstOrDefaultAsync(
             $"SELECT {Cols} FROM ds_profiles WHERE id = @id AND user_id = @uid",
             cmd =>
             {
@@ -111,35 +88,37 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 cmd.Parameters.AddWithValue("uid", UserId);
             },
             Map);
-        if (profile != null) await AttachCvAsync(new List<Profile> { profile });
-        return profile;
-    }
 
+    /// <summary>
+    /// One statement, no transaction. A profile used to span four tables — itself plus education,
+    /// certifications and experience — so saving one meant deleting and reinserting the CV inside
+    /// a transaction. The CV now lives in the profile's .docm, so a profile is one row again.
+    /// </summary>
     public Task UpsertAsync(Profile p)
     {
         p.UserId = UserId;
         p.UpdatedAt = DateTime.UtcNow;
 
-        return InTransactionAsync(async (conn, tx) =>
-        {
-            await using (var cmd = new NpgsqlCommand("""
-                INSERT INTO ds_profiles (id, user_id, name, slug, word_doc_path, macro_name,
-                                         resume_prompt, headline, location, phone, personal_email,
-                                         linkedin_url, created_at, updated_at)
-                VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @ca, @ua)
-                ON CONFLICT (id) DO UPDATE SET
-                    name           = EXCLUDED.name,
-                    slug           = EXCLUDED.slug,
-                    word_doc_path  = EXCLUDED.word_doc_path,
-                    macro_name     = EXCLUDED.macro_name,
-                    resume_prompt  = EXCLUDED.resume_prompt,
-                    headline       = EXCLUDED.headline,
-                    location       = EXCLUDED.location,
-                    phone          = EXCLUDED.phone,
-                    personal_email = EXCLUDED.personal_email,
-                    linkedin_url   = EXCLUDED.linkedin_url,
-                    updated_at     = EXCLUDED.updated_at
-                """, conn, tx))
+        return ExecuteAsync("""
+            INSERT INTO ds_profiles (id, user_id, name, slug, word_doc_path, macro_name,
+                                     resume_prompt, headline, location, phone, personal_email,
+                                     linkedin_url, highest_education, created_at, updated_at)
+            VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @he, @ca, @ua)
+            ON CONFLICT (id) DO UPDATE SET
+                name              = EXCLUDED.name,
+                slug              = EXCLUDED.slug,
+                word_doc_path     = EXCLUDED.word_doc_path,
+                macro_name        = EXCLUDED.macro_name,
+                resume_prompt     = EXCLUDED.resume_prompt,
+                headline          = EXCLUDED.headline,
+                location          = EXCLUDED.location,
+                phone             = EXCLUDED.phone,
+                personal_email    = EXCLUDED.personal_email,
+                linkedin_url      = EXCLUDED.linkedin_url,
+                highest_education = EXCLUDED.highest_education,
+                updated_at        = EXCLUDED.updated_at
+            """,
+            cmd =>
             {
                 cmd.Parameters.AddWithValue("id", Pg.Hex(p.Id));
                 cmd.Parameters.AddWithValue("uid", p.UserId);
@@ -154,76 +133,12 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 cmd.Parameters.AddWithValue("ph", p.Phone ?? "");
                 cmd.Parameters.AddWithValue("pe", p.PersonalEmail ?? "");
                 cmd.Parameters.AddWithValue("li", p.LinkedinUrl ?? "");
+                cmd.Parameters.AddWithValue("he", p.HighestEducation ?? "");
                 cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(p.CreatedAt));
                 cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(p.UpdatedAt));
-                await cmd.ExecuteNonQueryAsync();
-            }
-
-            var hex = Pg.Hex(p.Id);
-            foreach (var table in new[] { "ds_education", "ds_certifications", "ds_experiences" })
-            {
-                await using var del = new NpgsqlCommand(
-                    $"DELETE FROM {table} WHERE profile_id = @pid", conn, tx);
-                del.Parameters.AddWithValue("pid", hex);
-                await del.ExecuteNonQueryAsync();
-            }
-
-            for (var i = 0; i < p.Education.Count; i++)
-            {
-                var e = p.Education[i];
-                await using var cmd = new NpgsqlCommand("""
-                    INSERT INTO ds_education (id, profile_id, degree, school, location,
-                                              start_year, end_year, sort_order)
-                    VALUES (@id, @pid, @dg, @sc, @lo, @sy, @ey, @so)
-                    """, conn, tx);
-                cmd.Parameters.AddWithValue("id", Pg.Hex(e.Id));
-                cmd.Parameters.AddWithValue("pid", hex);
-                cmd.Parameters.AddWithValue("dg", e.Degree ?? "");
-                cmd.Parameters.AddWithValue("sc", e.School ?? "");
-                cmd.Parameters.AddWithValue("lo", e.Location ?? "");
-                cmd.Parameters.AddWithValue("sy", Pg.NullableInt(e.StartYear));
-                cmd.Parameters.AddWithValue("ey", Pg.NullableInt(e.EndYear));
-                cmd.Parameters.AddWithValue("so", i);
-                await cmd.ExecuteNonQueryAsync();
-            }
-
-            for (var i = 0; i < p.Certifications.Count; i++)
-            {
-                var c = p.Certifications[i];
-                await using var cmd = new NpgsqlCommand("""
-                    INSERT INTO ds_certifications (id, profile_id, name, issuer, year, sort_order)
-                    VALUES (@id, @pid, @nm, @is, @yr, @so)
-                    """, conn, tx);
-                cmd.Parameters.AddWithValue("id", Pg.Hex(c.Id));
-                cmd.Parameters.AddWithValue("pid", hex);
-                cmd.Parameters.AddWithValue("nm", c.Name ?? "");
-                cmd.Parameters.AddWithValue("is", c.Issuer ?? "");
-                cmd.Parameters.AddWithValue("yr", Pg.NullableInt(c.Year));
-                cmd.Parameters.AddWithValue("so", i);
-                await cmd.ExecuteNonQueryAsync();
-            }
-
-            for (var i = 0; i < p.Experiences.Count; i++)
-            {
-                var x = p.Experiences[i];
-                await using var cmd = new NpgsqlCommand("""
-                    INSERT INTO ds_experiences (id, profile_id, company, location,
-                                                start_year, end_year, sort_order)
-                    VALUES (@id, @pid, @co, @lo, @sy, @ey, @so)
-                    """, conn, tx);
-                cmd.Parameters.AddWithValue("id", Pg.Hex(x.Id));
-                cmd.Parameters.AddWithValue("pid", hex);
-                cmd.Parameters.AddWithValue("co", x.Company ?? "");
-                cmd.Parameters.AddWithValue("lo", x.Location ?? "");
-                cmd.Parameters.AddWithValue("sy", Pg.NullableInt(x.StartYear));
-                cmd.Parameters.AddWithValue("ey", Pg.NullableInt(x.EndYear));
-                cmd.Parameters.AddWithValue("so", i);
-                await cmd.ExecuteNonQueryAsync();
-            }
-        });
+            });
     }
 
-    /// <summary>The CV rows cascade with the profile — the schema's one place they do.</summary>
     public Task DeleteAsync(ObjectId id) =>
         ExecuteAsync("DELETE FROM ds_profiles WHERE id = @id AND user_id = @uid",
             cmd =>
@@ -231,68 +146,6 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 cmd.Parameters.AddWithValue("id", Pg.Hex(id));
                 cmd.Parameters.AddWithValue("uid", UserId);
             });
-
-    /// <summary>
-    /// Three queries for the whole set rather than three per profile. The switcher loads every
-    /// profile on startup, so an N+1 here would be N+1 round-trips to a remote database before the
-    /// window appears.
-    /// </summary>
-    private async Task AttachCvAsync(List<Profile> profiles)
-    {
-        if (profiles.Count == 0) return;
-        var byId = profiles.ToDictionary(p => Pg.Hex(p.Id));
-        var ids = byId.Keys.ToArray();
-
-        void Bind(NpgsqlCommand cmd) => cmd.Parameters.Add(Pg.Array("ids", ids));
-
-        foreach (var (pid, row) in await ListAsync(
-            "SELECT profile_id, id, degree, school, location, start_year, end_year " +
-            "FROM ds_education WHERE profile_id = ANY(@ids) ORDER BY profile_id, sort_order",
-            Bind,
-            r => (Pg.Text(r, 0), new Education
-            {
-                Id = Pg.OidAt(r, 1),
-                Degree = Pg.Text(r, 2),
-                School = Pg.Text(r, 3),
-                Location = Pg.Text(r, 4),
-                StartYear = Pg.NullableIntAt(r, 5),
-                EndYear = Pg.NullableIntAt(r, 6),
-            })))
-        {
-            if (byId.TryGetValue(pid, out var p)) p.Education.Add(row);
-        }
-
-        foreach (var (pid, row) in await ListAsync(
-            "SELECT profile_id, id, name, issuer, year " +
-            "FROM ds_certifications WHERE profile_id = ANY(@ids) ORDER BY profile_id, sort_order",
-            Bind,
-            r => (Pg.Text(r, 0), new Certification
-            {
-                Id = Pg.OidAt(r, 1),
-                Name = Pg.Text(r, 2),
-                Issuer = Pg.Text(r, 3),
-                Year = Pg.NullableIntAt(r, 4),
-            })))
-        {
-            if (byId.TryGetValue(pid, out var p)) p.Certifications.Add(row);
-        }
-
-        foreach (var (pid, row) in await ListAsync(
-            "SELECT profile_id, id, company, location, start_year, end_year " +
-            "FROM ds_experiences WHERE profile_id = ANY(@ids) ORDER BY profile_id, sort_order",
-            Bind,
-            r => (Pg.Text(r, 0), new Experience
-            {
-                Id = Pg.OidAt(r, 1),
-                Company = Pg.Text(r, 2),
-                Location = Pg.Text(r, 3),
-                StartYear = Pg.NullableIntAt(r, 4),
-                EndYear = Pg.NullableIntAt(r, 5),
-            })))
-        {
-            if (byId.TryGetValue(pid, out var p)) p.Experiences.Add(row);
-        }
-    }
 
     private static Profile Map(NpgsqlDataReader r) => new()
     {
@@ -307,8 +160,9 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
         Phone = Pg.Text(r, 8),
         PersonalEmail = Pg.Text(r, 9),
         LinkedinUrl = Pg.Text(r, 10),
-        CreatedAt = r.GetDateTime(11),
-        UpdatedAt = r.GetDateTime(12),
+        HighestEducation = Pg.Text(r, 11),
+        CreatedAt = r.GetDateTime(12),
+        UpdatedAt = r.GetDateTime(13),
     };
 }
 
@@ -434,27 +288,6 @@ public sealed class PgBidRepository : PgRepository, IBidRepository
                 BindProfile(cmd, profileId);
                 cmd.Parameters.AddWithValue("draft", BidStatuses.Draft);
             }, Map);
-
-    public Task<long> CountNonDraftUpdatedBetweenAsync(DateTime fromUtc, DateTime toUtc) =>
-        CountAsync("SELECT COUNT(*) FROM ds_bids WHERE user_id = @uid AND status <> @draft " +
-                   "AND updated_at >= @f AND updated_at < @t",
-            cmd =>
-            {
-                cmd.Parameters.AddWithValue("uid", UserId);
-                cmd.Parameters.AddWithValue("draft", BidStatuses.Draft);
-                BindWindow(cmd, fromUtc, toUtc);
-            });
-
-    public Task<long> CountWithStatusUpdatedBetweenAsync(
-        IReadOnlyCollection<string> statuses, DateTime fromUtc, DateTime toUtc) =>
-        CountAsync("SELECT COUNT(*) FROM ds_bids WHERE user_id = @uid AND status = ANY(@ss) " +
-                   "AND updated_at >= @f AND updated_at < @t",
-            cmd =>
-            {
-                cmd.Parameters.AddWithValue("uid", UserId);
-                cmd.Parameters.Add(Pg.Array("ss", statuses));
-                BindWindow(cmd, fromUtc, toUtc);
-            });
 
     public async Task<long> AssignProfileToUnassignedAsync(ObjectId profileId) =>
         await ExecuteAsync("UPDATE ds_bids SET profile_id = @pid WHERE user_id = @uid AND profile_id = ''",
@@ -626,18 +459,6 @@ public sealed class PgInterviewRepository : PgRepository, IInterviewRepository
                 cmd.Parameters.Add(Pg.Array("ss", statuses));
             },
             r => Pg.Text(r, 0));
-
-    public Task<long> CountCreatedBetweenWithStatusAsync(
-        DateTime fromUtc, DateTime toUtc, IReadOnlyCollection<string> statuses) =>
-        CountAsync("SELECT COUNT(*) FROM ds_interviews WHERE user_id = @uid " +
-                   "AND created_at >= @f AND created_at < @t AND status = ANY(@ss)",
-            cmd =>
-            {
-                cmd.Parameters.AddWithValue("uid", UserId);
-                cmd.Parameters.AddWithValue("f", SharedDbContext.Utc(fromUtc));
-                cmd.Parameters.AddWithValue("t", SharedDbContext.Utc(toUtc));
-                cmd.Parameters.Add(Pg.Array("ss", statuses));
-            });
 
     public async Task<long> AssignProfileToUnassignedAsync(ObjectId profileId) =>
         await ExecuteAsync(

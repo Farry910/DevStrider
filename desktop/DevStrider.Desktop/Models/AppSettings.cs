@@ -72,15 +72,6 @@ public class AppSettings
     /// <summary>Hotkey assigned to the Word macro. Default F9 triggers field updates.</summary>
     public string WordHotkey { get; set; } = "F9";
 
-    /// <summary>
-    /// Dead field. It once pointed at the folder a <c>FileSystemWatcher</c> scraped generated
-    /// resumes out of, into a <c>resumes</c> collection nothing read; that whole feature is
-    /// gone. Each profile's macro hardcodes its own output root, so nothing here needs to know
-    /// it. Kept on the schema only so settings documents written before the removal still
-    /// deserialize — do not wire anything new to it.
-    /// </summary>
-    public string ResumeOutputFolder { get; set; } = "";
-
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at
     // startup by SettingsService, never re-read per use.
@@ -114,7 +105,7 @@ public class AppSettings
     /// <summary>
     /// Shallow copy for editing. <see cref="SettingsService"/> hands the cached instance to
     /// read-only consumers, so the Settings form must work on a copy — otherwise every keystroke
-    /// in the form would be visible to the listener and sync services before Save.
+    /// in the form would be visible to the listener and every other service before Save.
     /// Every property here is a value type or string, so a member-wise copy is a full copy.
     /// </summary>
     public AppSettings Clone() => (AppSettings)MemberwiseClone();

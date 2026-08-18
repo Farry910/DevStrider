@@ -1,12 +1,9 @@
-node_modules
-dist
-build
-.env
-*.log
-.DS_Store
-node_modules
-BidAssistantApp/publish/
+# Build output
 **/bin/
 **/obj/
+*.log
+
+# Local, machine-specific, or private to whoever is working here
 Fernando.docm
 prompt.txt
+.DS_Store

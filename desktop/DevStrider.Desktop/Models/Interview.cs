@@ -99,8 +99,9 @@ public class Interview
     // which until now existed only on the machine that generated it.
 
     /// <summary>
-    /// R2 object key, or empty when nothing is attached. Shared with peers so a teammate can
-    /// download the same file; see <c>peer_interviews.resume_object_key</c>.
+    /// R2 object key, or empty when nothing is attached. It sits in the shared table like every
+    /// other column, so a teammate can open the same document — with their own R2 credentials,
+    /// since only the key travels through the database and never the bytes.
     /// </summary>
     public string ResumeObjectKey { get; set; } = "";
 

@@ -21,7 +21,7 @@
               Content="&#xE72C;"/>
     </Grid>
     <TextBlock DockPanel.Dock="Top" Foreground="{StaticResource Muted}" Margin="0,0,0,8"
-               Text="Self + each imported peer. 'Applied' is the sum of non-draft bid statuses in range."/>
+               Text="You and each teammate with activity in range. 'Applied' is the sum of non-draft bid statuses."/>
 
     <DataGrid ItemsSource="{Binding Rows}">
       <DataGrid.Columns>

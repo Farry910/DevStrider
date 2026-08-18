@@ -7,9 +7,11 @@ namespace DevStrider.Desktop.Models;
 /// whose bids and interviews are tracked in isolation.
 ///
 /// <para>
-/// The CV lives here, not on <see cref="UserProfile"/>. A profile <i>is</i> the person being bid
-/// for, so their education, certifications and experience belong to it; the account above owns
-/// only what is genuinely per-person-behind-the-keyboard: the username and the goals.
+/// The CV is not here, and not anywhere in this app. Education, certifications and work history
+/// used to hang off this object as three lists backed by three tables; they are gone. That
+/// material lives in <see cref="WordDocPath"/>, which is where it was being written and maintained
+/// anyway — a second copy in the database only ever meant two versions of one CV, and the
+/// database's was the one nobody updated. DevStrider does not read a CV and does not render one.
 /// </para>
 ///
 /// <para>
@@ -27,7 +29,7 @@ public class Profile
     /// <summary>Real human name shown in the title-bar switcher (e.g. "Fernando Garcia").</summary>
     public string Name { get; set; } = "";
 
-    /// <summary>Per-profile Word .docm with that profile's resume macro.</summary>
+    /// <summary>Per-profile Word .docm with that profile's resume macro — and its CV.</summary>
     public string WordDocPath { get; set; } = "";
 
     /// <summary>
@@ -43,7 +45,7 @@ public class Profile
     /// </summary>
     public string ResumePrompt { get; set; } = "";
 
-    // ── the CV this profile bids with ───────────────────────────────────────
+    // ── who this identity is, in the few fields the app actually uses ───────
 
     public string Headline { get; set; } = "";
     public string Location { get; set; } = "";
@@ -55,13 +57,11 @@ public class Profile
     public string LinkedinUrl { get; set; } = "";
 
     /// <summary>
-    /// Stored one row per entry rather than as a blob, so the company portal — which shares this
-    /// database — can query across them. List order is the CV's order and is persisted explicitly;
-    /// rows have none of their own.
+    /// The one line of CV worth being able to answer a question about — "BSc Computer Science —
+    /// MIT". Free text, never parsed, and deliberately singular: the full history belongs in the
+    /// .docm, and only the highest qualification is worth a column here.
     /// </summary>
-    public List<Education> Education { get; set; } = new();
-    public List<Certification> Certifications { get; set; } = new();
-    public List<Experience> Experiences { get; set; } = new();
+    public string HighestEducation { get; set; } = "";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -81,35 +81,4 @@ public class Profile
         cleaned = cleaned.Trim('-');
         return cleaned.Length == 0 ? "profile" : cleaned;
     }
-}
-
-/// <summary>
-/// Years are nullable integers because that is what a CV actually states — "2019", no month —
-/// and because NULL is the ongoing role or the unfinished degree.
-/// </summary>
-public class Education
-{
-    public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
-    public string Degree { get; set; } = "";
-    public string School { get; set; } = "";
-    public string Location { get; set; } = "";
-    public int? StartYear { get; set; }
-    public int? EndYear { get; set; }
-}
-
-public class Certification
-{
-    public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
-    public string Name { get; set; } = "";
-    public string Issuer { get; set; } = "";
-    public int? Year { get; set; }
-}
-
-public class Experience
-{
-    public ObjectId Id { get; set; } = ObjectId.GenerateNewId();
-    public string Company { get; set; } = "";
-    public string Location { get; set; } = "";
-    public int? StartYear { get; set; }
-    public int? EndYear { get; set; }
 }

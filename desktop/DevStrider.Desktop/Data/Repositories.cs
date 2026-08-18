@@ -42,12 +42,13 @@ public interface IAccountRepository
 }
 
 /// <summary>
-/// Bidding identities and the CV on each — the title-bar profile switcher.
+/// Bidding identities — the title-bar profile switcher.
 ///
 /// <para>
-/// The CV rows (<see cref="Profile.Education"/> and friends) are loaded and saved with the
-/// profile, never on their own. They are separate tables so the company portal can query across
-/// them, but from this app's side a profile is one object.
+/// A profile is one row. It used to be four: education, certifications and work history hung off
+/// it as child tables, which meant every save was a transaction that rewrote them. That material
+/// lives in the profile's .docm now, so the only trace of it here is
+/// <see cref="Profile.HighestEducation"/> — one line, free text, never parsed.
 /// </para>
 /// </summary>
 public interface IProfileRepository
@@ -101,13 +102,6 @@ public interface IBidRepository
     Task<List<UserBid>> ListNonDraftByProfileAsync(ObjectId profileId);
 
     /// <summary>
-    /// Achievement counters. Deliberately <b>not</b> profile-scoped: the goals on the account are
-    /// per person, not per bidding identity.
-    /// </summary>
-    Task<long> CountNonDraftUpdatedBetweenAsync(DateTime fromUtc, DateTime toUtc);
-    Task<long> CountWithStatusUpdatedBetweenAsync(IReadOnlyCollection<string> statuses, DateTime fromUtc, DateTime toUtc);
-
-    /// <summary>
     /// Stamp the given profile onto this account's rows that have none. Legacy-data repair for
     /// the single-profile → multi-profile move; returns how many rows were touched.
     /// </summary>
@@ -130,8 +124,6 @@ public interface IInterviewRepository
     /// </summary>
     Task<List<string>> ListCompaniesByProfileWithStatusAsync(ObjectId profileId, IReadOnlyCollection<string> statuses);
 
-    /// <summary>Achievement counter; not profile-scoped, for the same reason as the bid counters.</summary>
-    Task<long> CountCreatedBetweenWithStatusAsync(DateTime fromUtc, DateTime toUtc, IReadOnlyCollection<string> statuses);
 
     // ── legacy-data repair ──────────────────────────────────────────────────
     Task<long> AssignProfileToUnassignedAsync(ObjectId profileId);

@@ -188,7 +188,7 @@ internal static class KeyboardHelper
     /// flow (open, close) can each burn 15s; blocking a thread-pool thread for that long is
     /// what made several Chrome profiles bidding at once feel like the whole app stalled — the
     /// pool only injects ~1 replacement thread per second, so the queued work behind them
-    /// (Mongo writes, the next accept) waited on thread injection rather than on Word.
+    /// (database writes, the next accept) waited on thread injection rather than on Word.
     /// The predicates here are cheap Win32 window probes, safe to run on any thread.
     /// </summary>
     private static async Task<bool> WaitForConditionAsync(

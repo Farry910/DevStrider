@@ -131,13 +131,12 @@ public partial class App : Application
         services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
 
         // ── services ────────────────────────────────────────────────────────
-        services.AddSingleton<ProfileService>();      // the ds_users row: goals + account name
+        services.AddSingleton<ProfileService>();      // the ds_users row: the account name
         services.AddSingleton<ProfilesService>();     // bidding identities
         services.AddSingleton<ProfileContext>();
         services.AddSingleton<BidBoardService>();
         services.AddSingleton<InterviewService>();
         services.AddSingleton<StatsService>();
-        services.AddSingleton<AchievementService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
         services.AddSingleton<LocalApiServer>();
@@ -153,7 +152,6 @@ public partial class App : Application
         services.AddSingleton<AboutViewModel>();
         services.AddSingleton<ActivityViewModel>();
         services.AddSingleton<ProfilesViewModel>();
-        services.AddSingleton<ProfileViewModel>();
         services.AddSingleton<PeersViewModel>();
         services.AddSingleton<MainWindowViewModel>();
 
@@ -170,19 +168,21 @@ public partial class App : Application
         try
         {
             var profiles = Services.GetRequiredService<ProfilesService>();
+            var settings = await Services.GetRequiredService<SettingsService>().GetAsync();
 
             // An account signing in for the first time has no bidding identity yet, and every
             // profile-scoped screen would come up empty with no way to fix it — the Profiles tab
-            // can create one, but nothing tells you that is what's wrong. Seed one instead.
+            // can create one, but nothing tells you that is what's wrong. Seed one instead, and
+            // carry the machine-level Word path onto it: that setting predates profiles and is
+            // still what DEVSTRIDER_WORD_DOC_PATH seeds, so this is where it lands.
             if ((await profiles.ListAsync()).Count == 0)
             {
-                var seeded = await profiles.CreateAsync("Default");
+                var seeded = await profiles.CreateAsync("Default", settings.WordDocPath);
                 activity.Info("Profiles", "Default profile created", seeded.Name);
             }
 
             await Services.GetRequiredService<ProfileContext>().InitAsync();
 
-            var settings = await Services.GetRequiredService<SettingsService>().GetAsync();
             var server = Services.GetRequiredService<LocalApiServer>();
             await Current.Dispatcher.InvokeAsync(() => server.Start(settings.ListenerPort));
             if (server.IsRunning)

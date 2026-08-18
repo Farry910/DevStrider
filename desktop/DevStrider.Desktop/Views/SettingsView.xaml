@@ -221,7 +221,7 @@
           </StackPanel>
 
           <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" TextWrapping="Wrap"
-                     Text="Extension contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, sharedJobDescription?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …' — same as the resume-filename convention."/>
+                     Text="Extension contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …' — same as the resume-filename convention."/>
         </StackPanel>
       </Border>
 

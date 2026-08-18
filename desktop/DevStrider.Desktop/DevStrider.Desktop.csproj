@@ -41,9 +41,11 @@
       longer be clipped off the bottom at small window sizes. 8.0.0 finished the move to the
       shared PostgreSQL database: sign-in against the portal's app_user, every screen reading and
       writing ds_* directly, and the peer mirror plus its Sharing tab deleted — a major, since
-      settings, storage and startup all changed shape.
+      settings, storage and startup all changed shape. 8.1.0 dropped ds_education,
+      ds_certifications, ds_experiences and ds_achievements: the CV belongs to each profile's
+      .docm, which is the copy people actually edit, and the achievement counters had no reader.
     -->
-    <Version>8.0.0</Version>
+    <Version>8.1.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

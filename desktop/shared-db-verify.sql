@@ -6,9 +6,9 @@
 --
 -- Why this file exists: a filtered listing of information_schema.columns cannot tell
 -- "nullable, no default" apart from "not there at all" — both are simply absent from the
--- result. peer_interviews.bid_id was missing for days and read as correctly-nullable.
+-- result. On the old peer_* tables a bid_id column was missing for days and read as
+-- correctly-nullable.
 -- This query names the missing columns instead of leaving you to spot a gap.
-
 
 -- ── 0. The portal's table, which DevStrider depends on but does not own ──────────
 -- Login reads app_user. If this returns rows, the portal's schema has moved and the
@@ -26,31 +26,18 @@ LEFT JOIN information_schema.columns c
 WHERE c.column_name IS NULL
 ORDER BY e.table_name, e.column_name;
 
-
 -- ── 1. Columns the app writes that the database does not have ───────────────
 -- Anything returned here WILL fail at runtime with SQLSTATE 42703.
 WITH expected(table_name, column_name) AS (VALUES
-    ('ds_users','user_id'), ('ds_users','username'), ('ds_users','bids_per_day'),
-    ('ds_users','interviews_per_week'), ('ds_users','offers_per_month'),
+    ('ds_users','user_id'), ('ds_users','username'),
     ('ds_users','created_at'), ('ds_users','updated_at'),
 
     ('ds_profiles','id'), ('ds_profiles','user_id'), ('ds_profiles','name'),
     ('ds_profiles','slug'), ('ds_profiles','word_doc_path'), ('ds_profiles','macro_name'),
     ('ds_profiles','resume_prompt'), ('ds_profiles','headline'), ('ds_profiles','location'),
     ('ds_profiles','phone'), ('ds_profiles','personal_email'), ('ds_profiles','linkedin_url'),
+    ('ds_profiles','highest_education'),
     ('ds_profiles','created_at'), ('ds_profiles','updated_at'),
-
-    ('ds_education','id'), ('ds_education','profile_id'), ('ds_education','degree'),
-    ('ds_education','school'), ('ds_education','location'), ('ds_education','start_year'),
-    ('ds_education','end_year'), ('ds_education','sort_order'),
-
-    ('ds_certifications','id'), ('ds_certifications','profile_id'),
-    ('ds_certifications','name'), ('ds_certifications','issuer'),
-    ('ds_certifications','year'), ('ds_certifications','sort_order'),
-
-    ('ds_experiences','id'), ('ds_experiences','profile_id'), ('ds_experiences','company'),
-    ('ds_experiences','location'), ('ds_experiences','start_year'),
-    ('ds_experiences','end_year'), ('ds_experiences','sort_order'),
 
     ('ds_bids','id'), ('ds_bids','user_id'), ('ds_bids','profile_id'), ('ds_bids','url'),
     ('ds_bids','url_norm'), ('ds_bids','marked_useless_at'), ('ds_bids','resume_id'),
@@ -71,11 +58,7 @@ WITH expected(table_name, column_name) AS (VALUES
     ('ds_interviews','attached_resume_content'), ('ds_interviews','resume_object_key'),
     ('ds_interviews','resume_file_name'), ('ds_interviews','resume_size_bytes'),
     ('ds_interviews','resume_uploaded_at'), ('ds_interviews','created_at'),
-    ('ds_interviews','updated_at'),
-
-    ('ds_achievements','id'), ('ds_achievements','user_id'), ('ds_achievements','kind'),
-    ('ds_achievements','period_key'), ('ds_achievements','metric_value'),
-    ('ds_achievements','target'), ('ds_achievements','achieved_at')
+    ('ds_interviews','updated_at')
 )
 SELECT e.table_name, e.column_name AS missing_column
 FROM expected e
@@ -86,32 +69,26 @@ LEFT JOIN information_schema.columns c
 WHERE c.column_name IS NULL
 ORDER BY e.table_name, e.column_name;
 
-
 -- ── 2. Every column, unfiltered ─────────────────────────────────────────────
 -- Nullability and defaults for the whole set. Unlike a filtered listing, a column that is
 -- absent here is genuinely absent.
 SELECT table_name, ordinal_position AS pos, column_name, data_type, is_nullable, column_default
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name IN ('ds_users','ds_profiles','ds_education','ds_certifications',
-                     'ds_experiences','ds_bids','ds_interviews','ds_achievements')
+  AND table_name IN ('ds_users','ds_profiles','ds_bids','ds_interviews')
 ORDER BY table_name, ordinal_position;
-
 
 -- ── 3. Foreign keys and indexes ─────────────────────────────────────────────
 SELECT tc.table_name, tc.constraint_name, tc.constraint_type
 FROM information_schema.table_constraints tc
 WHERE tc.table_schema = 'public'
-  AND tc.table_name IN ('ds_users','ds_profiles','ds_education','ds_certifications',
-                        'ds_experiences','ds_bids','ds_interviews','ds_achievements')
+  AND tc.table_name IN ('ds_users','ds_profiles','ds_bids','ds_interviews')
 ORDER BY tc.table_name, tc.constraint_type, tc.constraint_name;
 
 SELECT tablename, indexname FROM pg_indexes
 WHERE schemaname = 'public'
-  AND tablename IN ('ds_users','ds_profiles','ds_education','ds_certifications',
-                    'ds_experiences','ds_bids','ds_interviews','ds_achievements')
+  AND tablename IN ('ds_users','ds_profiles','ds_bids','ds_interviews')
 ORDER BY tablename, indexname;
-
 
 -- ── 4. Orphans ──────────────────────────────────────────────────────────────
 -- profile_id carries no foreign key (rows legitimately sit at '' until the app stamps the

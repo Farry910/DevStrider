@@ -10,14 +10,20 @@ namespace DevStrider.Desktop.Services;
 
 /// <summary>
 /// Tiny HTTP listener that exposes a localhost endpoint the Bid-Assistant Chrome extension
-/// can POST to. Mirrors the old web-app route
-/// <c>POST /api/integrations/bid-assistant/record-bid</c> minus <c>groupId</c> and minus the
-/// JWT requirement (loopback-only binding makes authentication unnecessary).
+/// can POST to.
 ///
-/// Lifecycle: created once in <c>App.OnStartup</c>, <see cref="Start"/> called at boot if
-/// <see cref="AppSettings.ListenerEnabled"/> is on, stopped via <see cref="StopAsync"/> in
-/// <c>App.OnExit</c>. The listener uses <see cref="HttpListener"/> (built into .NET, zero
-/// extra dependencies) and processes requests on the thread pool.
+/// <para>
+/// It binds loopback only, and that is what stands in for authentication: nothing off this
+/// machine can reach it. Requests arrive with no credential and are served as whoever is signed
+/// in to the app, so the listener must not start before login — see <c>App.StartAfterLoginAsync</c>.
+/// </para>
+///
+/// <para>
+/// Lifecycle: created once by the DI container, <see cref="Start"/> called after a successful
+/// sign-in on <see cref="Models.AppSettings.ListenerPort"/>, stopped via <see cref="StopAsync"/>
+/// in <c>App.OnExit</c>. It uses <see cref="HttpListener"/> (built into .NET, zero extra
+/// dependencies) and processes requests on the thread pool.
+/// </para>
 /// </summary>
 public sealed partial class LocalApiServer : ObservableObject
 {
@@ -184,7 +190,7 @@ public sealed partial class LocalApiServer : ObservableObject
                 continue;
             }
 
-            // Each request fans out to the thread pool so a slow Mongo insert doesn't block the
+            // Each request fans out to the thread pool so a slow database insert doesn't block the
             // listener from accepting the next call.
             _ = Task.Run(() => HandleAsync(ctx));
         }
@@ -290,16 +296,6 @@ public sealed partial class LocalApiServer : ObservableObject
                 return;
             }
 
-            if (ctx.Request.HttpMethod == "POST" && path == "/client/devstrider-outcome")
-            {
-                // Telemetry sink — just consume and ack. The extension's purple-button flow
-                // fires this regardless of success/failure; we don't store it (the WPF UI is
-                // the dashboard now).
-                _ = await ReadBodyAsync(ctx);
-                await WriteJsonAsync(ctx, 200, new { ok = true });
-                return;
-            }
-
             _activity.Warning(ExtensionSource, "Unknown endpoint", $"{ctx.Request.HttpMethod} {path}", silent: true);
             await WriteJsonAsync(ctx, 404, new { error = "Not found" });
         }
@@ -398,7 +394,7 @@ public sealed partial class LocalApiServer : ObservableObject
         // Capture-or-join by exact normalized URL (strict matching — different queries are
         // different postings, per the rule the user locked earlier). The posting and the bid are
         // one row, so this is a single call rather than a link lookup followed by a bid upsert.
-        var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.SharedJobDescription ?? "", b =>
+        var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.JobDescription ?? "", b =>
         {
             if (!string.IsNullOrEmpty(req.JobDescription)) b.JobDescription = req.JobDescription;
             if (!string.IsNullOrEmpty(gptStored)) b.GptResumeContent = gptStored;
@@ -533,7 +529,7 @@ public sealed partial class LocalApiServer : ObservableObject
         // Record regardless of the macro outcome.
         try
         {
-            var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.SharedJobDescription ?? "", b =>
+            var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.JobDescription ?? "", b =>
             {
                 if (!string.IsNullOrEmpty(req.JobDescription)) b.JobDescription = req.JobDescription;
                 if (!string.IsNullOrEmpty(resumeBody)) b.GptResumeContent = resumeBody;
@@ -787,20 +783,21 @@ public sealed partial class LocalApiServer : ObservableObject
     {
         public string Url { get; set; } = "";
         public string? JobDescription { get; set; }
-        public string? SharedJobDescription { get; set; }
         /// <summary>Full ChatGPT reply, trailing fast-feed line included — we split it here.</summary>
         public string? ResumeText { get; set; }
         public string? Origin { get; set; }
     }
 
-    /// <summary>Wire shape mirroring the legacy <c>/api/integrations/bid-assistant/record-bid</c> body.</summary>
+    /// <summary>
+    /// Wire shape the extension posts. Unknown fields deserialize away, so an older extension
+    /// build sending something this no longer names still records its bid.
+    /// </summary>
     public class RecordBidRequest
     {
         public string Url { get; set; } = "";
         public string? JobDescription { get; set; }
         public string? GptResumeContent { get; set; }
         public string? FastFeedInput { get; set; }
-        public string? SharedJobDescription { get; set; }
         public string? Comment { get; set; }
         public string? Origin { get; set; }
     }

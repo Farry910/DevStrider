@@ -19,14 +19,13 @@ namespace DevStrider.Desktop.Services;
 public sealed class SharedDbContext
 {
     /// <summary>
-    /// The tables DevStrider owns, in the order <c>shared-db-schema.sql</c> defines them.
+    /// The four tables DevStrider owns, in the order <c>shared-db-schema.sql</c> defines them.
     /// <c>app_user</c> is deliberately absent: the portal owns it, this app only reads it, and its
     /// absence is a different failure — the wrong database entirely — which login reports itself.
     /// </summary>
     public static readonly string[] OwnedTables =
     {
-        "ds_users", "ds_profiles", "ds_education", "ds_certifications",
-        "ds_experiences", "ds_bids", "ds_interviews", "ds_achievements",
+        "ds_users", "ds_profiles", "ds_bids", "ds_interviews",
     };
 
     private readonly SharedDbCredentials _credentials;

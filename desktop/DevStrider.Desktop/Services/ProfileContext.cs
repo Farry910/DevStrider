@@ -72,7 +72,7 @@ public sealed class ProfileContext
         });
     }
 
-    /// <summary>Pulls the latest profile list from Mongo (no active-profile switch).</summary>
+    /// <summary>Pulls the latest profile list from the database (no active-profile switch).</summary>
     public async Task RefreshListAsync()
     {
         var list = await _profiles.ListAsync();

@@ -6,7 +6,7 @@ namespace DevStrider.Desktop.Services;
 
 /// <summary>
 /// CRUD over the account's bidding identities. Different from <see cref="ProfileService"/>
-/// (singular), which manages the one <c>ds_users</c> row holding the account's goals.
+/// (singular), which manages the one <c>ds_users</c> row behind the signed-in account.
 /// </summary>
 public class ProfilesService
 {

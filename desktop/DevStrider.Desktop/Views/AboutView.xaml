@@ -122,10 +122,10 @@
                      Text="Persistent (survives reboot, user scope) — run in PowerShell or cmd:"/>
           <Border Background="{StaticResource SurfaceAlt}" CornerRadius="3" Padding="10,8" Margin="0,0,0,8">
             <TextBlock FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
-                       Text="setx DEVSTRIDER_GITHUB_PAT &quot;ghp_xxxxxxxxxxxxxxxx&quot;&#x0A;setx DEVSTRIDER_GITHUB_REPO_URL &quot;https://github.com/your-team/repo&quot;&#x0A;setx DEVSTRIDER_USERNAME &quot;joshua&quot;"/>
+                       Text="setx DEVSTRIDER_SHARED_DB_URI &quot;postgresql://user:pass@host:5432/devstrider?sslmode=require&quot;&#x0A;setx DEVSTRIDER_LISTENER_PORT &quot;8765&quot;&#x0A;setx DEVSTRIDER_WORD_DOC_PATH &quot;C:\Users\you\Documents\resume.docm&quot;"/>
           </Border>
           <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,6" TextWrapping="Wrap"
-                     Text="Then close and re-open DevStrider. After it picks them up, you can clear them again — the values are stored in plaintext in the local MongoDB."/>
+                     Text="Then close and re-open DevStrider. After it picks them up you can clear them again — the values are stored in plaintext in settings.json under %LOCALAPPDATA%\DevStrider."/>
         </StackPanel>
       </Border>
     </StackPanel>

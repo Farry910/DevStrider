@@ -6,9 +6,9 @@ namespace DevStrider.Desktop.Models;
 ///
 /// <para>
 /// The company portal owns the account itself: email, password, verification, role. This is only
-/// what DevStrider knows about it, and it is deliberately thin. Everything describing a
-/// <i>person being bid for</i> — name, CV, contact details — is on <see cref="Profile"/>, because
-/// one account runs several of those.
+/// what DevStrider knows about it, and it is deliberately almost nothing. Everything describing a
+/// <i>person being bid for</i> — name, contact details, which Word template — is on
+/// <see cref="Profile"/>, because one account runs several of those.
 /// </para>
 /// </summary>
 public class UserProfile
@@ -17,24 +17,12 @@ public class UserProfile
     public long UserId { get; set; }
 
     /// <summary>
-    /// The DevStrider user name — one per account. Lower-cased with spaces as dashes; unique
-    /// across the team. Display only: nothing references it, so renaming is safe.
+    /// The DevStrider user name, and it <i>is</i> the portal address on <c>app_user.email</c>.
+    /// Login re-asserts it on every sign-in, so a rename in the portal follows the user here and
+    /// there is never a second answer to who someone is.
     /// </summary>
     public string Username { get; set; } = "";
 
-    /// <summary>
-    /// Targets are per person, not per bidding identity: someone running three profiles has one
-    /// daily bid target, not three. The achievement counters have always worked this way.
-    /// </summary>
-    public Goals Goals { get; set; } = new();
-
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
-}
-
-public class Goals
-{
-    public int BidsPerDay { get; set; }
-    public int InterviewsPerWeek { get; set; }
-    public int OffersPerMonth { get; set; }
 }

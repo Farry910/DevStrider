@@ -11,11 +11,10 @@ namespace DevStrider.Desktop.Services;
 /// <c>%LOCALAPPDATA%\DevStrider\settings.json</c>.
 ///
 /// <para>
-/// Settings used to be a row in the local MongoDB. They can't stay there: the row holds the
-/// shared database's credentials <i>and</i> the switch that says which database to use, so
-/// reading it from a database is circular — in shared mode the app would need the connection
-/// string in order to find out how to connect. A file on disk is the only place that answer can
-/// live, and it is also what lets MongoDB be removed at the end of the migration.
+/// Settings used to be a row in the local MongoDB, and they cannot live in any database: the
+/// file holds the shared database's own credentials, so reading it from there is circular — the
+/// app would need the connection string in order to find out how to connect. A file on disk is
+/// the only place that answer can live, and it is what let MongoDB be dropped entirely.
 /// </para>
 ///
 /// <para>

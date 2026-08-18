@@ -118,15 +118,17 @@
                 <RowDefinition Height="Auto"/>   <!-- 0  section title -->
                 <RowDefinition Height="Auto"/>   <!-- 1  name label -->
                 <RowDefinition Height="Auto"/>   <!-- 2  name box -->
-                <RowDefinition Height="Auto"/>   <!-- 3  doc path label -->
-                <RowDefinition Height="Auto"/>   <!-- 4  doc path box + browse -->
-                <RowDefinition Height="Auto"/>   <!-- 5  doc path help -->
-                <RowDefinition Height="Auto"/>   <!-- 6  macro label -->
-                <RowDefinition Height="Auto"/>   <!-- 7  macro box -->
-                <RowDefinition Height="Auto"/>   <!-- 8  macro help -->
-                <RowDefinition Height="Auto"/>   <!-- 9  prompt label + insert default -->
-                <RowDefinition Height="*" MinHeight="120"/>  <!-- 10 prompt box, takes the slack -->
-                <RowDefinition Height="Auto"/>   <!-- 11 prompt help -->
+                <RowDefinition Height="Auto"/>   <!-- 3  highest-education label -->
+                <RowDefinition Height="Auto"/>   <!-- 4  highest-education box -->
+                <RowDefinition Height="Auto"/>   <!-- 5  doc path label -->
+                <RowDefinition Height="Auto"/>   <!-- 6  doc path box + browse -->
+                <RowDefinition Height="Auto"/>   <!-- 7  doc path help -->
+                <RowDefinition Height="Auto"/>   <!-- 8  macro label -->
+                <RowDefinition Height="Auto"/>   <!-- 9  macro box -->
+                <RowDefinition Height="Auto"/>   <!-- 10 macro help -->
+                <RowDefinition Height="Auto"/>   <!-- 11 prompt label + insert default -->
+                <RowDefinition Height="*" MinHeight="120"/>  <!-- 12 prompt box, takes the slack -->
+                <RowDefinition Height="Auto"/>   <!-- 13 prompt help -->
               </Grid.RowDefinitions>
 
               <TextBlock Grid.Row="0" Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -137,8 +139,14 @@
                        Tag="e.g. Fernando Garcia"
                        Margin="0,2,0,12"/>
 
-              <TextBlock Grid.Row="3" Text="Word document path (.docm with the macro)"/>
-              <Grid Grid.Row="4" Margin="0,2,0,4">
+              <TextBlock Grid.Row="3" Text="Highest education"/>
+              <TextBox Grid.Row="4"
+                       Text="{Binding Selected.HighestEducation, UpdateSourceTrigger=PropertyChanged}"
+                       Tag="e.g. BSc Computer Science — MIT"
+                       Margin="0,2,0,12"/>
+
+              <TextBlock Grid.Row="5" Text="Word document path (.docm with the macro)"/>
+              <Grid Grid.Row="6" Margin="0,2,0,4">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
@@ -153,19 +161,19 @@
                         ToolTip="Browse for Word document"
                         Content="&#xE8E5;"/>
               </Grid>
-              <TextBlock Grid.Row="5" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+              <TextBlock Grid.Row="7" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
                          Text="The .docm holding this person's resume layout, bookmarks and macro. Each profile has its own — that's what makes the output theirs."/>
 
-              <TextBlock Grid.Row="6" Text="Word macro name"/>
-              <TextBox Grid.Row="7"
+              <TextBlock Grid.Row="8" Text="Word macro name"/>
+              <TextBox Grid.Row="9"
                        Text="{Binding Selected.MacroName, UpdateSourceTrigger=PropertyChanged}"
                        FontFamily="Consolas"
                        Tag="UpdateResumeAndSwitchOriginal"
                        Margin="0,2,0,4"/>
-              <TextBlock Grid.Row="8" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+              <TextBlock Grid.Row="10" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
                          Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
 
-              <Grid Grid.Row="9" Margin="0,0,0,2">
+              <Grid Grid.Row="11" Margin="0,0,0,2">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
@@ -180,7 +188,7 @@
               <!-- Stretches into whatever height is spare. The prompt is the one field here
                    people actually read and edit at length, so it gets the slack rather than a
                    fixed 120px that was too small on a big screen and too big on a laptop. -->
-              <TextBox Grid.Row="10"
+              <TextBox Grid.Row="12"
                        Text="{Binding Selected.ResumePrompt, UpdateSourceTrigger=PropertyChanged}"
                        AcceptsReturn="True"
                        TextWrapping="Wrap"
@@ -189,7 +197,7 @@
                        FontFamily="Consolas"
                        Tag="Act as an expert resume writer. Tailor my resume to this job description…"
                        Margin="0,2,0,4"/>
-              <TextBlock Grid.Row="11" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,0"
+              <TextBlock Grid.Row="13" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,0"
                          Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
             </Grid>
           </ScrollViewer>
