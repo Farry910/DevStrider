@@ -16,7 +16,6 @@ public partial class MainWindowViewModel : ViewModelBase
     public FindBidViewModel FindBid { get; }
     public OverviewViewModel Overview { get; }
     public StatsViewModel Stats { get; }
-    public SharingViewModel Sharing { get; }
     public SettingsViewModel Settings { get; }
     public AboutViewModel About { get; }
     public ActivityViewModel Activity { get; }
@@ -59,7 +58,6 @@ public partial class MainWindowViewModel : ViewModelBase
         FindBidViewModel findBid,
         OverviewViewModel overview,
         StatsViewModel stats,
-        SharingViewModel sharing,
         SettingsViewModel settings,
         AboutViewModel about,
         ActivityViewModel activity,
@@ -72,7 +70,6 @@ public partial class MainWindowViewModel : ViewModelBase
         FindBid = findBid;
         Overview = overview;
         Stats = stats;
-        Sharing = sharing;
         Settings = settings;
         About = about;
         Activity = activity;
@@ -91,7 +88,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowFindBid() => Current = FindBid;
     [RelayCommand] private void ShowOverview() => Current = Overview;
     [RelayCommand] private void ShowStats() => Current = Stats;
-    [RelayCommand] private void ShowSharing() => Current = Sharing;
     [RelayCommand] private void ShowSettings() => Current = Settings;
     [RelayCommand] private void ShowAbout() => Current = About;
     [RelayCommand] private void ShowActivity() => Current = Activity;

@@ -42,20 +42,19 @@ public partial class BidBoardView : UserControl
         var dlg = new FastFeedDialog
         {
             Owner = Window.GetWindow(this),
-            Subject = (row.Link?.Url ?? "").Trim()
+            Subject = (row.Bid?.Url ?? "").Trim()
         };
         if (dlg.ShowDialog() != true || string.IsNullOrWhiteSpace(dlg.Line)) return;
         row.FastFeedDraft = dlg.Line;
         await Vm.ApplyFastFeedAsync(row);
     }
 
-    /// <summary>Open a modal showing this row's job description (private bid JD wins, falls
-    /// back to the link's shared JD).</summary>
+    /// <summary>Open a modal showing this row's job description. The posting and the bid are
+    /// one row, so there is one JD and no fallback to reach for.</summary>
     private void OnViewJdClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not BoardRow row) return;
         var jd = (row.Bid?.JobDescription ?? "").Trim();
-        if (jd.Length == 0) jd = (row.Link?.SharedJobDescription ?? "").Trim();
         if (jd.Length == 0)
         {
             MessageBox.Show("No job description saved for this row.", "JD",

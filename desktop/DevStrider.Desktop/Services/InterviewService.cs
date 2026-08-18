@@ -1,18 +1,17 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using MongoDB.Bson;
-using MongoDB.Driver;
 
 namespace DevStrider.Desktop.Services;
 
 public class InterviewService
 {
-    private readonly MongoContext _db;
+    private readonly IInterviewRepository _interviews;
     private readonly ProfileContext _profileContext;
 
-    public InterviewService(MongoContext db, ProfileContext profileContext)
+    public InterviewService(IInterviewRepository interviews, ProfileContext profileContext)
     {
-        _db = db;
+        _interviews = interviews;
         _profileContext = profileContext;
     }
 
@@ -22,13 +21,7 @@ public class InterviewService
     {
         var profileId = ActiveProfileId;
         if (profileId == ObjectId.Empty) return Task.FromResult(new List<Interview>());
-        return _db.Interviews
-            .Find(Builders<Interview>.Filter.And(
-                Builders<Interview>.Filter.Eq(i => i.ProfileId, profileId),
-                Builders<Interview>.Filter.Gte(i => i.ScheduledDate, fromUtc),
-                Builders<Interview>.Filter.Lt(i => i.ScheduledDate, toUtc)))
-            .SortBy(i => i.ScheduledDate)
-            .ToListAsync();
+        return _interviews.ListByProfileScheduledBetweenAsync(profileId, fromUtc, toUtc);
     }
 
     public async Task<Interview> CreateAsync(Interview iv)
@@ -41,20 +34,31 @@ public class InterviewService
         if (iv.ProcessId == ObjectId.Empty) iv.ProcessId = ObjectId.GenerateNewId();
         iv.CreatedAt = DateTime.UtcNow;
         iv.UpdatedAt = iv.CreatedAt;
-        await _db.Interviews.InsertOneAsync(iv);
+        await _interviews.UpsertAsync(iv);
         return iv;
     }
 
     public async Task UpdateAsync(Interview iv)
     {
         iv.UpdatedAt = DateTime.UtcNow;
-        await _db.Interviews.ReplaceOneAsync(i => i.Id == iv.Id, iv);
+        await _interviews.UpsertAsync(iv);
     }
 
-    public Task DeleteAsync(ObjectId id) =>
-        _db.Interviews.DeleteOneAsync(i => i.Id == id);
+    public Task DeleteAsync(ObjectId id) => _interviews.DeleteAsync(id);
 
     /// <summary>True when at least one interview is attached to the given bid.</summary>
-    public Task<bool> HasForBidAsync(ObjectId bidId) =>
-        _db.Interviews.Find(i => i.BidId == bidId).AnyAsync();
+    public Task<bool> HasForBidAsync(ObjectId bidId) => _interviews.AnyForBidAsync(bidId);
+
+    /// <summary>
+    /// Companies this profile is already interviewing at — feeds the bid board's warning column.
+    /// Only the scheduled/completed/passed statuses count: a failed or cancelled round is not a
+    /// reason to warn someone off bidding there again.
+    /// </summary>
+    public Task<List<string>> ActiveInterviewCompaniesAsync(ObjectId profileId) =>
+        _interviews.ListCompaniesByProfileWithStatusAsync(profileId, new[]
+        {
+            InterviewStatuses.Scheduled,
+            InterviewStatuses.Completed,
+            InterviewStatuses.Passed,
+        });
 }

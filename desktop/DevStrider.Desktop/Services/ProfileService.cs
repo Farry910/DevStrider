@@ -1,42 +1,43 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
-using MongoDB.Driver;
 
 namespace DevStrider.Desktop.Services;
 
+/// <summary>
+/// The signed-in account's <c>ds_users</c> row — goals, and the name the rest of the team sees.
+///
+/// <para>
+/// Distinct from <see cref="ProfilesService"/> (plural), which manages the bidding identities. One
+/// account, several of those; everything genuinely per-person-behind-the-keyboard lives here.
+/// </para>
+///
+/// <para>
+/// The row is created by <see cref="AuthService"/> on first successful login, so by the time any
+/// of this runs it exists. <see cref="GetAsync"/> still tolerates its absence rather than
+/// throwing — a missing row should degrade to zeroed goals, not to a dead Settings tab.
+/// </para>
+/// </summary>
 public class ProfileService
 {
-    private readonly MongoContext _db;
-    public ProfileService(MongoContext db) => _db = db;
+    private readonly IAccountRepository _accounts;
+    private readonly SessionContext _session;
+
+    public ProfileService(IAccountRepository accounts, SessionContext session)
+    {
+        _accounts = accounts;
+        _session = session;
+    }
 
     /// <summary>
-    /// The local install is single-user; first read seeds a fresh profile using the current
-    /// Windows account name (lower-cased, spaces stripped). Sensible default for "your
-    /// filename in the team repo" without forcing the user into Settings on day one.
+    /// The account row. Never null: an account that somehow has no row reads as a fresh one
+    /// carrying the signed-in address, which is what the row would have been seeded with anyway.
     /// </summary>
-    public async Task<UserProfile> GetAsync()
-    {
-        var doc = await _db.Profiles.Find(FilterDefinition<UserProfile>.Empty).FirstOrDefaultAsync();
-        if (doc != null) return doc;
-        var seed = new UserProfile { Username = DefaultUsername() };
-        await _db.Profiles.InsertOneAsync(seed);
-        return seed;
-    }
+    public async Task<UserProfile> GetAsync() =>
+        await _accounts.GetAsync() ?? new UserProfile
+        {
+            UserId = _session.UserId,
+            Username = _session.Email,
+        };
 
-    /// <summary>Lower-cased Windows account name with spaces removed; falls back to "me".</summary>
-    public static string DefaultUsername()
-    {
-        var raw = Environment.UserName ?? "";
-        var cleaned = new string(raw.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
-        return string.IsNullOrEmpty(cleaned) ? "me" : cleaned;
-    }
-
-    public async Task SaveAsync(UserProfile profile)
-    {
-        profile.UpdatedAt = DateTime.UtcNow;
-        await _db.Profiles.ReplaceOneAsync(
-            Builders<UserProfile>.Filter.Eq(x => x.Id, profile.Id),
-            profile,
-            new ReplaceOptions { IsUpsert = true });
-    }
+    public Task SaveAsync(UserProfile profile) => _accounts.UpsertAsync(profile);
 }

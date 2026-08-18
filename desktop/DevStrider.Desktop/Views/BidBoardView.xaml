@@ -61,9 +61,9 @@
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBox Grid.Column="0" Text="{Binding NewLinkUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job URL"/>
-        <TextBox Grid.Column="1" Text="{Binding NewLinkSharedJd, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Shared JD (optional)"/>
-        <Button Grid.Column="2" Command="{Binding AddLinkCommand}" ToolTip="Add link">
+        <TextBox Grid.Column="0" Text="{Binding NewUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job URL"/>
+        <TextBox Grid.Column="1" Text="{Binding NewJobDescription, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job description (optional)"/>
+        <Button Grid.Column="2" Command="{Binding AddUrlCommand}" ToolTip="Capture URL">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <TextBlock Text="Add link" VerticalAlignment="Center"/>
@@ -140,7 +140,7 @@
                     <Setter Property="Visibility" Value="Collapsed"/>
                     <Style.Triggers>
                       <!-- Exact repeat — strongest signal, red. -->
-                      <DataTrigger Binding="{Binding WarningKind}" Value="link">
+                      <DataTrigger Binding="{Binding WarningKind}" Value="url">
                         <Setter Property="Text" Value="&#xEA39;"/>
                         <Setter Property="Foreground" Value="#F44336"/>
                         <Setter Property="Visibility" Value="Visible"/>
@@ -165,7 +165,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
 
-        <DataGridTemplateColumn Header="URL" Width="2*" SortMemberPath="Link.Url">
+        <DataGridTemplateColumn Header="URL" Width="2*" SortMemberPath="Bid.Url">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>
               <!-- Clickable hyperlink: opens the URL in the OS default browser via the
@@ -175,9 +175,9 @@
               <TextBlock VerticalAlignment="Center"
                          TextTrimming="CharacterEllipsis">
                 <Hyperlink Click="OnUrlClick"
-                           Tag="{Binding Link.Url}"
+                           Tag="{Binding Bid.Url}"
                            Foreground="{StaticResource Primary}">
-                  <Run Text="{Binding Link.Url, Mode=OneWay}"/>
+                  <Run Text="{Binding Bid.Url, Mode=OneWay}"/>
                 </Hyperlink>
               </TextBlock>
             </DataTemplate>
@@ -206,7 +206,7 @@
           </DataGridComboBoxColumn.ItemsSource>
         </DataGridComboBoxColumn>
         <DataGridTextColumn Header="Origin"     Binding="{Binding Bid.Origin}" Width="120"/>
-        <DataGridTextColumn Header="Created"    Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:MMM dd HH:mm}'}" Width="120"/>
+        <DataGridTextColumn Header="Created"    Binding="{Binding Bid.CreatedAt, StringFormat='{}{0:MMM dd HH:mm}'}" Width="120"/>
         <DataGridTemplateColumn Header="Actions" Width="190" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate>

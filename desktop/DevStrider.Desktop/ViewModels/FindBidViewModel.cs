@@ -3,20 +3,20 @@ using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Driver;
+using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
 
 /// <summary>
 /// "When the recruiter calls about a job you applied to weeks ago" — search across the user's
-/// bids (and the link URLs they came from) by company, role, stack, or substring of the URL.
-/// Each result has a Schedule-interview action that creates an Interview prefilled with
-/// resumeId + JD from the bid.
+/// bids by company, role, stack, or substring of the URL. Each result has a Schedule-interview
+/// action that creates an Interview prefilled with resumeId + JD from the bid.
 /// </summary>
 public partial class FindBidViewModel : ViewModelBase
 {
-    private readonly MongoContext _db;
+    private readonly IBidRepository _bids;
     private readonly InterviewService _interviews;
+    private readonly ProfileContext _profileContext;
 
     public ObservableCollection<FindBidRow> Results { get; } = new();
 
@@ -39,11 +39,9 @@ public partial class FindBidViewModel : ViewModelBase
         set { if (SetProperty(ref _searchDaysBack, Math.Max(7, value))) _ = SearchAsync(); }
     }
 
-    private readonly ProfileContext _profileContext;
-
-    public FindBidViewModel(MongoContext db, InterviewService interviews, ProfileContext profileContext)
+    public FindBidViewModel(IBidRepository bids, InterviewService interviews, ProfileContext profileContext)
     {
-        _db = db;
+        _bids = bids;
         _interviews = interviews;
         _profileContext = profileContext;
         profileContext.ProfileChanged += () =>
@@ -61,8 +59,8 @@ public partial class FindBidViewModel : ViewModelBase
         try
         {
             var q = (Query ?? "").Trim();
-            var profileId = _profileContext.Current?.Id ?? MongoDB.Bson.ObjectId.Empty;
-            if (profileId == MongoDB.Bson.ObjectId.Empty)
+            var profileId = _profileContext.Current?.Id ?? ObjectId.Empty;
+            if (profileId == ObjectId.Empty)
             {
                 Results.Clear();
                 StatusMessage = "No active profile.";
@@ -72,18 +70,13 @@ public partial class FindBidViewModel : ViewModelBase
             // even a year of heavy bidding (~3-4k rows) is trivial to filter client-side.
             // Tuneable via the SearchDaysBack property on this VM.
             var cutoff = DateTime.UtcNow.AddDays(-SearchDaysBack);
-            var bids = await _db.Bids.Find(b => b.ProfileId == profileId && b.UpdatedAt >= cutoff)
-                                     .SortByDescending(b => b.UpdatedAt)
-                                     .ToListAsync();
-            var links = await _db.Links.Find(l => l.ProfileId == profileId).ToListAsync();
-            var linksById = links.ToDictionary(l => l.Id);
+            var bids = await _bids.ListByProfileUpdatedSinceAsync(profileId, cutoff);
 
             Results.Clear();
             foreach (var b in bids)
             {
-                if (!linksById.TryGetValue(b.GroupLinkId, out var link)) continue;
-                if (q.Length > 0 && !Matches(b, link, q)) continue;
-                Results.Add(new FindBidRow { Bid = b, Link = link });
+                if (q.Length > 0 && !Matches(b, q)) continue;
+                Results.Add(new FindBidRow { Bid = b });
             }
             var window = $"last {SearchDaysBack} day{(SearchDaysBack == 1 ? "" : "s")}";
             StatusMessage = q.Length == 0
@@ -94,11 +87,11 @@ public partial class FindBidViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Case-insensitive substring match across company, role, primary stacks, URL, and the
-    /// link's shared JD. URL is included so e.g. "hopper" matches
+    /// Case-insensitive substring match across company, role, primary stacks, URL, and the job
+    /// description. URL is included so e.g. "hopper" matches
     /// <c>linkedin.com/jobs/.../senior-backend-engineer-at-hopper-…</c>.
     /// </summary>
-    private static bool Matches(UserBid bid, GroupLink link, string q)
+    private static bool Matches(UserBid bid, string q)
     {
         var needle = q.ToLowerInvariant();
         bool hasHit(string? s) => s != null && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
@@ -107,8 +100,7 @@ public partial class FindBidViewModel : ViewModelBase
         if (hasHit(bid.Role)) return true;
         if (hasHit(bid.ResumeId)) return true;
         if (bid.PrimaryStacks.Any(s => hasHit(s))) return true;
-        if (hasHit(link.Url)) return true;
-        if (hasHit(link.SharedJobDescription)) return true;
+        if (hasHit(bid.Url)) return true;
         if (hasHit(bid.JobDescription)) return true;
         return false;
     }
@@ -118,8 +110,6 @@ public partial class FindBidViewModel : ViewModelBase
                                     string interviewType, string recruiter, string meetingLink)
     {
         if (row?.Bid == null) return;
-        var jd = (row.Bid.JobDescription ?? "").Trim();
-        if (jd.Length == 0) jd = (row.Link?.SharedJobDescription ?? "").Trim();
 
         await _interviews.CreateAsync(new Interview
         {
@@ -132,7 +122,7 @@ public partial class FindBidViewModel : ViewModelBase
             Company = row.Bid.Company,
             Role = row.Bid.Role,
             ResumeId = row.Bid.ResumeId,
-            AttachedJobDescription = jd,
+            AttachedJobDescription = (row.Bid.JobDescription ?? "").Trim(),
             Status = InterviewStatuses.Scheduled,
             Origin = "FindBid"
         });
@@ -143,6 +133,5 @@ public partial class FindBidViewModel : ViewModelBase
 public class FindBidRow
 {
     public UserBid Bid { get; set; } = default!;
-    public GroupLink Link { get; set; } = default!;
-    public string Url => Link?.Url ?? "";
+    public string Url => Bid?.Url ?? "";
 }

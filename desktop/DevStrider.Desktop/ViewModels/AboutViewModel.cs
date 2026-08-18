@@ -26,21 +26,22 @@ public class AboutViewModel : ViewModelBase
         "v" + (typeof(AboutViewModel).Assembly.GetName().Version?.ToString(3) ?? "?");
 
     public string Summary =>
-        "Local-first job-bid tracker. The Chrome extension records bids to the local " +
-        "HTTP listener; peers see each other's bids/interviews via the shared PostgreSQL " +
-        "database configured in Settings. Sync runs hourly in the background, or on demand " +
-        "from the Sharing tab.";
+        "Job-bid tracker for the team. The Chrome extension records bids to the local HTTP " +
+        "listener, which writes them straight to the company portal's PostgreSQL database — " +
+        "the same one you sign in against. There is no local copy and no sync: a teammate's " +
+        "bid is visible the moment they save it.";
 
-    public string DataLocation => "MongoDB (local) · 127.0.0.1:27017/devstrider";
+    public string DataLocation =>
+        "PostgreSQL (shared with the company portal) · configured in Settings";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
     public string SharedClusterLocation =>
-        "PostgreSQL (peer sync) · configured in Settings → Peer database";
+        "Sign-in reads app_user; everything DevStrider stores lives in the ds_* tables";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
         "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
         "(setx DEVSTRIDER_SHARED_DB_URI \"postgresql://…\"), restart DevStrider, then " +
-        "clear the env var if you want — values are saved to your local Mongo after first run.";
+        "clear the env var if you want — values are saved to settings.json after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
 

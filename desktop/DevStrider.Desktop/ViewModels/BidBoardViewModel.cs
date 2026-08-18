@@ -4,14 +4,12 @@ using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.Views;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
 
 public partial class BidBoardViewModel : ViewModelBase
 {
     private readonly BidBoardService _service;
-    private readonly ProfileService _profiles;
     private readonly InterviewService? _interviews;
 
     /// <summary>
@@ -81,11 +79,12 @@ public partial class BidBoardViewModel : ViewModelBase
         set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); }
     }
 
-    private string _newLinkUrl = "";
-    public string NewLinkUrl { get => _newLinkUrl; set => SetProperty(ref _newLinkUrl, value); }
+    private string _newUrl = "";
+    /// <summary>The URL box in the capture row — a posting to start tracking.</summary>
+    public string NewUrl { get => _newUrl; set => SetProperty(ref _newUrl, value); }
 
-    private string _newLinkSharedJd = "";
-    public string NewLinkSharedJd { get => _newLinkSharedJd; set => SetProperty(ref _newLinkSharedJd, value); }
+    private string _newJobDescription = "";
+    public string NewJobDescription { get => _newJobDescription; set => SetProperty(ref _newJobDescription, value); }
 
     /// <summary>How many DataGrid rows are currently selected. Pushed by the view's SelectionChanged handler.</summary>
     private int _selectedCount;
@@ -108,10 +107,13 @@ public partial class BidBoardViewModel : ViewModelBase
     /// <summary>The full list of statuses the bulk picker offers. Exposed so the view can bind <c>ItemsSource</c>.</summary>
     public IReadOnlyList<string> AllBidStatuses { get; } = BidStatuses.All;
 
-    public BidBoardViewModel(BidBoardService service, ProfileService profiles, InterviewService interviews, LocalApiServer localApi, ProfileContext profileContext)
+    public BidBoardViewModel(
+        BidBoardService service,
+        InterviewService interviews,
+        LocalApiServer localApi,
+        ProfileContext profileContext)
     {
         _service = service;
-        _profiles = profiles;
         _interviews = interviews;
 
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -174,7 +176,7 @@ public partial class BidBoardViewModel : ViewModelBase
             {
                 _reloadPending = false;
                 try { await ReloadAsync(); }
-                catch { /* transient Mongo/UI error — the next request retries */ }
+                catch { /* transient database/UI error — the next request retries */ }
             }
             while (_reloadPending);
         }
@@ -191,8 +193,6 @@ public partial class BidBoardViewModel : ViewModelBase
         string interviewType, string recruiter, string meetingLink)
     {
         if (_interviews == null || row?.Bid == null) return;
-        var jd = (row.Bid.JobDescription ?? "").Trim();
-        if (jd.Length == 0) jd = (row.Link?.SharedJobDescription ?? "").Trim();
 
         await _interviews.CreateAsync(new Models.Interview
         {
@@ -205,7 +205,7 @@ public partial class BidBoardViewModel : ViewModelBase
             Company = row.Bid.Company,
             Role = row.Bid.Role,
             ResumeId = row.Bid.ResumeId,
-            AttachedJobDescription = jd,
+            AttachedJobDescription = (row.Bid.JobDescription ?? "").Trim(),
             Status = Models.InterviewStatuses.Scheduled,
             Origin = "BidBoard"
         });
@@ -232,14 +232,15 @@ public partial class BidBoardViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
+    /// <summary>Capture a posting by URL. It lands as a draft until something fills the bid in.</summary>
     [RelayCommand]
-    public async Task AddLinkAsync()
+    public async Task AddUrlAsync()
     {
-        var url = (NewLinkUrl ?? "").Trim();
+        var url = (NewUrl ?? "").Trim();
         if (url.Length == 0) return;
-        await _service.AddLinkAsync(url, NewLinkSharedJd);
-        NewLinkUrl = "";
-        NewLinkSharedJd = "";
+        await _service.CaptureAsync(url, NewJobDescription);
+        NewUrl = "";
+        NewJobDescription = "";
         await ReloadAsync();
     }
 
@@ -252,45 +253,39 @@ public partial class BidBoardViewModel : ViewModelBase
     [RelayCommand]
     public async Task SaveBidAsync(object? param)
     {
-        if (param is not BoardRow row || row.Link == null) return;
-        await _service.UpsertBidAsync(row.Link.Id, b =>
+        if (param is not BoardRow row || row.Bid == null) return;
+        var edited = row.Bid;
+        await _service.UpdateAsync(edited.Id, b =>
         {
-            if (row.Bid != null)
-            {
-                b.ResumeId = row.Bid.ResumeId;
-                b.Company = row.Bid.Company;
-                b.Role = row.Bid.Role;
-                b.PrimaryStacks = row.Bid.PrimaryStacks;
-                b.Status = string.IsNullOrEmpty(row.Bid.Status) ? BidStatuses.Draft : row.Bid.Status;
-                b.Origin = row.Bid.Origin;
-                b.JobDescription = row.Bid.JobDescription;
-                b.GptResumeContent = row.Bid.GptResumeContent;
-                b.Comment = row.Bid.Comment;
-            }
+            b.ResumeId = edited.ResumeId;
+            b.Company = edited.Company;
+            b.Role = edited.Role;
+            b.PrimaryStacks = edited.PrimaryStacks;
+            b.Status = string.IsNullOrEmpty(edited.Status) ? BidStatuses.Draft : edited.Status;
+            b.Origin = edited.Origin;
+            b.JobDescription = edited.JobDescription;
+            b.GptResumeContent = edited.GptResumeContent;
+            b.Comment = edited.Comment;
         });
         await ReloadAsync();
     }
 
     /// <summary>
-    /// "Delete" on a bid row removes the whole row (bid + link). Refuses if interviews are
-    /// attached to the bid — those have to be cleared first so we don't leave orphans.
-    /// Always shows a confirmation dialog before touching Mongo.
+    /// "Delete" removes the whole row — the posting and the bid are one. Refuses if interviews
+    /// are attached, because losing interview history quietly is the kind of bug people only
+    /// notice weeks later. Always confirms before touching the database.
     /// </summary>
     [RelayCommand]
     public async Task DeleteBidAsync(object? param)
     {
-        if (param is not BoardRow row || row.Link == null) return;
+        if (param is not BoardRow row || row.Bid == null) return;
 
-        // Block when interviews would be orphaned. The user has to delete those first —
-        // we don't cascade because losing interview history quietly is the kind of bug
-        // people only notice weeks later.
-        if (row.Bid != null && _interviews != null &&
-            await _interviews.HasForBidAsync(row.Bid.Id))
+        if (_interviews != null && await _interviews.HasForBidAsync(row.Bid.Id))
         {
             ConfirmDialog.Ask(
                 System.Windows.Application.Current?.MainWindow,
                 "Can't delete this bid",
-                $"Interviews are scheduled against {row.Bid.Company ?? row.Link.Url}. " +
+                $"Interviews are scheduled against {Label(row)}. " +
                 "Delete the interviews first, then try again.",
                 okText: "OK",
                 cancelText: "Close",
@@ -298,28 +293,29 @@ public partial class BidBoardViewModel : ViewModelBase
             return;
         }
 
-        var label = row.Bid != null
-            ? ($"{row.Bid.Company} · {row.Bid.Role}".Trim(' ', '·'))
-            : row.Link.Url;
-        if (string.IsNullOrWhiteSpace(label)) label = row.Link.Url;
-
+        var label = Label(row);
         var ok = ConfirmDialog.Ask(
             System.Windows.Application.Current?.MainWindow,
             "Delete bid?",
-            $"{label}\n\nThis removes the link and the bid from your local database. " +
+            $"{label}\n\nThis removes the posting and the bid from the shared database. " +
             "It can't be undone.");
         if (!ok) return;
 
-        if (row.Bid != null) await _service.DeleteBidAsync(row.Bid.Id);
-        await _service.DeleteLinkAsync(row.Link.Id);
+        await _service.DeleteAsync(row.Bid.Id);
         await ReloadAsync();
         StatusMessage = $"Deleted: {label}";
     }
 
+    /// <summary>Company · role once they're known, and the URL until then.</summary>
+    private static string Label(BoardRow row)
+    {
+        var named = $"{row.Bid.Company} · {row.Bid.Role}".Trim(' ', '·');
+        return string.IsNullOrWhiteSpace(named) ? row.Bid.Url : named;
+    }
+
     /// <summary>
     /// Bulk-set status across every selected row. <paramref name="selection"/> comes from the
-    /// DataGrid's <c>SelectedItems</c>. Confirms once, then upserts each row's bid (creating
-    /// the bid on URL-only rows if necessary).
+    /// DataGrid's <c>SelectedItems</c>. Confirms once, then patches each row.
     /// </summary>
     [RelayCommand]
     public async Task BulkApplyStatusAsync(object? selection)
@@ -336,16 +332,15 @@ public partial class BidBoardViewModel : ViewModelBase
         if (!ok) return;
 
         foreach (var row in rows)
-        {
-            await _service.UpsertBidAsync(row.Link.Id, b => { b.Status = status; });
-        }
+            await _service.UpdateAsync(row.Bid.Id, b => { b.Status = status; });
+
         StatusMessage = $"Set {rows.Count} bid{(rows.Count == 1 ? "" : "s")} → '{status}'.";
         await ReloadAsync();
     }
 
     /// <summary>
-    /// Bulk-delete the bid + link for every selected row. Refuses if any selected bid has
-    /// interviews attached (delete those first). One confirm dialog covers the whole batch.
+    /// Bulk-delete every selected row. Refuses if any selected bid has interviews attached
+    /// (delete those first). One confirm dialog covers the whole batch.
     /// </summary>
     [RelayCommand]
     public async Task BulkDeleteAsync(object? selection)
@@ -356,9 +351,9 @@ public partial class BidBoardViewModel : ViewModelBase
         if (_interviews != null)
         {
             var blocked = new List<BoardRow>();
-            foreach (var r in rows.Where(r => r.Bid != null))
+            foreach (var r in rows)
             {
-                if (await _interviews.HasForBidAsync(r.Bid!.Id)) blocked.Add(r);
+                if (await _interviews.HasForBidAsync(r.Bid.Id)) blocked.Add(r);
             }
             if (blocked.Count > 0)
             {
@@ -375,15 +370,12 @@ public partial class BidBoardViewModel : ViewModelBase
         var ok = ConfirmDialog.Ask(
             System.Windows.Application.Current?.MainWindow,
             $"Delete {rows.Count} bid{(rows.Count == 1 ? "" : "s")}?",
-            "This removes both the bid and the link for each row from your local database. Can't be undone.",
+            "This removes the posting and the bid for each row from the shared database. Can't be undone.",
             okText: "Delete");
         if (!ok) return;
 
-        foreach (var r in rows)
-        {
-            if (r.Bid != null) await _service.DeleteBidAsync(r.Bid.Id);
-            await _service.DeleteLinkAsync(r.Link.Id);
-        }
+        foreach (var r in rows) await _service.DeleteAsync(r.Bid.Id);
+
         StatusMessage = $"Deleted {rows.Count} bid{(rows.Count == 1 ? "" : "s")}.";
         await ReloadAsync();
     }
@@ -395,7 +387,7 @@ public partial class BidBoardViewModel : ViewModelBase
     private static List<BoardRow> ExtractSelectedRows(object? selection)
     {
         if (selection is not IList list) return new List<BoardRow>();
-        return list.OfType<BoardRow>().Where(r => r.Link != null).ToList();
+        return list.OfType<BoardRow>().Where(r => r.Bid != null).ToList();
     }
 
     /// <summary>
@@ -407,7 +399,7 @@ public partial class BidBoardViewModel : ViewModelBase
     [RelayCommand]
     public async Task ApplyFastFeedAsync(object? param)
     {
-        if (param is not BoardRow row || row.Link == null)
+        if (param is not BoardRow row || row.Bid == null)
         {
             StatusMessage = "Pick a row first.";
             return;
@@ -418,7 +410,7 @@ public partial class BidBoardViewModel : ViewModelBase
             StatusMessage = "Fast feed needs at least: UID, Company, Role";
             return;
         }
-        await _service.UpsertBidAsync(row.Link.Id, b =>
+        await _service.UpdateAsync(row.Bid.Id, b =>
         {
             b.ResumeId = parsed.ResumeId;
             b.Company = parsed.Company;

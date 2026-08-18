@@ -71,16 +71,16 @@ public sealed class SharedDbCredentials
         {
             var (builder, error) = ParseUri(s.SharedDbUri, s.SharedDbRequireSsl);
             if (builder == null)
-                throw new InvalidOperationException(error ?? "Shared database URI isn't set — Settings → Peer database.");
+                throw new InvalidOperationException(error ?? "Shared database URI isn't set — fill it in on the sign-in window, or in Settings.");
             return builder.ConnectionString;
         }
 
         if (string.IsNullOrWhiteSpace(s.SharedDbHost))
-            throw new InvalidOperationException("Shared database host isn't set — Settings → Peer database.");
+            throw new InvalidOperationException("Shared database host isn't set — fill it in on the sign-in window, or in Settings.");
         if (string.IsNullOrWhiteSpace(s.SharedDbName))
-            throw new InvalidOperationException("Shared database name isn't set — Settings → Peer database.");
+            throw new InvalidOperationException("Shared database name isn't set — fill it in on the sign-in window, or in Settings.");
         if (string.IsNullOrWhiteSpace(s.SharedDbUser))
-            throw new InvalidOperationException("Shared database user isn't set — Settings → Peer database.");
+            throw new InvalidOperationException("Shared database user isn't set — fill it in on the sign-in window, or in Settings.");
 
         return NewBuilder(
             host: s.SharedDbHost.Trim(),

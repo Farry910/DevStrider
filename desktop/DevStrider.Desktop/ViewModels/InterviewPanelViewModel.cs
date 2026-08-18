@@ -134,7 +134,6 @@ public partial class InterviewPanelViewModel : ViewModelBase
         var (key, name) = param switch
         {
             Interview iv => (iv.ResumeObjectKey, iv.ResumeFileName),
-            PeerInterview pv => (pv.ResumeObjectKey, pv.ResumeFileName),
             _ => ("", ""),
         };
         if (string.IsNullOrWhiteSpace(key)) { StatusMessage = "No resume attached."; return; }

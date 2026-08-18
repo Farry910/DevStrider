@@ -1,21 +1,19 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
-using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Driver;
 
 namespace DevStrider.Desktop.ViewModels;
 
 /// <summary>
 /// Drives the bids-per-10-min line chart on the Stats page. Surfaces the owner-filter chips
-/// (self + each imported peer) so the view can wire them to per-line visibility.
+/// (you + each teammate) so the view can wire them to per-line visibility.
 /// </summary>
 public partial class StatsViewModel : ViewModelBase
 {
     private readonly StatsService _stats;
-    private readonly ProfileService _profiles;
-    private readonly MongoContext _db;
+    private readonly ProfileService _account;
+    private readonly IPeerDirectory _peers;
 
     public ObservableCollection<HourlySlot> Slots { get; } = new();
     public ObservableCollection<OwnerFilterItem> OwnerFilter { get; } = new();
@@ -27,11 +25,15 @@ public partial class StatsViewModel : ViewModelBase
         set { if (SetProperty(ref _selectedDay, value)) _ = ReloadAsync(); }
     }
 
-    public StatsViewModel(StatsService stats, ProfileService profiles, MongoContext db, ProfileContext profileContext)
+    public StatsViewModel(
+        StatsService stats,
+        ProfileService account,
+        IPeerDirectory peers,
+        ProfileContext profileContext)
     {
         _stats = stats;
-        _profiles = profiles;
-        _db = db;
+        _account = account;
+        _peers = peers;
         profileContext.ProfileChanged += () =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));
@@ -43,8 +45,8 @@ public partial class StatsViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            var self = (await _profiles.GetAsync()).Username;
-            await BuildOwnerFilter(self);
+            var self = (await _account.GetAsync()).Username;
+            await BuildOwnerFilterAsync(self);
             var selected = new HashSet<string>(
                 OwnerFilter.Where(o => o.IsSelected).Select(o => o.Owner));
             var slots = await _stats.BidsPer10MinAsync(
@@ -58,17 +60,18 @@ public partial class StatsViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    private async Task BuildOwnerFilter(string self)
+    private async Task BuildOwnerFilterAsync(string self)
     {
         // Keep prior selections sticky; only add new owners as they appear.
         if (OwnerFilter.All(o => o.Owner != self))
             OwnerFilter.Insert(0, new OwnerFilterItem(self, isSelf: true));
 
-        // Distinct peer usernames currently in our local mirror of the shared cluster.
-        var peerOwners = await _db.PeerBids
-            .Distinct<string>("ownerUsername", MongoDB.Driver.FilterDefinition<PeerBid>.Empty)
-            .ToListAsync();
-        foreach (var name in peerOwners.Where(n => !string.IsNullOrEmpty(n) && n != self).Distinct())
+        // One chip per person, not per profile: identities are (person, profile) pairs and a
+        // teammate running three of them is still one line on the chart.
+        var identities = await _peers.ListIdentitiesAsync();
+        foreach (var name in identities.Select(i => i.Username)
+                                       .Where(n => !string.IsNullOrEmpty(n) && n != self)
+                                       .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (OwnerFilter.All(o => o.Owner != name))
                 OwnerFilter.Add(new OwnerFilterItem(name, isSelf: false));

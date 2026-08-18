@@ -1,6 +1,6 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
-using MongoDB.Driver;
+using MongoDB.Bson;
 
 namespace DevStrider.Desktop.Services;
 
@@ -16,7 +16,13 @@ public class HourlySlot
 public class OverviewRow
 {
     public string Owner { get; set; } = "";
-    public int LinksCreated { get; set; }
+
+    /// <summary>
+    /// Postings captured in the window, bid on or not. Used to be "links created"; with the
+    /// link/bid merge it is simply rows whose <see cref="UserBid.CreatedAt"/> falls in range.
+    /// </summary>
+    public int Captured { get; set; }
+
     public Dictionary<string, int> ByStatus { get; set; } = new();
     public int InterviewsInRange { get; set; }
     public int InterviewsPassed { get; set; }
@@ -27,22 +33,41 @@ public class OverviewRow
         ByStatus.Where(kv => kv.Key != BidStatuses.Draft).Sum(kv => kv.Value);
 }
 
+/// <summary>
+/// The numbers behind the Overview table and the bids-per-10-min chart.
+///
+/// <para>
+/// Your rows come from the scoped repositories; everyone else's come from
+/// <see cref="IPeerDirectory"/>, which reads the same tables with the account filter inverted.
+/// There is no mirror and no sync lag any more — a teammate's bid is visible the moment they
+/// save it.
+/// </para>
+/// </summary>
 public class StatsService
 {
-    private readonly MongoContext _db;
+    private readonly IBidRepository _bids;
+    private readonly IInterviewRepository _interviews;
+    private readonly IPeerDirectory _peers;
     private readonly ProfileContext _profileContext;
-    public StatsService(MongoContext db, ProfileContext profileContext)
+
+    public StatsService(
+        IBidRepository bids,
+        IInterviewRepository interviews,
+        IPeerDirectory peers,
+        ProfileContext profileContext)
     {
-        _db = db;
+        _bids = bids;
+        _interviews = interviews;
+        _peers = peers;
         _profileContext = profileContext;
     }
 
-    private MongoDB.Bson.ObjectId ActiveProfileId => _profileContext.Current?.Id ?? MongoDB.Bson.ObjectId.Empty;
+    private ObjectId ActiveProfileId => _profileContext.Current?.Id ?? ObjectId.Empty;
 
     /// <summary>
-    /// Bids per 10-minute slot for one local date across the current user and any imported
-    /// snapshots whose owner is in <paramref name="includeOwners"/>. Bucket index uses local
-    /// hour+minute of the bid's <c>AppliedAt</c> (fallback: FirstCreatedAt → CreatedAt).
+    /// Bids per 10-minute slot for one local date, across you and any teammate in
+    /// <paramref name="includeOwners"/>. Bucket index uses the local hour+minute of the bid's
+    /// <c>AppliedAt</c> (fallback: <c>CreatedAt</c>).
     /// </summary>
     public async Task<List<HourlySlot>> BidsPer10MinAsync(
         DateOnly date,
@@ -74,139 +99,111 @@ public class StatsService
         }
 
         var profileId = ActiveProfileId;
-        if (includeOwners.Contains(selfOwner) && profileId != MongoDB.Bson.ObjectId.Empty)
+        if (includeOwners.Contains(selfOwner) && profileId != ObjectId.Empty)
         {
-            var bids = await _db.Bids
-                .Find(b => b.ProfileId == profileId && b.Status != BidStatuses.Draft)
-                .ToListAsync();
-            foreach (var b in bids)
+            foreach (var b in await _bids.ListNonDraftByProfileAsync(profileId))
             {
-                var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
-                if (b.AppliedAt == null && b.FirstCreatedAt == default) ts = b.CreatedAt.ToLocalTime();
+                var ts = (b.AppliedAt ?? b.CreatedAt).ToLocalTime();
                 if (ts >= start && ts < end) Bump(selfOwner, ts);
             }
         }
 
-        // Peer rows carry owner_user_id, not a username — resolve through the identity mirror
-        // so a rename can't split one person's history across two labels.
-        var (nameById, idByName) = await LoadOwnerMapAsync();
-        var includeIds = includeOwners
-            .Select(n => idByName.TryGetValue(n, out var id) ? id : 0L)
-            .Where(id => id != 0)
+        // Peer rows carry a user id and a profile id, never a name — every label comes from the
+        // identity join, so a rename can't split one person's history across two lines.
+        var identities = await _peers.ListIdentitiesAsync();
+        var nameByUser = NameByUser(identities);
+        var wantedProfiles = identities
+            .Where(i => includeOwners.Contains(NameOf(nameByUser, i.UserId)))
+            .Select(i => i.ProfileId)
+            .Distinct()
             .ToList();
 
-        var peerBidFilter = Builders<PeerBid>.Filter.And(
-            Builders<PeerBid>.Filter.In(b => b.OwnerUserId, includeIds),
-            Builders<PeerBid>.Filter.Ne(b => b.Status, BidStatuses.Draft));
-        var peerBids = await _db.PeerBids.Find(peerBidFilter).ToListAsync();
-        foreach (var b in peerBids)
+        if (wantedProfiles.Count > 0)
         {
-            var ts = (b.AppliedAt ?? b.FirstCreatedAt).ToLocalTime();
-            if (b.AppliedAt == null && b.FirstCreatedAt == default) ts = b.CreatedAt.ToLocalTime();
-            if (ts >= start && ts < end) Bump(NameOf(nameById, b.OwnerUserId), ts);
+            foreach (var b in await _peers.ListNonDraftBidsByProfilesAsync(wantedProfiles))
+            {
+                var ts = (b.AppliedAt ?? b.CreatedAt).ToLocalTime();
+                if (ts >= start && ts < end) Bump(NameOf(nameByUser, b.UserId), ts);
+            }
         }
 
         return slots;
     }
 
-    /// <summary>Overview table rows — self + each imported owner.</summary>
+    /// <summary>Overview table rows — you, then every teammate with activity in the window.</summary>
     public async Task<List<OverviewRow>> OverviewAsync(DateTime fromUtc, DateTime toUtc, string selfOwner)
     {
         var rows = new List<OverviewRow> { await BuildSelfAsync(fromUtc, toUtc, selfOwner) };
 
-        // Peer rows are aggregated from the local mirrors and grouped by owner id, then
-        // labelled from the identity mirror. Counting "links" doesn't apply to peers (URLs
-        // aren't shared), so we report 0 there.
-        var (nameById, idByName) = await LoadOwnerMapAsync();
-        var selfId = idByName.TryGetValue(selfOwner, out var sid) ? sid : 0L;
+        var identities = await _peers.ListIdentitiesAsync();
+        var nameByUser = NameByUser(identities);
 
-        var peerBids = await _db.PeerBids
-            .Find(b => b.OwnerUserId != selfId && b.UpdatedAt >= fromUtc && b.UpdatedAt < toUtc)
-            .ToListAsync();
-        var peerIvs = await _db.PeerInterviews
-            .Find(i => i.OwnerUserId != selfId && i.ScheduledDate >= fromUtc && i.ScheduledDate < toUtc)
-            .ToListAsync();
-        foreach (var grp in peerBids.GroupBy(b => b.OwnerUserId))
+        var peerBids = await _peers.ListBidsUpdatedBetweenAsync(fromUtc, toUtc);
+        var peerIvs = await _peers.ListInterviewsScheduledBetweenAsync(fromUtc, toUtc, includeUndated: false);
+
+        foreach (var grp in peerBids.GroupBy(b => b.UserId))
         {
-            var ivsForOwner = peerIvs.Where(i => i.OwnerUserId == grp.Key).ToList();
-            rows.Add(BuildPeerOverview(NameOf(nameById, grp.Key), grp.ToList(), ivsForOwner));
+            var ivsForOwner = peerIvs.Where(i => i.UserId == grp.Key).ToList();
+            rows.Add(Build(NameOf(nameByUser, grp.Key), grp.ToList(), fromUtc, toUtc, ivsForOwner));
         }
-        // Owners that have interviews but no bids in window — still surface them.
-        foreach (var grp in peerIvs.GroupBy(i => i.OwnerUserId))
+
+        // Owners with interviews but no bids in the window — still surface them.
+        foreach (var grp in peerIvs.GroupBy(i => i.UserId))
         {
-            var owner = NameOf(nameById, grp.Key);
+            var owner = NameOf(nameByUser, grp.Key);
             if (rows.Any(r => r.Owner == owner)) continue;
-            rows.Add(BuildPeerOverview(owner, new List<PeerBid>(), grp.ToList()));
+            rows.Add(Build(owner, new List<UserBid>(), fromUtc, toUtc, grp.ToList()));
         }
+
         return rows;
     }
 
     private async Task<OverviewRow> BuildSelfAsync(DateTime from, DateTime to, string selfOwner)
     {
         var profileId = ActiveProfileId;
-        if (profileId == MongoDB.Bson.ObjectId.Empty)
-            return new OverviewRow { Owner = selfOwner };
+        if (profileId == ObjectId.Empty) return new OverviewRow { Owner = selfOwner };
 
-        var bids = await _db.Bids
-            .Find(b => b.ProfileId == profileId && b.UpdatedAt >= from && b.UpdatedAt < to)
-            .ToListAsync();
-        var links = await _db.Links
-            .Find(l => l.ProfileId == profileId && l.CreatedAt >= from && l.CreatedAt < to)
-            .CountDocumentsAsync();
-        var iv = await _db.Interviews
-            .Find(i => i.ProfileId == profileId && i.ScheduledDate >= from && i.ScheduledDate < to)
-            .ToListAsync();
-        return Build(selfOwner, bids, (int)links, iv);
+        var bids = await _bids.ListByProfileUpdatedBetweenAsync(profileId, from, to);
+        var iv = await _interviews.ListByProfileScheduledBetweenAsync(profileId, from, to);
+        return Build(selfOwner, bids, from, to, iv);
     }
 
-    /// <summary>Peer overview row built from already-windowed PeerBid + PeerInterview lists.</summary>
-    private static OverviewRow BuildPeerOverview(string owner, List<PeerBid> peerBids, List<PeerInterview> peerIvs)
-    {
-        var byStatus = peerBids.GroupBy(b => b.Status).ToDictionary(g => g.Key, g => g.Count());
-        return new OverviewRow
-        {
-            Owner = owner,
-            LinksCreated = 0, // peer URLs aren't shared
-            ByStatus = byStatus,
-            InterviewsInRange = peerIvs.Count,
-            InterviewsPassed = peerIvs.Count(i => i.Status == InterviewStatuses.Passed),
-            InterviewsFailed = peerIvs.Count(i => i.Status == InterviewStatuses.Failed),
-        };
-    }
-
-    private static OverviewRow Build(string owner, List<UserBid> bids, int linksCreated, List<Interview> iv)
+    /// <summary>
+    /// One row from an already-windowed set. <paramref name="from"/>/<paramref name="to"/> are
+    /// still needed: the bids are those <i>touched</i> in the window, and captures are the subset
+    /// first seen inside it.
+    /// </summary>
+    private static OverviewRow Build(
+        string owner, List<UserBid> bids, DateTime from, DateTime to, List<Interview> iv)
     {
         var byStatus = bids.GroupBy(b => b.Status).ToDictionary(g => g.Key, g => g.Count());
         return new OverviewRow
         {
             Owner = owner,
-            LinksCreated = linksCreated,
+            Captured = bids.Count(b => b.CreatedAt >= from && b.CreatedAt < to),
             ByStatus = byStatus,
             InterviewsInRange = iv.Count,
             InterviewsPassed = iv.Count(i => i.Status == InterviewStatuses.Passed),
             InterviewsFailed = iv.Count(i => i.Status == InterviewStatuses.Failed),
         };
     }
+
     /// <summary>
-    /// Both directions of the identity map. Peer rows store only <c>owner_user_id</c>; every
-    /// label the UI shows comes from here, so one lookup serves the whole aggregation.
+    /// One name per person. Identities are (person, profile) pairs, so a teammate with three
+    /// profiles appears three times — they all carry the same username, which is the label.
     /// </summary>
-    private async Task<(Dictionary<long, string> nameById, Dictionary<string, long> idByName)> LoadOwnerMapAsync()
+    private static Dictionary<long, string> NameByUser(IEnumerable<PeerIdentity> identities)
     {
-        var users = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
-        var nameById = new Dictionary<long, string>();
-        var idByName = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        foreach (var u in users)
+        var map = new Dictionary<long, string>();
+        foreach (var i in identities)
         {
-            if (u.RemoteId == 0) continue;
-            nameById[u.RemoteId] = u.Username;
-            idByName[u.Username] = u.RemoteId;
+            if (i.UserId == 0 || string.IsNullOrWhiteSpace(i.Username)) continue;
+            map[i.UserId] = i.Username;
         }
-        return (nameById, idByName);
+        return map;
     }
 
     /// <summary>Label for an owner id, falling back to something visible rather than blank.</summary>
     private static string NameOf(Dictionary<long, string> nameById, long id) =>
         nameById.TryGetValue(id, out var n) && !string.IsNullOrEmpty(n) ? n : $"user #{id}";
-
 }

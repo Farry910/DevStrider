@@ -395,13 +395,10 @@ public sealed partial class LocalApiServer : ObservableObject
             }
         }
 
-        // Find-or-create the link by exact normalized URL (strict matching — different queries
-        // = different links, per the rule the user locked earlier).
-        var existing = await _bids.FindLinkByNormalizedUrlAsync(req.Url);
-        GroupLink link = existing ?? await _bids.AddLinkAsync(req.Url, req.SharedJobDescription ?? "");
-        bool joinedExistingLink = existing != null;
-
-        var bid = await _bids.UpsertBidAsync(link.Id, b =>
+        // Capture-or-join by exact normalized URL (strict matching — different queries are
+        // different postings, per the rule the user locked earlier). The posting and the bid are
+        // one row, so this is a single call rather than a link lookup followed by a bid upsert.
+        var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.SharedJobDescription ?? "", b =>
         {
             if (!string.IsNullOrEmpty(req.JobDescription)) b.JobDescription = req.JobDescription;
             if (!string.IsNullOrEmpty(gptStored)) b.GptResumeContent = gptStored;
@@ -421,18 +418,18 @@ public sealed partial class LocalApiServer : ObservableObject
             ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·')
             : (bid.Company?.Trim() ?? "");
         _activity.Success(ExtensionSource,
-            joinedExistingLink ? "Bid updated" : "Bid recorded",
+            joinedExisting ? "Bid updated" : "Bid recorded",
             string.IsNullOrEmpty(label) ? req.Url : label);
 
         // Nudge the Bid Board to reload so the new/updated row appears without manual refresh.
         try { OnExtensionBidRecorded?.Invoke(); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine("[LocalApi] subscriber threw: " + ex.Message); }
 
-        await WriteJsonAsync(ctx, joinedExistingLink ? 200 : 201, new
+        await WriteJsonAsync(ctx, joinedExisting ? 200 : 201, new
         {
-            link = new { id = link.Id.ToString(), link.Url },
-            bid = new { id = bid.Id.ToString(), bid.Status, bid.ResumeId, bid.Company, bid.Role },
-            joinedExistingLink,
+            ok = true,
+            bid = new { id = bid.Id.ToString(), bid.Url, bid.Status, bid.ResumeId, bid.Company, bid.Role },
+            joinedExisting,
             fastFeedApplied = parsed != null
         });
     }
@@ -536,9 +533,7 @@ public sealed partial class LocalApiServer : ObservableObject
         // Record regardless of the macro outcome.
         try
         {
-            var existing = await _bids.FindLinkByNormalizedUrlAsync(req.Url);
-            var link = existing ?? await _bids.AddLinkAsync(req.Url, req.SharedJobDescription ?? "");
-            var bid = await _bids.UpsertBidAsync(link.Id, b =>
+            var (bid, joinedExisting) = await _bids.CaptureAsync(req.Url, req.SharedJobDescription ?? "", b =>
             {
                 if (!string.IsNullOrEmpty(req.JobDescription)) b.JobDescription = req.JobDescription;
                 if (!string.IsNullOrEmpty(resumeBody)) b.GptResumeContent = resumeBody;
@@ -554,7 +549,7 @@ public sealed partial class LocalApiServer : ObservableObject
             });
 
             var label = parsed != null ? $"{parsed.Company} · {parsed.Role}".Trim(' ', '·') : req.Url;
-            _activity.Success(ExtensionSource, existing != null ? "Bid updated" : "Bid recorded", label);
+            _activity.Success(ExtensionSource, joinedExisting ? "Bid updated" : "Bid recorded", label);
             try { OnExtensionBidRecorded?.Invoke(); } catch { /* subscriber problem isn't ours */ }
 
             await WriteJsonAsync(ctx, 200, new

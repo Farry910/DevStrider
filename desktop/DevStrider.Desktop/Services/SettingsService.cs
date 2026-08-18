@@ -1,4 +1,4 @@
-using DevStrider.Desktop.Data;
+using DevStrider.Desktop.Data.Import;
 using DevStrider.Desktop.Models;
 using MongoDB.Driver;
 
@@ -16,9 +16,10 @@ namespace DevStrider.Desktop.Services;
 /// </para>
 ///
 /// <para>
-/// Storage is <see cref="SettingsStore"/>'s JSON file, not either database — see that class for
-/// why. Installs created before that change keep their settings: the first load with no file
-/// present imports the old MongoDB row, writes it out, and never looks at Mongo again.
+/// Storage is <see cref="SettingsStore"/>'s JSON file, not the database — see that class for why.
+/// Installs created before that change keep their settings: the first load with no file present
+/// imports the row from the machine's old local MongoDB and writes it out, after which
+/// <see cref="LegacyStore"/> is never consulted again.
 /// </para>
 ///
 /// <para>
@@ -31,7 +32,7 @@ namespace DevStrider.Desktop.Services;
 public class SettingsService
 {
     private readonly SettingsStore _store;
-    private readonly MongoContext _mongo;
+    private readonly LegacyStore _legacy;
 
     /// <summary>Guards the first load so concurrent callers don't each hit the disk.</summary>
     private readonly SemaphoreSlim _loadLock = new(1, 1);
@@ -42,10 +43,10 @@ public class SettingsService
     /// </summary>
     private volatile AppSettings? _cached;
 
-    public SettingsService(SettingsStore store, MongoContext mongo)
+    public SettingsService(SettingsStore store, LegacyStore legacy)
     {
         _store = store;
-        _mongo = mongo;
+        _legacy = legacy;
     }
 
     /// <summary>
@@ -97,27 +98,21 @@ public class SettingsService
     public async Task SaveAsync(AppSettings s)
     {
         s.UpdatedAt = DateTime.UtcNow;
-        s.DataSource = DataSources.Normalize(s.DataSource);
         await _store.SaveAsync(s);
         _cached = s;
     }
 
     /// <summary>
-    /// Read the settings file, seeding it on first run. Order matters: the old MongoDB row is
-    /// preferred over bare defaults so an existing install doesn't wake up with its shared-database
-    /// password gone.
+    /// Read the settings file, seeding it on first run. The old MongoDB row is preferred over
+    /// bare defaults so an existing install doesn't wake up with its shared-database password
+    /// gone.
     /// </summary>
     private async Task<AppSettings> FetchOrSeedAsync()
     {
         var fromFile = _store.Load();
-        if (fromFile != null)
-        {
-            fromFile.DataSource = DataSources.Normalize(fromFile.DataSource);
-            return fromFile;
-        }
+        if (fromFile != null) return fromFile;
 
-        var seed = await ImportFromMongoAsync() ?? new AppSettings();
-        seed.DataSource = DataSources.Normalize(seed.DataSource);
+        var seed = await ImportFromLegacyAsync() ?? new AppSettings();
         _store.Save(seed);
         return seed;
     }
@@ -127,16 +122,43 @@ public class SettingsService
     /// there's nothing to import — including when MongoDB isn't running, which is the expected
     /// case on an install that has already finished the migration and uninstalled it.
     /// </summary>
-    private async Task<AppSettings?> ImportFromMongoAsync()
+    private async Task<AppSettings?> ImportFromLegacyAsync()
     {
+        if (!_legacy.Available) return null;
         try
         {
-            // Short leash. MongoContext already caps server selection, but this runs on the
+            // Short leash. LegacyStore already caps server selection, but this runs on the
             // startup path with a window waiting to appear, so it gets its own ceiling too.
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            return await _mongo.Settings
-                .Find(FilterDefinition<AppSettings>.Empty)
+            var old = await _legacy.Settings
+                .Find(FilterDefinition<LegacyAppSettings>.Empty)
                 .FirstOrDefaultAsync(cts.Token);
+            if (old == null) return null;
+
+            // Mapped field by field rather than deserialized straight onto AppSettings: the two
+            // shapes have already diverged once (the sync fields went away with peer mirroring),
+            // and a silent partial match is worse than a compiler error here.
+            return new AppSettings
+            {
+                MongoUri = Blank(old.MongoUri, "mongodb://127.0.0.1:27017"),
+                DatabaseName = Blank(old.DatabaseName, "devstrider"),
+                SharedDbMode = Blank(old.SharedDbMode, SharedDbCredentials.ModeUri),
+                SharedDbUri = old.SharedDbUri ?? "",
+                SharedDbHost = old.SharedDbHost ?? "",
+                SharedDbPort = old.SharedDbPort > 0 ? old.SharedDbPort : 5432,
+                SharedDbName = Blank(old.SharedDbName, "devstrider"),
+                SharedDbUser = old.SharedDbUser ?? "",
+                SharedDbPassword = old.SharedDbPassword ?? "",
+                SharedDbRequireSsl = old.SharedDbRequireSsl,
+                ListenerPort = old.ListenerPort > 0 ? old.ListenerPort : 8765,
+                ActiveProfileId = old.ActiveProfileId,
+                WordDocPath = old.WordDocPath ?? "",
+                WordHotkey = Blank(old.WordHotkey, "F9"),
+                R2AccountId = old.R2AccountId ?? "",
+                R2Bucket = old.R2Bucket ?? "",
+                R2AccessKeyId = old.R2AccessKeyId ?? "",
+                R2SecretAccessKey = old.R2SecretAccessKey ?? "",
+            };
         }
         catch (Exception ex)
         {
@@ -144,4 +166,7 @@ public class SettingsService
             return null;
         }
     }
+
+    private static string Blank(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value;
 }

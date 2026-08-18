@@ -8,7 +8,9 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="MongoDB connection" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Legacy MongoDB (import only)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="This machine's old local database. It is read once, to carry an existing install's saved settings across, and never written to. Once that has happened the MongoDB service can be stopped and uninstalled — leave these fields alone on a machine that never had one."/>
           <TextBlock Text="Connection URI"/>
           <TextBox Text="{Binding Model.MongoUri, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
                    Tag="mongodb://127.0.0.1:27017"/>
@@ -24,27 +26,25 @@
         <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="How teammates find you in the shared database. Your username owns the profiles you bid as — peers pick you first, then one of your profiles. There is no password: this identifies you, it doesn't authenticate you."/>
+                     Text="Who you are signed in as, and how teammates see you on the Peers tab. Your account owns the profiles you bid as — peers pick you first, then one of your profiles."/>
 
-          <TextBlock Text="Username"/>
-          <TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
-                   Tag="e.g. joshua"/>
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
-                     Text="Defaults to your Windows account name, lowercased. Keep it lowercase with no spaces — it's the key your bids and interviews are filed under, so changing it later orphans everything already pushed."/>
-
-          <TextBlock Text="Email"/>
-          <TextBox Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
-                   Tag="you@example.com"/>
+          <TextBlock Text="Signed in as"/>
+          <TextBlock Text="{Binding SignedInAs}" FontWeight="SemiBold" Margin="0,2,0,4"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
-                     Text="Contact address shown to teammates alongside your name. Visible to everyone on the shared database."/>
+                     Text="This is your company portal account, and it is not editable here. Accounts, passwords and addresses are managed in the portal; DevStrider reads them and never writes them. Change your address there and it follows you here on the next sign-in."/>
+
+          <TextBlock Text="The address on your resume is per profile — Profiles tab, not here."
+                     Foreground="{StaticResource Muted}"
+                     TextWrapping="Wrap"
+                     Margin="0,8,0,0"/>
         </StackPanel>
       </Border>
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Peer database (shared PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Shared database (PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
-                     Text="The database that holds everyone's bid and interview summaries. Tables are created automatically on the first sync. Shared: company, role, status, stacks, dates and the job description. Not shared: job URLs, generated resume text, meeting links and your comments."/>
+                     Text="The company portal's database — where your account is read from and where every bid and interview is stored. There is no local copy. DevStrider creates no tables: run desktop/shared-db-schema.sql against it once, by hand. Everything in these tables is visible to everyone on the team, job URLs, job descriptions, resume text and comments included."/>
 
           <!-- Two ways to describe the same server: providers hand out a URI, self-hosted is
                easier in parts. Whichever is selected is the one that's used; the other keeps
@@ -111,13 +111,6 @@
 
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
                      Text="{Binding SharedDbHint}"/>
-
-          <TextBlock Text="Automatic sync interval (minutes)"/>
-          <TextBox Text="{Binding Model.SyncIntervalMinutes, UpdateSourceTrigger=PropertyChanged}"
-                   Margin="0,2,0,4"
-                   Tag="60"/>
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,4"
-                     Text="Peer data is pushed and pulled on this cadence in the background. 0 disables it and leaves only the Sync now button; anything under 5 is treated as 5. The first run happens a couple of minutes after launch."/>
 
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
             <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">

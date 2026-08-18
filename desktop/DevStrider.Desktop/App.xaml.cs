@@ -1,6 +1,7 @@
 using System.Windows;
-using System.Windows.Threading;
 using DevStrider.Desktop.Data;
+using DevStrider.Desktop.Data.Import;
+using DevStrider.Desktop.Data.Postgres;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
 using DevStrider.Desktop.Views;
@@ -38,111 +39,29 @@ public partial class App : Application
 
         try
         {
-            var services = new ServiceCollection();
-            // MongoContext is constructed before SettingsService can read anything from Mongo,
-            // so env-var overrides for the connection itself have to be consulted here directly.
-            // SettingsBootstrap below mirrors the same values into AppSettings so the Settings
-            // UI shows what's actually in use.
-            var mongoUri = SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017";
-            var mongoDb  = SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider";
-            services.AddSingleton(_ => new MongoContext(mongoUri, mongoDb));
+            Services = BuildServices();
 
-            services.AddSingleton<SettingsService>();
-            services.AddSingleton<ProfileService>();      // singleton Username row (legacy name)
-            services.AddSingleton<ProfilesService>();     // multi-profile CRUD
-            services.AddSingleton<ProfileContext>();
-            services.AddSingleton<ProfileMigrationService>();
-            services.AddSingleton<BidBoardService>();
-            services.AddSingleton<InterviewService>();
-            services.AddSingleton<StatsService>();
-            services.AddSingleton<AchievementService>();
-            services.AddSingleton<ActivityLogService>();
-            services.AddSingleton<SharedDbCredentials>();
-            services.AddSingleton<SharedDbContext>();
-            services.AddSingleton<R2StorageService>();
-            services.AddSingleton<PeerSyncService>();
-            services.AddSingleton<SyncScheduler>();
-            services.AddSingleton<WordMacroService>();
-            services.AddSingleton<LocalApiServer>();
-
-            services.AddSingleton<BidBoardViewModel>();
-            services.AddSingleton<InterviewPanelViewModel>();
-            services.AddSingleton<FindBidViewModel>();
-            services.AddSingleton<OverviewViewModel>();
-            services.AddSingleton<StatsViewModel>();
-            services.AddSingleton<SharingViewModel>();
-            services.AddSingleton<SettingsViewModel>();
-            services.AddSingleton<AboutViewModel>();
-            services.AddSingleton<ActivityViewModel>();
-            services.AddSingleton<ProfilesViewModel>();
-            services.AddSingleton<PeersViewModel>();
-            services.AddSingleton<MainWindowViewModel>();
-
-            Services = services.BuildServiceProvider();
-
-            // Fire-and-forget index creation so a missing/unreachable MongoDB doesn't block
-            // the window from showing. The user sees a clear MessageBox if it fails.
-            _ = Task.Run(async () =>
+            // Settings come off disk before anything else, because the login window needs the
+            // database credentials that live on them and there is nowhere else to read them from.
+            // Run on the pool: blocking the UI thread on an awaited continuation that wants the
+            // UI thread back is the classic way to hang before the first window ever appears.
+            var settings = Services.GetRequiredService<SettingsService>();
+            Task.Run(async () =>
             {
-                try
-                {
-                    var db = Services.GetRequiredService<MongoContext>();
-                    await db.EnsureIndexesAsync();
-                }
-                catch (Exception ex)
-                {
-                    Dispatcher.Invoke(() => MessageBox.Show(
-                        $"Couldn't reach MongoDB at mongodb://127.0.0.1:27017.\n\n" +
-                        $"Make sure the MongoDB service is running (Services.msc → MongoDB → Start).\n\n" +
-                        $"Until that's fixed, every page will show an error when it loads.\n\n" +
-                        $"Details: {ex.Message}",
-                        "DevStrider · MongoDB unreachable",
-                        MessageBoxButton.OK, MessageBoxImage.Warning));
-                }
-            });
+                await settings.LoadAsync();
+                await SettingsBootstrap.ApplyAsync(settings);
+            }).GetAwaiter().GetResult();
 
-            // Seed empty/default settings from DEVSTRIDER_* env vars on first launch, then
-            // start the Bid-Assistant HTTP listener. Bootstrap runs before the listener boots
-            // so a seeded port takes effect immediately. Loopback-only, no auth.
-            _ = Task.Run(async () =>
+            // Nothing below this line runs without an account. Every repository scopes its queries
+            // to SessionContext, and a query issued before login throws rather than quietly
+            // reading the whole team's rows.
+            var login = new LoginWindow(Services.GetRequiredService<LoginViewModel>());
+            MainWindow = login;
+            if (login.ShowDialog() != true)
             {
-                var activity = Services.GetRequiredService<ActivityLogService>();
-                try
-                {
-                    var settingsService = Services.GetRequiredService<SettingsService>();
-
-                    // Load the settings row — and with it every credential the app holds — into
-                    // memory once, before anything else reads it. Everything downstream is then
-                    // served from the cache instead of re-querying MongoDB per use.
-                    await settingsService.LoadAsync();
-
-                    var profileService = Services.GetRequiredService<ProfileService>();
-                    // Multi-profile migration: seeds a Default profile + backfills ProfileId
-                    // on legacy data. Idempotent — no-op once the seed exists.
-                    var migration = Services.GetRequiredService<ProfileMigrationService>();
-                    await migration.RunAsync();
-                    var profileContext = Services.GetRequiredService<ProfileContext>();
-                    await profileContext.InitAsync();
-
-                    // Background peer sync. Starts after profile init so the first pass has an
-                    // active profile to stamp on pushed rows; it waits a couple of minutes on its
-                    // own before the first run.
-                    Services.GetRequiredService<SyncScheduler>().Start();
-
-                    var settings = await settingsService.GetAsync();
-                    var server = Services.GetRequiredService<LocalApiServer>();
-                    Dispatcher.Invoke(() => server.Start(settings.ListenerPort));
-                    if (server.IsRunning)
-                        activity.Success("Listener", "Listener started", $"Listening on http://127.0.0.1:{server.BoundPort}");
-                    else
-                        activity.Error("Listener", "Listener failed to start", server.Status);
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("Listener boot failed: " + ex.Message);
-                    activity.Error("Listener", "Listener boot crashed", ex.Message);
-                }
-            });
+                Shutdown(0);
+                return;
+            }
 
             var window = new MainWindow
             {
@@ -166,11 +85,115 @@ public partial class App : Application
             };
 
             window.Show();
+
+            // Post-login boot: the profile list and the Bid-Assistant listener. Both need the
+            // session, so neither can be started any earlier; both are slow enough that the
+            // window should not wait on them.
+            _ = Task.Run(StartAfterLoginAsync);
         }
         catch (Exception ex)
         {
             ShowFatal(ex, "Startup failure");
             Shutdown(1);
+        }
+    }
+
+    private static IServiceProvider BuildServices()
+    {
+        var services = new ServiceCollection();
+
+        services.AddSingleton<ActivityLogService>();
+
+        // ── settings ────────────────────────────────────────────────────────
+        // A file, not a table: it holds the credentials needed to reach the database, so reading
+        // it from the database would be circular.
+        services.AddSingleton<SettingsStore>();
+        services.AddSingleton<SettingsService>();
+
+        // The machine's old local MongoDB, read-only, for the one-time import. Constructed from
+        // env vars rather than from settings because SettingsService is what it seeds.
+        services.AddSingleton(_ => new LegacyStore(
+            SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017",
+            SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider"));
+
+        // ── the shared database ─────────────────────────────────────────────
+        services.AddSingleton<SharedDbCredentials>();
+        services.AddSingleton<SharedDbContext>();
+        services.AddSingleton<SessionContext>();
+        services.AddSingleton<AuthService>();
+
+        // Repositories are the only thing that talks SQL. Each one reads the account id from
+        // SessionContext, so no caller can ask for someone else's rows.
+        services.AddSingleton<IAccountRepository, PgAccountRepository>();
+        services.AddSingleton<IProfileRepository, PgProfileRepository>();
+        services.AddSingleton<IBidRepository, PgBidRepository>();
+        services.AddSingleton<IInterviewRepository, PgInterviewRepository>();
+        services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
+
+        // ── services ────────────────────────────────────────────────────────
+        services.AddSingleton<ProfileService>();      // the ds_users row: goals + account name
+        services.AddSingleton<ProfilesService>();     // bidding identities
+        services.AddSingleton<ProfileContext>();
+        services.AddSingleton<BidBoardService>();
+        services.AddSingleton<InterviewService>();
+        services.AddSingleton<StatsService>();
+        services.AddSingleton<AchievementService>();
+        services.AddSingleton<R2StorageService>();
+        services.AddSingleton<WordMacroService>();
+        services.AddSingleton<LocalApiServer>();
+
+        // ── view-models ─────────────────────────────────────────────────────
+        services.AddSingleton<LoginViewModel>();
+        services.AddSingleton<BidBoardViewModel>();
+        services.AddSingleton<InterviewPanelViewModel>();
+        services.AddSingleton<FindBidViewModel>();
+        services.AddSingleton<OverviewViewModel>();
+        services.AddSingleton<StatsViewModel>();
+        services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<AboutViewModel>();
+        services.AddSingleton<ActivityViewModel>();
+        services.AddSingleton<ProfilesViewModel>();
+        services.AddSingleton<ProfileViewModel>();
+        services.AddSingleton<PeersViewModel>();
+        services.AddSingleton<MainWindowViewModel>();
+
+        return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// Everything that needs a signed-in account. Failures here are reported to the Activity tab
+    /// rather than thrown: a listener that won't bind is a degraded app, not a dead one.
+    /// </summary>
+    private static async Task StartAfterLoginAsync()
+    {
+        var activity = Services.GetRequiredService<ActivityLogService>();
+        try
+        {
+            var profiles = Services.GetRequiredService<ProfilesService>();
+
+            // An account signing in for the first time has no bidding identity yet, and every
+            // profile-scoped screen would come up empty with no way to fix it — the Profiles tab
+            // can create one, but nothing tells you that is what's wrong. Seed one instead.
+            if ((await profiles.ListAsync()).Count == 0)
+            {
+                var seeded = await profiles.CreateAsync("Default");
+                activity.Info("Profiles", "Default profile created", seeded.Name);
+            }
+
+            await Services.GetRequiredService<ProfileContext>().InitAsync();
+
+            var settings = await Services.GetRequiredService<SettingsService>().GetAsync();
+            var server = Services.GetRequiredService<LocalApiServer>();
+            await Current.Dispatcher.InvokeAsync(() => server.Start(settings.ListenerPort));
+            if (server.IsRunning)
+                activity.Success("Listener", "Listener started", $"Listening on http://127.0.0.1:{server.BoundPort}");
+            else
+                activity.Error("Listener", "Listener failed to start", server.Status);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("Post-login boot failed: " + ex.Message);
+            activity.Error("Startup", "Post-login boot crashed", SharedDbCredentials.Redact(ex.Message));
         }
     }
 
@@ -184,7 +207,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // Watchdog: if cleanup itself hangs (slow Mongo write, stuck FileSystemWatcher
+        // Watchdog: if cleanup itself hangs (slow database write, stuck FileSystemWatcher
         // dispose, etc.), force-terminate after 3 seconds. Runs on a thread-pool thread
         // so the timer fires even if the UI thread is stuck inside StopAsync.
         _ = Task.Run(async () =>
@@ -202,7 +225,6 @@ public partial class App : Application
         catch { /* shutting down anyway */ }
         try
         {
-            (Services?.GetService(typeof(SyncScheduler)) as SyncScheduler)?.Dispose();
             // Must run before the Kill() below: the warm Word instance is invisible, so an
             // orphaned WINWORD.EXE is one the user can only find in Task Manager.
             (Services?.GetService(typeof(WordMacroService)) as WordMacroService)?.Dispose();
@@ -213,8 +235,8 @@ public partial class App : Application
         base.OnExit(e);
 
         // Hard-kill instead of Environment.Exit — the latter waits on managed finalizers
-        // (SkiaSharp's GL context, MongoClient's TCP pool, native COM teardown) and can
-        // hang indefinitely. Kill() terminates the process immediately, no finalizer wait.
+        // (SkiaSharp's GL context, Npgsql's TCP pool, native COM teardown) and can hang
+        // indefinitely. Kill() terminates the process immediately, no finalizer wait.
         // This is the normal path; the watchdog above is the safety net for the unhappy one.
         System.Diagnostics.Process.GetCurrentProcess().Kill();
     }

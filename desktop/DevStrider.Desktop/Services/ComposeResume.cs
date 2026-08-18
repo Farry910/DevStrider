@@ -5,7 +5,8 @@ namespace DevStrider.Desktop.Services;
 
 /// <summary>
 /// Port of <c>client/src/utils/composeResume.ts</c>: build a paste-ready resume by combining the
-/// profile header with a per-bid body that contains placeholder markers from GPT. The viewer
+/// bidding identity's CV header with a per-bid body that contains placeholder markers from GPT.
+/// The viewer
 /// gets back both plain text (for copy) and a list of lines to render in bold/larger weight
 /// (the synthesized experience headers).
 /// </summary>
@@ -13,7 +14,7 @@ public static class ComposeResume
 {
     public record Composed(string Text, IReadOnlyList<string> BoldLines);
 
-    public static Composed? Build(UserProfile? profile, string body)
+    public static Composed? Build(Profile? profile, string body)
     {
         var trimmedBody = (body ?? "").Trim();
         if (profile == null && trimmedBody.Length == 0) return null;
@@ -22,7 +23,7 @@ public static class ComposeResume
         // Both branches must name the tuple elements identically; otherwise C# falls back to an
         // unnamed (List<string>, HashSet<string>) and .Lines / .Bold disappear.
         (List<string> Lines, HashSet<string> Bold) processed = trimmedBody.Length > 0
-            ? ApplyPlaceholders(trimmedBody, experiences, profile?.DisplayName ?? "")
+            ? ApplyPlaceholders(trimmedBody, experiences, profile?.Name ?? "")
             : (new List<string>(), new HashSet<string>());
 
         var bodyText = string.Join("\n", processed.Lines).Trim();
@@ -32,7 +33,7 @@ public static class ComposeResume
         var lines = new List<string>();
         if (profile != null)
         {
-            var name = string.IsNullOrEmpty(profile.DisplayName) ? "" : profile.DisplayName.ToUpperInvariant();
+            var name = string.IsNullOrEmpty(profile.Name) ? "" : profile.Name.ToUpperInvariant();
             if (name.Length > 0) lines.Add(name);
             if (!string.IsNullOrEmpty(profile.Headline)) lines.Add(profile.Headline);
 

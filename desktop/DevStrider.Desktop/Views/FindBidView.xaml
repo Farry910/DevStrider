@@ -43,7 +43,7 @@
         <DataGridTextColumn Header="Company" Binding="{Binding Bid.Company}" Width="*"/>
         <DataGridTextColumn Header="Role"    Binding="{Binding Bid.Role}" Width="*"/>
         <DataGridTextColumn Header="Status"  Binding="{Binding Bid.Status}" Width="120"/>
-        <DataGridTextColumn Header="Created" Binding="{Binding Bid.FirstCreatedAt, StringFormat='{}{0:yyyy-MM-dd}'}" Width="100"/>
+        <DataGridTextColumn Header="Created" Binding="{Binding Bid.CreatedAt, StringFormat='{}{0:yyyy-MM-dd}'}" Width="100"/>
         <DataGridTextColumn Header="URL"     Binding="{Binding Url}" Width="2*"/>
         <DataGridTemplateColumn Header="Actions" Width="60" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>

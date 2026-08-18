@@ -3,11 +3,11 @@ using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Driver;
+using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
 
-/// <summary>One row in the Peers tab — flat shape sourced from <see cref="PeerBid"/>.</summary>
+/// <summary>One row in the Peers tab — a teammate's <see cref="UserBid"/>, flattened.</summary>
 public sealed class PeerBidRow
 {
     public string Username { get; set; } = "";
@@ -44,17 +44,26 @@ public sealed class PeerInterviewRow
     public string ResumeFileName { get; set; } = "";
 }
 
+/// <summary>
+/// The team's work, read live.
+///
+/// <para>
+/// This used to read a local mirror that a background service pulled down every hour. There is
+/// nothing left to mirror: a teammate's bid is a row in the same table as yours with a different
+/// account on it, so what shows here is what they saved, when they saved it.
+/// </para>
+/// </summary>
 public partial class PeersViewModel : ViewModelBase
 {
-    private readonly MongoContext _db;
+    private readonly IPeerDirectory _peers;
+    private readonly R2StorageService _storage;
 
     public ObservableCollection<PeerBidRow> Bids { get; } = new();
     public ObservableCollection<PeerInterviewRow> Interviews { get; } = new();
 
     /// <summary>
-    /// Team members, from the mirrored <c>peerUsers</c> identities. Empty string = everyone.
-    /// Sourced from published identities rather than scraped off bid rows, so a teammate who has
-    /// set up but not yet bid still appears.
+    /// Team members. Empty string = everyone. Sourced from the identity join rather than scraped
+    /// off bid rows, so a teammate who has set up but not yet bid still appears.
     /// </summary>
     public ObservableCollection<string> Users { get; } = new();
 
@@ -94,11 +103,9 @@ public partial class PeersViewModel : ViewModelBase
     private string _profileFilter = "";
     public string ProfileFilter { get => _profileFilter; set { if (SetProperty(ref _profileFilter, value)) _ = LoadAsync(); } }
 
-    private readonly R2StorageService _storage;
-
-    public PeersViewModel(MongoContext db, R2StorageService storage)
+    public PeersViewModel(IPeerDirectory peers, R2StorageService storage)
     {
-        _db = db;
+        _peers = peers;
         _storage = storage;
     }
 
@@ -138,29 +145,24 @@ public partial class PeersViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    /// <summary>Mirrored identities keyed by their shared-database id — resolves owner_user_id on rows.</summary>
-    private Dictionary<long, PeerUser> _usersById = new();
+    /// <summary>Every (person, profile) pair on the team, from the last load.</summary>
+    private List<PeerIdentity> _identities = new();
 
     /// <summary>
-    /// Rebuild the two pickers. Identities come from the mirror; the profile list is narrowed to
-    /// the selected user, which is what makes the pair behave as user → profile rather than one
-    /// flat list of every "user / profile" pair on the team.
+    /// Rebuild the two pickers. The profile list is narrowed to the selected user, which is what
+    /// makes the pair behave as user → profile rather than one flat list of every "user / profile"
+    /// pair on the team.
     /// </summary>
-    private async Task RefreshPickersAsync()
+    private void RefreshPickers()
     {
-        var identities = await _db.PeerUsers.Find(FilterDefinition<PeerUser>.Empty).ToListAsync();
-        // Rows carry only owner_user_id. Both the username and the profile name live on the
-        // identity, so renaming either can't leave stale copies behind on historical bids.
-        _usersById = identities.Where(u => u.RemoteId != 0).ToDictionary(u => u.RemoteId);
-
         var previousUser = UserFilter;
         Users.Clear();
         Users.Add("");                                   // "All members"
-        // One row per (person, profile), so a person appears once per profile — collapse them.
-        foreach (var name in identities.Select(u => u.Username)
-                                       .Where(n => !string.IsNullOrWhiteSpace(n))
-                                       .Distinct(StringComparer.OrdinalIgnoreCase)
-                                       .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+        // One identity per (person, profile), so a person appears once per profile — collapse them.
+        foreach (var name in _identities.Select(i => i.Username)
+                                        .Where(n => !string.IsNullOrWhiteSpace(n))
+                                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                                        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
         {
             Users.Add(name);
         }
@@ -177,15 +179,15 @@ public partial class PeersViewModel : ViewModelBase
         ProfileNames.Add("");                            // "All profiles"
         if (!string.IsNullOrEmpty(UserFilter))
         {
-            foreach (var name in identities
-                        .Where(u => string.Equals(u.Username, UserFilter, StringComparison.OrdinalIgnoreCase))
-                        .Select(u => u.ProfileName)
+            foreach (var name in _identities
+                        .Where(i => string.Equals(i.Username, UserFilter, StringComparison.OrdinalIgnoreCase))
+                        .Select(i => i.ProfileName)
                         .Where(n => !string.IsNullOrWhiteSpace(n))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
-        {
-            ProfileNames.Add(name);
-        }
+            {
+                ProfileNames.Add(name);
+            }
         }
         if (!string.IsNullOrEmpty(ProfileFilter) && !ProfileNames.Contains(ProfileFilter))
         {
@@ -200,40 +202,32 @@ public partial class PeersViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            await RefreshPickersAsync();
+            _identities = await _peers.ListIdentitiesAsync();
+            RefreshPickers();
 
             var fromUtc = From.Date.ToUniversalTime();
             var toUtc = To.Date.AddDays(1).ToUniversalTime();
 
-            // -------- bids --------
-            var bidFilter = Builders<PeerBid>.Filter.And(
-                Builders<PeerBid>.Filter.Gte(b => b.UpdatedAt, fromUtc),
-                Builders<PeerBid>.Filter.Lt(b => b.UpdatedAt, toUtc));
-            var bids = await _db.PeerBids
-                .Find(bidFilter)
-                .SortByDescending(b => b.UpdatedAt)
-                .ToListAsync();
+            var bids = await _peers.ListBidsUpdatedBetweenAsync(fromUtc, toUtc);
+            var ivs = await _peers.ListInterviewsScheduledBetweenAsync(fromUtc, toUtc, includeUndated: true);
 
-            // -------- interviews --------
-            var ivFilter = Builders<PeerInterview>.Filter.Or(
-                Builders<PeerInterview>.Filter.Eq(i => i.ScheduledDate, null),
-                Builders<PeerInterview>.Filter.And(
-                    Builders<PeerInterview>.Filter.Gte(i => i.ScheduledDate, fromUtc),
-                    Builders<PeerInterview>.Filter.Lt(i => i.ScheduledDate, toUtc)));
-            var ivs = await _db.PeerInterviews
-                .Find(ivFilter)
-                .SortBy(i => i.ScheduledDate)
-                .ToListAsync();
+            // Rows carry a user id and a profile id, never names — both labels come from the
+            // identity join, so renaming either can't leave a stale copy on historical rows.
+            var nameByUser = new Dictionary<long, string>();
+            var profileById = new Dictionary<ObjectId, string>();
+            foreach (var i in _identities)
+            {
+                if (i.UserId != 0 && !string.IsNullOrWhiteSpace(i.Username)) nameByUser[i.UserId] = i.Username;
+                if (i.ProfileId != ObjectId.Empty) profileById[i.ProfileId] = i.ProfileName;
+            }
 
-            // Two-level filter, applied post-query: the mirror is small, and matching in memory
-            // avoids building a compound Mongo filter for what is at most a few thousand rows.
-            // Profile is only consulted once a user is chosen — the same profile name under two
-            // different teammates is two different things.
-            string UsernameOf(long id) =>
-                _usersById.TryGetValue(id, out var u) ? u.Username : "(unknown)";
-            string ProfileOf(long id) =>
-                _usersById.TryGetValue(id, out var u) ? u.ProfileName : "";
+            string UsernameOf(long id) => nameByUser.TryGetValue(id, out var u) ? u : "(unknown)";
+            string ProfileOf(ObjectId id) => profileById.TryGetValue(id, out var p) ? p : "";
 
+            // Two-level filter, applied post-query: the result set is small, and matching in
+            // memory avoids a compound query for what is at most a few thousand rows. Profile is
+            // only consulted once a user is chosen — the same profile name under two different
+            // teammates is two different things.
             bool MatchesOwner(string user, string profileName) =>
                 (string.IsNullOrEmpty(UserFilter) ||
                  string.Equals(UserFilter, user, StringComparison.OrdinalIgnoreCase))
@@ -244,13 +238,13 @@ public partial class PeersViewModel : ViewModelBase
             Bids.Clear();
             foreach (var b in bids)
             {
-                var bidOwner = UsernameOf(b.OwnerUserId);
-                var bidProfile = ProfileOf(b.OwnerUserId);
-                if (!MatchesOwner(bidOwner, bidProfile)) continue;
+                var owner = UsernameOf(b.UserId);
+                var profile = ProfileOf(b.ProfileId);
+                if (!MatchesOwner(owner, profile)) continue;
                 Bids.Add(new PeerBidRow
                 {
-                    Username = bidOwner,
-                    Profile = bidProfile,
+                    Username = owner,
+                    Profile = profile,
                     Company = b.Company,
                     Role = b.Role,
                     Status = b.Status,
@@ -265,13 +259,13 @@ public partial class PeersViewModel : ViewModelBase
             Interviews.Clear();
             foreach (var i in ivs)
             {
-                var ivOwner = UsernameOf(i.OwnerUserId);
-                var ivProfile = ProfileOf(i.OwnerUserId);
-                if (!MatchesOwner(ivOwner, ivProfile)) continue;
+                var owner = UsernameOf(i.UserId);
+                var profile = ProfileOf(i.ProfileId);
+                if (!MatchesOwner(owner, profile)) continue;
                 Interviews.Add(new PeerInterviewRow
                 {
-                    Username = ivOwner,
-                    Profile = ivProfile,
+                    Username = owner,
+                    Profile = profile,
                     ScheduledDate = i.ScheduledDate,
                     ScheduledTime = i.ScheduledTime,
                     InterviewType = i.InterviewType,
@@ -290,8 +284,7 @@ public partial class PeersViewModel : ViewModelBase
                 : string.IsNullOrEmpty(ProfileFilter)
                     ? $"for {UserFilter}"
                     : $"for {UserFilter} / {ProfileFilter}";
-            StatusMessage = $"{Bids.Count} bids, {Interviews.Count} interviews {scope}. " +
-                            "Peer data refreshes on the sync schedule, or from Sharing → Sync now.";
+            StatusMessage = $"{Bids.Count} bids, {Interviews.Count} interviews {scope}.";
         }
         finally { IsBusy = false; }
     }

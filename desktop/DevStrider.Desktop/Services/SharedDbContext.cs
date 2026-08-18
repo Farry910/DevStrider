@@ -3,24 +3,31 @@ using Npgsql;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// Connection + schema owner for the shared PostgreSQL database that holds the team's peer data.
+/// Connection to the shared PostgreSQL database — the only store DevStrider has.
 ///
 /// <para>
-/// Counterpart to <see cref="Data.MongoContext"/>, which remains the local store for everything
-/// else. The split is deliberate: local data is private and stays on this machine in MongoDB;
-/// only the summaries a teammate is meant to see cross into Postgres.
+/// The database is shared with the company portal. DevStrider owns the eight <c>ds_*</c> tables
+/// listed in <see cref="OwnedTables"/> and reads <c>app_user</c>, which belongs to the portal. It
+/// touches nothing else, and it issues no DDL at all.
 /// </para>
 ///
 /// <para>
-/// No connection is held open. Npgsql pools underneath, and sync runs are short and infrequent,
-/// so opening per operation costs nothing and avoids holding a slot on a free-tier instance that
-/// caps connections. The schema is created on first use and re-checked cheaply thereafter.
+/// No connection is held open. Npgsql pools underneath, so opening per operation costs nothing
+/// and avoids holding a slot on an instance that caps connections.
 /// </para>
 /// </summary>
 public sealed class SharedDbContext
 {
-    /// <summary>Tables this app owns. Also what the Sharing tab protects from its reset tool.</summary>
-    public static readonly string[] OwnedTables = { "peer_users", "peer_bids", "peer_interviews" };
+    /// <summary>
+    /// The tables DevStrider owns, in the order <c>shared-db-schema.sql</c> defines them.
+    /// <c>app_user</c> is deliberately absent: the portal owns it, this app only reads it, and its
+    /// absence is a different failure — the wrong database entirely — which login reports itself.
+    /// </summary>
+    public static readonly string[] OwnedTables =
+    {
+        "ds_users", "ds_profiles", "ds_education", "ds_certifications",
+        "ds_experiences", "ds_bids", "ds_interviews", "ds_achievements",
+    };
 
     private readonly SharedDbCredentials _credentials;
 
@@ -53,12 +60,12 @@ public sealed class SharedDbContext
     /// Reachability probe with a short timeout, so a wrong host fails in seconds rather than
     /// leaving the user staring at a spinner. Also reports any of the expected tables that are
     /// missing — since the app no longer creates them, that's the failure most likely to be
-    /// waiting, and it's better found here than mid-sync.
+    /// waiting, and it's better found here than on the first query after login.
     /// </summary>
     public async Task<(bool ok, string message)> TestConnectionAsync()
     {
         if (!await _credentials.IsConfiguredAsync())
-            return (false, "Shared database isn't configured — fill in Settings → Peer database.");
+            return (false, "Shared database isn't configured — fill it in on the sign-in window, or in Settings.");
 
         try
         {
@@ -105,7 +112,7 @@ public sealed class SharedDbContext
         }
     }
 
-    /// <summary>Every table in the public schema — feeds the Sharing tab's reset list.</summary>
+    /// <summary>Every table in the public schema. Backs the missing-table report above.</summary>
     public async Task<List<string>> ListTablesAsync()
     {
         await using var conn = await OpenAsync();

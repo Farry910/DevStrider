@@ -26,7 +26,7 @@
     <DataGrid ItemsSource="{Binding Rows}">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Owner"        Binding="{Binding Owner}" Width="*"/>
-        <DataGridTextColumn Header="Links"        Binding="{Binding LinksCreated}" Width="80"/>
+        <DataGridTextColumn Header="Captured"        Binding="{Binding Captured}" Width="80"/>
         <DataGridTextColumn Header="Applied"      Binding="{Binding AppliedCount}" Width="100"/>
         <DataGridTextColumn Header="Interviews"   Binding="{Binding InterviewsInRange}" Width="100"/>
         <DataGridTextColumn Header="Iv passed"    Binding="{Binding InterviewsPassed}" Width="100"/>

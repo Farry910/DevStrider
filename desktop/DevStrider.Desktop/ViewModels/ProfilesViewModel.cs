@@ -179,13 +179,13 @@ public partial class ProfilesViewModel : ViewModelBase
         }
 
         var counts = await _service.OwnedRowCountsAsync(Selected.Id);
-        if (counts.links + counts.bids + counts.interviews > 0)
+        if (counts.bids + counts.interviews > 0)
         {
             ConfirmDialog.Ask(
                 System.Windows.Application.Current?.MainWindow,
                 $"'{Selected.Name}' isn't empty",
-                $"This profile owns {counts.links} links, {counts.bids} bids, and {counts.interviews} interviews. " +
-                "Delete those first (or reassign them by hand in Mongo), then come back here.",
+                $"This profile owns {counts.bids} bids and {counts.interviews} interviews. " +
+                "Delete those first, then come back here.",
                 okText: "OK", cancelText: "Close", danger: false);
             return;
         }

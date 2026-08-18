@@ -7,30 +7,35 @@ namespace DevStrider.Desktop.ViewModels;
 public partial class SettingsViewModel : ViewModelBase
 {
     private readonly SettingsService _settings;
-    private readonly ProfileService _profiles;
+    private readonly SessionContext _session;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
     private readonly SharedDbContext _shared;
+    private readonly R2StorageService _storage;
 
     public LocalApiServer LocalApi => _localApi;
 
     public SettingsViewModel(
         SettingsService settings,
-        ProfileService profiles,
+        SessionContext session,
         LocalApiServer localApi,
         ActivityLogService activity,
         SharedDbContext shared,
         R2StorageService storage)
     {
         _settings = settings;
-        _profiles = profiles;
+        _session = session;
         _localApi = localApi;
         _activity = activity;
         _shared = shared;
         _storage = storage;
     }
 
-    private readonly R2StorageService _storage;
+    /// <summary>
+    /// The signed-in portal address. Read-only on purpose: the portal owns accounts, and a second
+    /// editable copy of who you are is a second answer waiting to disagree with the first.
+    /// </summary>
+    public string SignedInAs => _session.Email;
 
     private string _r2TestResult = "";
     public string R2TestResult { get => _r2TestResult; private set => SetProperty(ref _r2TestResult, value); }
@@ -46,7 +51,7 @@ public partial class SettingsViewModel : ViewModelBase
         try
         {
             R2TestResult = "Testing…";
-            // Save first: the service reads credentials from the settings row, so an untested
+            // Save first: the service reads credentials from the settings file, so an untested
             // edit sitting in the text boxes would otherwise be invisible to it.
             await SaveAsync();
             var result = await _storage.TestAsync();
@@ -59,14 +64,6 @@ public partial class SettingsViewModel : ViewModelBase
 
     private AppSettings _model = new();
     public AppSettings Model { get => _model; set => SetProperty(ref _model, value); }
-
-    private string _username = "me";
-    /// <summary>Mirror of <see cref="UserProfile.Username"/> — the key your rows are filed under.</summary>
-    public string Username { get => _username; set => SetProperty(ref _username, value); }
-
-    private string _email = "";
-    /// <summary>Mirror of <see cref="UserProfile.PersonalEmail"/> — published to teammates.</summary>
-    public string Email { get => _email; set => SetProperty(ref _email, value); }
 
     /// <summary>
     /// Buffer for the shared database password, fed by the <c>PasswordBox</c>'s
@@ -107,7 +104,7 @@ public partial class SettingsViewModel : ViewModelBase
     /// <summary>
     /// Radio-button state for the credential mode. Two bools rather than binding the raw string,
     /// because WPF radio buttons want booleans and the persisted value stays a readable
-    /// <c>"uri"</c>/<c>"parts"</c> on the settings row.
+    /// <c>"uri"</c>/<c>"parts"</c> in the settings file.
     /// </summary>
     public bool IsUriMode
     {
@@ -141,26 +138,35 @@ public partial class SettingsViewModel : ViewModelBase
         {
             var (ok, error) = SharedDbCredentials.ValidateUri(Model.SharedDbUri);
             SharedDbHint = string.IsNullOrEmpty(Model.SharedDbUri)
-                ? "Paste the service URI your provider gave you — peer sync is off until you do."
+                ? "Paste the service URI your provider gave you — nothing works until this is set."
                 : ok ? "URI looks valid. Use Test connection to confirm the server answers."
                      : $"Can't parse that URI: {error}";
             return;
         }
 
         SharedDbHint = string.IsNullOrEmpty(Model.SharedDbPassword)
-            ? "No password saved — peer sync is disabled until you set one."
+            ? "No password saved — the app can't reach the database until you set one."
             : "A password is saved. Leave blank to keep it; type to replace it.";
     }
 
-    /// <summary>Clear the saved shared database password and disable peer sync.</summary>
+    /// <summary>
+    /// Clear the saved shared database password.
+    ///
+    /// <para>
+    /// This disconnects the app from its only store, so the next launch stops at the login window
+    /// with nothing to sign in against. That is the point of the button — it exists to get a
+    /// credential off a machine — but it is not a small thing to click.
+    /// </para>
+    /// </summary>
     [RelayCommand]
     public async Task ClearSharedPasswordAsync()
     {
         Model.SharedDbPassword = "";
         SharedDbPasswordEntry = "";
         await _settings.SaveAsync(Model);
+        Model = await _settings.GetForEditAsync();
         RefreshSharedDbHint();
-        StatusMessage = "Shared database password cleared — peer sync is now disabled.";
+        StatusMessage = "Shared database password cleared — you'll have to re-enter it at the next sign-in.";
     }
 
     [RelayCommand]
@@ -170,11 +176,9 @@ public partial class SettingsViewModel : ViewModelBase
         try
         {
             // A copy, not the shared cached instance — otherwise every keystroke in this form
-            // would be live for the listener and sync services before the user hits Save.
+            // would be live for the listener and every other service before the user hits Save.
             Model = await _settings.GetForEditAsync();
-            var profile = await _profiles.GetAsync();
-            Username = profile.Username;
-            Email = profile.PersonalEmail ?? "";
+            OnPropertyChanged(nameof(SignedInAs));
             // Model was replaced wholesale, so the mode radios have to be told to re-read it.
             OnPropertyChanged(nameof(IsUriMode));
             OnPropertyChanged(nameof(IsPartsMode));
@@ -192,7 +196,7 @@ public partial class SettingsViewModel : ViewModelBase
         {
             // Apply the typed password before the save. Blank means "keep what's there" — the
             // box renders empty on every load, so treating blank as "clear it" would silently
-            // disable peer sync for anyone who saved an unrelated setting.
+            // disconnect anyone who saved an unrelated setting.
             if (!string.IsNullOrEmpty(SharedDbPasswordEntry))
             {
                 Model.SharedDbPassword = SharedDbPasswordEntry;
@@ -209,16 +213,6 @@ public partial class SettingsViewModel : ViewModelBase
             Model = await _settings.GetForEditAsync();
             RefreshSharedDbHint();
             RefreshR2Hints();
-
-            var p = await _profiles.GetAsync();
-            // Lowercase + no spaces: this is the join key on every pushed row, and peers match
-            // it exactly. Normalising here beats discovering the mismatch after a sync.
-            p.Username = string.IsNullOrWhiteSpace(Username)
-                ? "me"
-                : Username.Trim().ToLowerInvariant().Replace(' ', '-');
-            p.PersonalEmail = (Email ?? "").Trim();
-            await _profiles.SaveAsync(p);
-            Username = p.Username;
 
             // Always ensure the listener is running on the (possibly new) saved port.
             if (_localApi.IsRunning && _localApi.BoundPort != Model.ListenerPort)
@@ -260,8 +254,8 @@ public partial class SettingsViewModel : ViewModelBase
             await SaveAsync();
             var (ok, message) = await _shared.TestConnectionAsync();
             StatusMessage = ok ? $"Shared database reachable — {message}" : $"Shared database unreachable — {message}";
-            if (ok) _activity.Success("Peers", "Connection test passed", message);
-            else _activity.Error("Peers", "Connection test failed", message);
+            if (ok) _activity.Success("Database", "Connection test passed", message);
+            else _activity.Error("Database", "Connection test failed", message);
         }
         finally { IsBusy = false; }
     }

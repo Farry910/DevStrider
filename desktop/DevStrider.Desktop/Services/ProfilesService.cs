@@ -1,32 +1,33 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using MongoDB.Bson;
-using MongoDB.Driver;
 
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// CRUD over the <see cref="Profile"/> collection. Different from the older
-/// <see cref="ProfileService"/> (singular) which manages the single <c>UserProfile</c> row
-/// holding the team-repo nickname.
+/// CRUD over the account's bidding identities. Different from <see cref="ProfileService"/>
+/// (singular), which manages the one <c>ds_users</c> row holding the account's goals.
 /// </summary>
 public class ProfilesService
 {
-    private readonly MongoContext _db;
-    public ProfilesService(MongoContext db) => _db = db;
+    private readonly IProfileRepository _profiles;
+    private readonly IBidRepository _bids;
+    private readonly IInterviewRepository _interviews;
 
-    public Task<List<Profile>> ListAsync() =>
-        _db.BidProfiles
-           .Find(FilterDefinition<Profile>.Empty)
-           .SortBy(p => p.CreatedAt)
-           .ToListAsync();
+    public ProfilesService(IProfileRepository profiles, IBidRepository bids, IInterviewRepository interviews)
+    {
+        _profiles = profiles;
+        _bids = bids;
+        _interviews = interviews;
+    }
 
-    public Task<Profile?> GetAsync(ObjectId id) =>
-        _db.BidProfiles.Find(p => p.Id == id).FirstOrDefaultAsync()!;
+    public Task<List<Profile>> ListAsync() => _profiles.ListAsync();
+
+    public Task<Profile?> GetAsync(ObjectId id) => _profiles.GetAsync(id);
 
     /// <summary>
-    /// The only place a <see cref="Profile"/> is constructed — the Profiles tab and the
-    /// single-profile migration both come through here.
+    /// The only place a <see cref="Profile"/> is constructed — the Profiles tab and first-run
+    /// seeding both come through here.
     /// </summary>
     public async Task<Profile> CreateAsync(string name, string wordDocPath = "")
     {
@@ -40,28 +41,27 @@ public class ProfilesService
             MacroName = WordMacroService.DefaultMacroName,
         };
         if (p.Name.Length == 0) p.Name = "Profile";
-        await _db.BidProfiles.InsertOneAsync(p);
+        await _profiles.UpsertAsync(p);
         return p;
     }
 
     public async Task UpdateAsync(Profile profile)
     {
         profile.UpdatedAt = DateTime.UtcNow;
-        await _db.BidProfiles.ReplaceOneAsync(
-            Builders<Profile>.Filter.Eq(x => x.Id, profile.Id),
-            profile,
-            new ReplaceOptions { IsUpsert = true });
+        await _profiles.UpsertAsync(profile);
     }
 
-    public Task DeleteAsync(ObjectId id) =>
-        _db.BidProfiles.DeleteOneAsync(p => p.Id == id);
+    public Task DeleteAsync(ObjectId id) => _profiles.DeleteAsync(id);
 
-    /// <summary>Counts (links, bids, interviews) owned by a profile — used by the delete guard.</summary>
-    public async Task<(long links, long bids, long interviews)> OwnedRowCountsAsync(ObjectId profileId)
+    /// <summary>
+    /// Rows owned by a profile — the delete guard. There is no separate link count any more: a
+    /// captured URL and the bid against it are the same row, so a posting with nothing bid on it
+    /// is a draft bid and is counted as one.
+    /// </summary>
+    public async Task<(long bids, long interviews)> OwnedRowCountsAsync(ObjectId profileId)
     {
-        var links = await _db.Links.CountDocumentsAsync(l => l.ProfileId == profileId);
-        var bids = await _db.Bids.CountDocumentsAsync(b => b.ProfileId == profileId);
-        var ivs = await _db.Interviews.CountDocumentsAsync(i => i.ProfileId == profileId);
-        return (links, bids, ivs);
+        var bids = await _bids.CountByProfileAsync(profileId);
+        var interviews = await _interviews.CountByProfileAsync(profileId);
+        return (bids, interviews);
     }
 }
