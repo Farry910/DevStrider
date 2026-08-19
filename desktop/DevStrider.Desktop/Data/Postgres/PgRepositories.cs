@@ -46,6 +46,23 @@ public sealed class PgAccountRepository : PgRepository, IAccountRepository
             });
     }
 
+    /// <summary>
+    /// <c>DO NOTHING</c>, not <c>DO UPDATE</c>: this is a repair for a row that should already be
+    /// there, and login owns what the username says. Re-asserting it here would let a stale
+    /// session overwrite a name the portal had since changed.
+    /// </summary>
+    public Task EnsureAsync(string username) =>
+        ExecuteAsync("""
+            INSERT INTO ds_users (user_id, username, created_at, updated_at)
+            VALUES (@uid, @un, now(), now())
+            ON CONFLICT (user_id) DO NOTHING
+            """,
+            cmd =>
+            {
+                cmd.Parameters.AddWithValue("uid", UserId);
+                cmd.Parameters.AddWithValue("un", username ?? "");
+            });
+
     public async Task<bool> UsernameTakenAsync(string username) =>
         await CountAsync(
             "SELECT COUNT(*) FROM ds_users WHERE username = @un AND user_id <> @uid",
@@ -69,7 +86,7 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
 {
     private const string Cols =
         "id, user_id, name, word_doc_path, macro_name, resume_prompt, headline, location, " +
-        "phone, personal_email, linkedin_url, highest_education, created_at, updated_at";
+        "phone, personal_email, linkedin_url, created_at, updated_at";
 
     public PgProfileRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
 
@@ -102,8 +119,8 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
         return ExecuteAsync("""
             INSERT INTO ds_profiles (id, user_id, name, slug, word_doc_path, macro_name,
                                      resume_prompt, headline, location, phone, personal_email,
-                                     linkedin_url, highest_education, created_at, updated_at)
-            VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @he, @ca, @ua)
+                                     linkedin_url, created_at, updated_at)
+            VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @ca, @ua)
             ON CONFLICT (id) DO UPDATE SET
                 name              = EXCLUDED.name,
                 slug              = EXCLUDED.slug,
@@ -115,7 +132,6 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 phone             = EXCLUDED.phone,
                 personal_email    = EXCLUDED.personal_email,
                 linkedin_url      = EXCLUDED.linkedin_url,
-                highest_education = EXCLUDED.highest_education,
                 updated_at        = EXCLUDED.updated_at
             """,
             cmd =>
@@ -133,7 +149,6 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 cmd.Parameters.AddWithValue("ph", p.Phone ?? "");
                 cmd.Parameters.AddWithValue("pe", p.PersonalEmail ?? "");
                 cmd.Parameters.AddWithValue("li", p.LinkedinUrl ?? "");
-                cmd.Parameters.AddWithValue("he", p.HighestEducation ?? "");
                 cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(p.CreatedAt));
                 cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(p.UpdatedAt));
             });
@@ -160,9 +175,8 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
         Phone = Pg.Text(r, 8),
         PersonalEmail = Pg.Text(r, 9),
         LinkedinUrl = Pg.Text(r, 10),
-        HighestEducation = Pg.Text(r, 11),
-        CreatedAt = r.GetDateTime(12),
-        UpdatedAt = r.GetDateTime(13),
+        CreatedAt = r.GetDateTime(11),
+        UpdatedAt = r.GetDateTime(12),
     };
 }
 

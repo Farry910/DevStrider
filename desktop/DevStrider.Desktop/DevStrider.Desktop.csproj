@@ -44,8 +44,13 @@
       settings, storage and startup all changed shape. 8.1.0 dropped ds_education,
       ds_certifications, ds_experiences and ds_achievements: the CV belongs to each profile's
       .docm, which is the copy people actually edit, and the achievement counters had no reader.
+      8.2.0 batches bid writes behind a disk-backed queue, adds the one-time import of a machine's
+      old local MongoDB, replaces the bid board's job-URL box with a fast-feed one, and drops
+      ds_profiles.highest_education — which 8.1.0 had added and nothing ever read. It also fixes
+      sign-in, which could never have worked: the portal hashes with scrypt rather than bcrypt,
+      and its app_user.id / email_verified are integers that the strict Npgsql readers threw on.
     -->
-    <Version>8.1.0</Version>
+    <Version>8.2.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -74,9 +79,11 @@
     <!-- PostgreSQL â€” the shared database, which is now the only store -->
     <PackageReference Include="Npgsql" Version="8.0.5" />
 
-    <!-- Login verifies against app_user.password_hash, which the company portal writes
-         as bcrypt. Verify only â€” DevStrider never creates accounts or sets passwords. -->
-    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <!-- scrypt, for verifying app_user.password_hash. The portal stores salt:key hex, which is
+         what Node's crypto.scryptSync produces; .NET has no in-box scrypt (only PBKDF2), hence
+         BouncyCastle. Verify only — DevStrider never creates accounts or sets passwords, and it
+         has never been bcrypt whatever this file used to say. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
 
     <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
          https://<account>.r2.cloudflarestorage.com with region "auto" and path-style

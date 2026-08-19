@@ -78,12 +78,18 @@ public class BidBoardService
     private readonly IBidRepository _bids;
     private readonly IInterviewRepository _interviews;
     private readonly ProfileContext _profileContext;
+    private readonly PendingBidQueue _queue;
 
-    public BidBoardService(IBidRepository bids, IInterviewRepository interviews, ProfileContext profileContext)
+    public BidBoardService(
+        IBidRepository bids,
+        IInterviewRepository interviews,
+        ProfileContext profileContext,
+        PendingBidQueue queue)
     {
         _bids = bids;
         _interviews = interviews;
         _profileContext = profileContext;
+        _queue = queue;
     }
 
     /// <summary>
@@ -103,7 +109,14 @@ public class BidBoardService
         var profileId = ActiveProfileId;
         if (profileId == ObjectId.Empty) return new List<BoardRow>();
 
-        var all = await _bids.ListByProfileAsync(profileId);
+        // Queued bids are merged over what the database returns, keyed by id so a queued edit of a
+        // stored row replaces it rather than appearing twice. Without this the board would go
+        // blank-ish for up to an hour after a bid, which is the fastest way to make someone stop
+        // trusting the app and start re-entering things.
+        var stored = await _bids.ListByProfileAsync(profileId);
+        var merged = stored.ToDictionary(b => b.Id);
+        foreach (var queued in _queue.ListByProfile(profileId)) merged[queued.Id] = queued;
+        var all = merged.Values.ToList();
 
         // Day window: captured in range OR touched in range.
         var inWindow = all
@@ -202,13 +215,17 @@ public class BidBoardService
     /// scoped to the active profile so the same URL under a different identity doesn't collide.
     /// Returns null on miss.
     /// </summary>
-    public Task<UserBid?> FindByUrlAsync(string urlRaw)
+    public async Task<UserBid?> FindByUrlAsync(string urlRaw)
     {
         var profileId = ActiveProfileId;
-        if (profileId == ObjectId.Empty) return Task.FromResult<UserBid?>(null);
+        if (profileId == ObjectId.Empty) return null;
         var norm = UrlNorm.Normalize(urlRaw);
-        if (string.IsNullOrEmpty(norm)) return Task.FromResult<UserBid?>(null);
-        return _bids.FindByUrlNormAsync(profileId, norm);
+        if (string.IsNullOrEmpty(norm)) return null;
+
+        // Queue first. A posting captured twice inside one batch window is the ordinary case when
+        // the extension retries, and the second lookup has to see the first — which has not
+        // reached the database yet.
+        return _queue.FindByUrlNorm(profileId, norm) ?? await _bids.FindByUrlNormAsync(profileId, norm);
     }
 
     /// <summary>
@@ -251,18 +268,60 @@ public class BidBoardService
         if (bid.ProfileId == ObjectId.Empty) bid.ProfileId = profileId;
 
         StampLifecycle(bid, isNew);
-        await _bids.UpsertAsync(bid);
+        await _queue.EnqueueAsync(bid);
         return (bid, !isNew);
     }
 
-    /// <summary>Patch an existing row by id. No-op when the row is gone.</summary>
+    /// <summary>
+    /// Record a bid straight from a fast-feed line — the folder name the macro produced — with no
+    /// URL behind it.
+    ///
+    /// <para>
+    /// Every other way a row is created starts from a captured posting, so the URL is the identity
+    /// and dedup runs on it. This one starts from the resume that was already generated, which is
+    /// what you have in front of you when the macro has just written a folder and you want the bid
+    /// on the board. <see cref="UserBid.UrlNorm"/> stays empty, so it takes part in no dedup and
+    /// trips no duplicate-URL warning — there is nothing to compare.
+    /// </para>
+    /// </summary>
+    public async Task<UserBid> AddFromFastFeedAsync(FastFeed.Parsed parsed)
+    {
+        var profileId = ActiveProfileId;
+        if (profileId == ObjectId.Empty)
+            throw new InvalidOperationException("No active profile — create one in the Profiles tab first.");
+
+        var bid = new UserBid
+        {
+            ProfileId = profileId,
+            ResumeId = parsed.ResumeId,
+            Company = parsed.Company,
+            Role = parsed.Role,
+            PrimaryStacks = parsed.PrimaryStacks.ToList(),
+            // A fast-feed line only exists because a resume was generated for a real posting, so
+            // this is a bid that was made, not a posting still to look at.
+            Status = BidStatuses.Applied,
+            Origin = "Fast feed",
+        };
+        StampLifecycle(bid, isNew: true);
+        await _queue.EnqueueAsync(bid);
+        return bid;
+    }
+
+    /// <summary>
+    /// Patch a row by id. No-op when the row is gone.
+    ///
+    /// <para>
+    /// A row still in the queue is patched there and stays queued; one already written goes back
+    /// through the queue too, so an edit costs no more round-trips than the bid that created it.
+    /// </para>
+    /// </summary>
     public async Task<UserBid?> UpdateAsync(ObjectId bidId, Action<UserBid> patch)
     {
-        var bid = await _bids.GetAsync(bidId);
+        var bid = _queue.Get(bidId) ?? await _bids.GetAsync(bidId);
         if (bid == null) return null;
         patch(bid);
         StampLifecycle(bid, isNew: false);
-        await _bids.UpsertAsync(bid);
+        await _queue.EnqueueAsync(bid);
         return bid;
     }
 
@@ -276,5 +335,22 @@ public class BidBoardService
             bid.AppliedAt = now;
     }
 
-    public Task DeleteAsync(ObjectId bidId) => _bids.DeleteAsync(bidId);
+    /// <summary>
+    /// Delete a row. If it never reached the database, dropping it from the queue is the whole
+    /// delete — issuing a DELETE for an id that was never inserted would be a no-op that still
+    /// costs a round-trip.
+    /// </summary>
+    public async Task DeleteAsync(ObjectId bidId)
+    {
+        var wasQueued = await _queue.RemoveAsync(bidId);
+        // Still delete from the database: a queued row can be an edit of one already stored.
+        await _bids.DeleteAsync(bidId);
+        _ = wasQueued;
+    }
+
+    /// <summary>Send everything queued now. Bound to the board's Submit-now button.</summary>
+    public Task<int> SubmitPendingAsync() => _queue.FlushAsync("manual");
+
+    /// <summary>How many bids are waiting to be sent.</summary>
+    public int PendingCount => _queue.Count;
 }

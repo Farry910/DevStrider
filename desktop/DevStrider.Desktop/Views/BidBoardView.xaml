@@ -53,23 +53,52 @@
       </Button>
     </Grid>
 
-    <!-- Add link -->
+    <!-- Record a bid from the folder name the macro produced. That folder is named with the
+         fast-feed line, so pasting it here is the whole entry step. -->
     <Border DockPanel.Dock="Top" Style="{StaticResource FlatCard}">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBox Grid.Column="0" Text="{Binding NewUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job URL"/>
-        <TextBox Grid.Column="1" Text="{Binding NewJobDescription, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" Tag="Job description (optional)"/>
-        <Button Grid.Column="2" Command="{Binding AddUrlCommand}" ToolTip="Capture URL">
+        <TextBox Grid.Column="0"
+                 Text="{Binding NewFastFeed, UpdateSourceTrigger=PropertyChanged}"
+                 Margin="0,0,8,0"
+                 Tag="Fast feed — paste the folder name: UID, Company, Role, Stack1, Stack2">
+          <TextBox.InputBindings>
+            <KeyBinding Key="Enter" Command="{Binding AddFastFeedCommand}"/>
+          </TextBox.InputBindings>
+        </TextBox>
+        <Button Grid.Column="1" Command="{Binding AddFastFeedCommand}" ToolTip="Record this bid">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-            <TextBlock Text="Add link" VerticalAlignment="Center"/>
+            <TextBlock Text="Add bid" VerticalAlignment="Center"/>
           </StackPanel>
         </Button>
       </Grid>
+    </Border>
+
+    <!-- Queued-bid indicator. Only present when something is waiting, so it reads as information
+         rather than as a permanent widget. -->
+    <Border DockPanel.Dock="Top"
+            Background="{StaticResource SurfaceAlt}"
+            CornerRadius="4"
+            Padding="10,6"
+            Margin="0,0,0,8"
+            Visibility="{Binding PendingDisplay, Converter={StaticResource NonEmptyToVisible}}">
+      <DockPanel>
+        <Button DockPanel.Dock="Right"
+                Command="{Binding SubmitPendingCommand}"
+                IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolean}}"
+                Style="{StaticResource GhostButton}"
+                Padding="10,3">
+          <TextBlock Text="Submit now" FontSize="11"/>
+        </Button>
+        <TextBlock Text="{Binding PendingDisplay}"
+                   Foreground="{StaticResource Muted}"
+                   VerticalAlignment="Center"
+                   TextWrapping="Wrap"/>
+      </DockPanel>
     </Border>
 
     <!-- Bulk-actions toolbar — slides in when ≥1 row is selected in the grid below.

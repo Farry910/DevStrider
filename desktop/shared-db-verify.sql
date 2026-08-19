@@ -36,7 +36,6 @@ WITH expected(table_name, column_name) AS (VALUES
     ('ds_profiles','slug'), ('ds_profiles','word_doc_path'), ('ds_profiles','macro_name'),
     ('ds_profiles','resume_prompt'), ('ds_profiles','headline'), ('ds_profiles','location'),
     ('ds_profiles','phone'), ('ds_profiles','personal_email'), ('ds_profiles','linkedin_url'),
-    ('ds_profiles','highest_education'),
     ('ds_profiles','created_at'), ('ds_profiles','updated_at'),
 
     ('ds_bids','id'), ('ds_bids','user_id'), ('ds_bids','profile_id'), ('ds_bids','url'),

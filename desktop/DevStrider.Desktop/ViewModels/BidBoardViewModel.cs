@@ -79,12 +79,12 @@ public partial class BidBoardViewModel : ViewModelBase
         set { if (SetProperty(ref _to, value)) _ = ReloadAsync(); }
     }
 
-    private string _newUrl = "";
-    /// <summary>The URL box in the capture row — a posting to start tracking.</summary>
-    public string NewUrl { get => _newUrl; set => SetProperty(ref _newUrl, value); }
-
-    private string _newJobDescription = "";
-    public string NewJobDescription { get => _newJobDescription; set => SetProperty(ref _newJobDescription, value); }
+    private string _newFastFeed = "";
+    /// <summary>
+    /// The capture box: a fast-feed line, which is the folder name the Word macro produced —
+    /// <c>UID, Company, Role, Stack1, Stack2, …</c>. Paste it and the bid is on the board.
+    /// </summary>
+    public string NewFastFeed { get => _newFastFeed; set => SetProperty(ref _newFastFeed, value); }
 
     /// <summary>How many DataGrid rows are currently selected. Pushed by the view's SelectionChanged handler.</summary>
     private int _selectedCount;
@@ -107,14 +107,54 @@ public partial class BidBoardViewModel : ViewModelBase
     /// <summary>The full list of statuses the bulk picker offers. Exposed so the view can bind <c>ItemsSource</c>.</summary>
     public IReadOnlyList<string> AllBidStatuses { get; } = BidStatuses.All;
 
+    /// <summary>
+    /// How many bids are written but not yet sent, as a sentence — empty when there are none, so
+    /// the indicator only exists when it has something to say.
+    /// </summary>
+    private string _pendingDisplay = "";
+    public string PendingDisplay { get => _pendingDisplay; private set => SetProperty(ref _pendingDisplay, value); }
+
+    private void RefreshPending()
+    {
+        var n = _service.PendingCount;
+        PendingDisplay = n == 0
+            ? ""
+            : $"{n} bid{(n == 1 ? "" : "s")} queued — sent automatically, or press Submit now.";
+    }
+
+    /// <summary>Send the queue immediately rather than waiting for the batch to trip.</summary>
+    [RelayCommand]
+    public async Task SubmitPendingAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            var sent = await _service.SubmitPendingAsync();
+            StatusMessage = sent == 0
+                ? "Nothing queued."
+                : $"Submitted {sent} bid{(sent == 1 ? "" : "s")}.";
+            await ReloadAsync();
+        }
+        finally { IsBusy = false; }
+    }
+
     public BidBoardViewModel(
         BidBoardService service,
         InterviewService interviews,
         LocalApiServer localApi,
-        ProfileContext profileContext)
+        ProfileContext profileContext,
+        PendingBidQueue queue)
     {
         _service = service;
         _interviews = interviews;
+
+        // The count changes from the listener's threads and the batch timer as well as from here.
+        queue.Changed += () =>
+        {
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher == null || dispatcher.CheckAccess()) RefreshPending();
+            else dispatcher.BeginInvoke(new Action(RefreshPending));
+        };
 
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher != null)
@@ -232,15 +272,40 @@ public partial class BidBoardViewModel : ViewModelBase
         finally { IsBusy = false; }
     }
 
-    /// <summary>Capture a posting by URL. It lands as a draft until something fills the bid in.</summary>
+    /// <summary>
+    /// Record a bid from a pasted folder name. The macro names its output folder with the
+    /// fast-feed line, so the folder name is the bid — which makes pasting it the shortest path
+    /// from "the resume exists" to "the bid is tracked".
+    /// </summary>
     [RelayCommand]
-    public async Task AddUrlAsync()
+    public async Task AddFastFeedAsync()
     {
-        var url = (NewUrl ?? "").Trim();
-        if (url.Length == 0) return;
-        await _service.CaptureAsync(url, NewJobDescription);
-        NewUrl = "";
-        NewJobDescription = "";
+        var line = (NewFastFeed ?? "").Trim();
+        if (line.Length == 0) return;
+
+        var parsed = Services.FastFeed.ParseLine(line);
+        if (parsed == null)
+        {
+            // Deliberately specific about the UID: the parser rejects anything whose first segment
+            // isn't a short alphanumeric id, which is what stops a pasted sentence full of commas
+            // from being recorded as a bid at company "QA".
+            StatusMessage = "Not a folder name — expected 'UID, Company, Role, Stack1, …' "
+                          + "starting with the 5-character resume id.";
+            return;
+        }
+
+        try
+        {
+            await _service.AddFromFastFeedAsync(parsed);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't record that: {SharedDbCredentials.Redact(ex.Message)}";
+            return;
+        }
+
+        NewFastFeed = "";
+        StatusMessage = $"Recorded: {parsed.Company} · {parsed.Role}";
         await ReloadAsync();
     }
 

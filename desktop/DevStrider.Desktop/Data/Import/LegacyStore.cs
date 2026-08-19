@@ -158,6 +158,13 @@ public class LegacyLink
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? MarkedUselessAt { get; set; }
+
+    // The link's own snapshot of what was bid. Superseded by the bid's own columns, but it is the
+    // only source for a link that never got a bid row.
+    public DateTime? AppliedAt { get; set; }
+    public string AppliedCompany { get; set; } = "";
+    public string AppliedRole { get; set; } = "";
+    public List<string> AppliedStacks { get; set; } = new();
 }
 
 /// <summary>The bid half. <see cref="GroupLinkId"/> is what joins it to its link.</summary>

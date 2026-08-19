@@ -56,13 +56,6 @@ public class Profile
 
     public string LinkedinUrl { get; set; } = "";
 
-    /// <summary>
-    /// The one line of CV worth being able to answer a question about — "BSc Computer Science —
-    /// MIT". Free text, never parsed, and deliberately singular: the full history belongs in the
-    /// .docm, and only the highest qualification is worth a column here.
-    /// </summary>
-    public string HighestEducation { get; set; } = "";
-
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

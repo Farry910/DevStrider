@@ -3,7 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 8.1.0
+- **Desktop app version:** 8.2.0
 - **Chrome extension version:** 3.5.0 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
@@ -73,7 +73,7 @@ repository scopes its queries to the signed-in `app_user.id`, and a query issued
 throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
 DevStrider creates its `ds_users` row and seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v8.1.0`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v8.2.0`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -86,9 +86,16 @@ locks `DevStrider.exe` for the next build.
 
 ## Sign-in
 
-Credentials are checked against the portal's `app_user`: email, bcrypt `password_hash`, and
+Credentials are checked against the portal's `app_user`: email, `password_hash`, and
 `email_verified`. DevStrider never creates an account, never sets a password, and has no sign-up or
 reset — being a portal user is the only way to become a DevStrider user.
+
+**The hash is scrypt, not bcrypt.** `password_hash` stores `<saltHex>:<keyHex>` — a 16-byte salt
+and a 64-byte derived key, 161 characters in total, which is what Node's
+`crypto.scryptSync(password, salt, 64)` produces. Verification uses BouncyCastle's scrypt at
+Node's defaults (N=16384, r=8, p=1). Two of this app's columns are also the portal's types, not
+ours: `app_user.id` is `integer` and `email_verified` is `integer`-as-flag, so both are read
+through a widening coercion rather than `GetInt64`/`GetBoolean`, which throw on them.
 
 - Your portal email **is** your identity here. It is what `ds_users.username` holds and what
   teammates see on the Peers tab; there is no separate name to pick.
@@ -132,12 +139,44 @@ still recorded — you lose the file, never the record.
 ## Tabs
 
 ### Bids
-The day's bid board. Capture a URL, apply a fast-feed line (`UID, Company, Role, Stack1, …`), edit
-status, schedule an interview, or bulk-select rows to set status / delete in one go.
+The day's bid board. Edit a row's status, schedule an interview off a bid, or bulk-select rows to
+set status / delete in one go.
 
-A captured posting and the bid against it are **one row**. A posting you have not bid on yet is
-simply `status = draft`. The warning column flags three things: this exact URL captured before, a
-different listing for the same company + role, and a company you already have an interview at.
+**Adding a bid by hand: paste the folder name.** The macro names its output folder with the
+fast-feed line — `UID, Company, Role, Stack1, Stack2` — so that folder name *is* the bid. Paste it
+into the box at the top and press Enter. Resume id, company, role and stacks are filled in and the
+row lands as `applied`; there is no URL on it, because at that point the resume already exists and
+the posting it came from is not what you are recording.
+
+Anything that doesn't start with a short alphanumeric resume id is rejected rather than guessed at.
+That rule is what stops a pasted sentence full of commas from being filed as a bid at company "QA".
+
+Bids captured by the extension still arrive with their URL, and a posting captured but not yet bid
+on is simply `status = draft`. The warning column flags three things: this exact URL captured
+before, a different listing for the same company + role, and a company you already have an
+interview at. Hand-added rows have no URL, so they take part in no URL dedup.
+
+### Batched submission
+
+Bids are not written to the database one at a time. They queue, and go up as a batch on whichever
+comes first: **5 bids**, **1 hour**, the app exiting, or **Submit now**. A banner shows the count
+whenever anything is waiting.
+
+**The queue is on disk, not only in memory** — `%LOCALAPPDATA%\DevStrider\pending-bids-<id>.json`,
+written before the caller is told the bid was recorded and cleared only once the rows are in
+Postgres. That is not belt-and-braces: this process ends by calling `Process.Kill()` on itself
+(see `App.OnExit`), so a buffer that lived only in a field would lose an hour of work to an
+ordinary quit, with nothing to show it had ever existed. On the next launch the file is replayed
+before the listener opens.
+
+A failed batch keeps exactly the bids that didn't land and retries them on the next trigger, so a
+database outage delays bids rather than losing them. Queued rows are merged over what the database
+returns, so the board, the duplicate-URL check and the edit path all behave as though the write had
+already happened.
+
+The file is named per account. A shared machine must never flush one person's queued bids under the
+next person's login — the repositories stamp the signed-in account onto every row, so that would
+silently reassign their work.
 
 ### Interviews
 Scheduled interviews in a date range, each carrying the source bid's resume id and JD. Schedule a
@@ -162,13 +201,15 @@ offline.
 Each **profile** is a distinct bidding identity (a real person). All workspace data — bids,
 interviews — is scoped to its profile. Switch the active profile from the **title-bar dropdown**.
 
-- Per profile: real name, highest education, contact details, **Word doc path** (.docm),
+- Per profile: real name, contact details, **Word doc path** (.docm),
   **macro name**, **resume prompt**.
 - The CV itself is in the .docm and nowhere else. DevStrider stores one line about it and never
   reads or renders the rest.
 
 ### Settings (Account)
-- **Legacy MongoDB (import only)** — the old local database, read once and never written to
+- **Legacy MongoDB (import only)** — the old local database, read and never written to. Carries this
+  machine's settings across automatically, and its profiles / postings / bids / interviews on demand
+  via **Look for legacy data** → **Import**. Idempotent; see [Upgrading from 7.x](../README.md#upgrading-from-7x).
 - **Identity** — read-only: the portal account you are signed in as
 - **Shared database (PostgreSQL)** — service URI or host / port / database / user / password, with
   **Test connection** and **Clear password**. See [Credentials](#credentials).
@@ -234,9 +275,9 @@ Four tables, defined by [`shared-db-schema.sql`](shared-db-schema.sql) and creat
 `ds_achievements` were dropped in 8.1.0. The first three held a CV that the profile's `.docm`
 already held — and the .docm was the copy people actually edited, so the database's went stale the
 day it was written. `ds_achievements` had no reader at all: the goal counters it fed lost their UI
-with the web client and never got another one. `ds_profiles.highest_education` is the one line
-that survived, so the portal can ask who holds what without DevStrider carrying a CV it has no use
-for. Re-running `shared-db-schema.sql` drops all four.
+with the web client and never got another one. Nothing of the CV survives in the database — a
+`highest_education` column was added in 8.1.0 and dropped again in 8.2.0, on the
+grounds that nothing read it either. Re-running `shared-db-schema.sql` drops all four tables.
 
 Row ids are 24-character MongoDB ObjectId hex strings, carried over from the local databases these
 tables replaced — keeping the original identity is what made the one-time import an idempotent

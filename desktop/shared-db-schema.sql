@@ -48,6 +48,19 @@ DROP TABLE IF EXISTS ds_experiences    CASCADE;
 DROP TABLE IF EXISTS ds_certifications CASCADE;
 DROP TABLE IF EXISTS ds_education      CASCADE;
 
+-- ⚠ ALREADY HAVE DATA IN ds_*? DO NOT RUN THIS FILE.
+--
+-- The drops above are how this file stays re-runnable during setup, and they will take your
+-- rows with them. Running the whole file is correct exactly once, on an empty database.
+--
+-- To move an existing database from the 8.1.0 schema to this one (8.2.0), run this instead — it
+-- is the only difference, and it keeps every row:
+--
+--     ALTER TABLE ds_profiles DROP COLUMN IF EXISTS highest_education;
+--
+-- highest_education was added in 8.1.0 and dropped in 8.2.0: nothing in the app ever read it, and
+-- a column no screen shows is a column that goes stale silently.
+
 
 -- ── About the shape of these tables ─────────────────────────────────────────────────
 --
@@ -111,10 +124,6 @@ CREATE TABLE ds_profiles (
     -- The address that goes on the resume. NOT the login — that is app_user.email.
     personal_email    TEXT        NOT NULL DEFAULT '',
     linkedin_url      TEXT        NOT NULL DEFAULT '',
-    -- The one line of CV worth answering a question about: "BSc Computer Science — MIT".
-    -- Free text, never parsed. It exists so the portal can ask who holds what without
-    -- DevStrider carrying a whole education history it has no use for.
-    highest_education TEXT        NOT NULL DEFAULT '',
     created_at        TIMESTAMPTZ NOT NULL,
     updated_at        TIMESTAMPTZ NOT NULL,
     -- Two people can both have a profile slugged "default"; one person cannot.
@@ -225,7 +234,7 @@ CREATE INDEX ix_ds_ivs_user_upd ON ds_interviews (user_id, updated_at DESC);
 -- Four rows, with these column counts. Anything else means part of this file didn't run:
 --     ds_bids           18
 --     ds_interviews     27
---     ds_profiles       15
+--     ds_profiles       14
 --     ds_users           4
 --
 -- Four and not eight: ds_education, ds_certifications, ds_experiences and ds_achievements

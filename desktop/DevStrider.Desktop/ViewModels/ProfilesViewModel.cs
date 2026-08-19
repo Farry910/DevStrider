@@ -51,7 +51,18 @@ public partial class ProfilesViewModel : ViewModelBase
             StatusMessage = "Enter a profile name first.";
             return;
         }
-        var created = await _service.CreateAsync(name);
+        Profile created;
+        try
+        {
+            created = await _service.CreateAsync(name);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't create '{name}': {SharedDbCredentials.Redact(ex.Message)}";
+            _activity.Error("Profiles", "Profile create failed", SharedDbCredentials.Redact(ex.Message));
+            return;
+        }
+
         await _context.RefreshListAsync();
         Selected = _context.All.FirstOrDefault(p => p.Id == created.Id);
         NewProfileName = "";
@@ -81,7 +92,20 @@ public partial class ProfilesViewModel : ViewModelBase
         var savedId = saved.Id;
         var savedName = saved.Name;
 
-        await _service.UpdateAsync(saved);
+        // A database error here used to escape into the dispatcher and come back as the fatal
+        // "Dispatcher exception" box with a raw Npgsql stack in it — for a save, which is the most
+        // ordinary thing this tab does. Failures belong in the status line.
+        try
+        {
+            await _service.UpdateAsync(saved);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Couldn't save '{savedName}': {SharedDbCredentials.Redact(ex.Message)}";
+            _activity.Error("Profiles", "Profile save failed", SharedDbCredentials.Redact(ex.Message));
+            return;
+        }
+
         await _context.RefreshListAsync();
 
         // Re-point at the fresh instance the refresh produced, so the editor stays populated

@@ -40,4 +40,11 @@ public class ProfileService
         };
 
     public Task SaveAsync(UserProfile profile) => _accounts.UpsertAsync(profile);
+
+    /// <summary>
+    /// Put the account row back if something removed it mid-session. Cheap, idempotent, and worth
+    /// calling before any write whose foreign key depends on it — see
+    /// <see cref="IAccountRepository.EnsureAsync"/> for how that situation arises.
+    /// </summary>
+    public Task EnsureRowAsync() => _accounts.EnsureAsync(_session.Email);
 }

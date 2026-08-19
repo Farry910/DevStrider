@@ -1,6 +1,7 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using MongoDB.Bson;
+using Npgsql;
 
 namespace DevStrider.Desktop.Services;
 
@@ -13,12 +14,42 @@ public class ProfilesService
     private readonly IProfileRepository _profiles;
     private readonly IBidRepository _bids;
     private readonly IInterviewRepository _interviews;
+    private readonly ProfileService _account;
 
-    public ProfilesService(IProfileRepository profiles, IBidRepository bids, IInterviewRepository interviews)
+    public ProfilesService(
+        IProfileRepository profiles,
+        IBidRepository bids,
+        IInterviewRepository interviews,
+        ProfileService account)
     {
         _profiles = profiles;
         _bids = bids;
         _interviews = interviews;
+        _account = account;
+    }
+
+    /// <summary>
+    /// Run a write that depends on the account row, and repair that row once if it turns out to be
+    /// missing.
+    ///
+    /// <para>
+    /// <c>ds_profiles.user_id</c> references <c>ds_users</c>, so a vanished account row surfaces as
+    /// SQLSTATE 23503 on a save the user had every reason to expect to work. Re-applying the
+    /// schema mid-session is how it happens. Retrying costs one extra statement on a path that is
+    /// already broken, and nothing at all on the normal one.
+    /// </para>
+    /// </summary>
+    private async Task WithAccountRowAsync(Func<Task> write)
+    {
+        try
+        {
+            await write();
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23503")
+        {
+            await _account.EnsureRowAsync();
+            await write();
+        }
     }
 
     public Task<List<Profile>> ListAsync() => _profiles.ListAsync();
@@ -41,14 +72,14 @@ public class ProfilesService
             MacroName = WordMacroService.DefaultMacroName,
         };
         if (p.Name.Length == 0) p.Name = "Profile";
-        await _profiles.UpsertAsync(p);
+        await WithAccountRowAsync(() => _profiles.UpsertAsync(p));
         return p;
     }
 
     public async Task UpdateAsync(Profile profile)
     {
         profile.UpdatedAt = DateTime.UtcNow;
-        await _profiles.UpsertAsync(profile);
+        await WithAccountRowAsync(() => _profiles.UpsertAsync(profile));
     }
 
     public Task DeleteAsync(ObjectId id) => _profiles.DeleteAsync(id);

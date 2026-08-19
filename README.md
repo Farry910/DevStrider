@@ -1,4 +1,4 @@
-# DevStrider 8.1
+# DevStrider 8.2
 
 A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
 company portal's PostgreSQL database.
@@ -34,7 +34,7 @@ peer mirror, and the sync scheduler were deleted in the 8.0 migration.
 DevStrider **shares the company portal's database.** It is not DevStrider's own.
 
 - **The portal owns `app_user`.** DevStrider only ever `SELECT`s from it. Sign-in reads `email`,
-  `password_hash` (bcrypt) and `email_verified`. The app never creates an account, never sets a
+  `password_hash` and `email_verified`. The app never creates an account, never sets a
   password, and offers no sign-up or reset — there is no way to become a DevStrider user without
   a portal account first.
 - **DevStrider owns four `ds_*` tables**, keyed on `app_user.id`. It issues **no DDL at all**:
@@ -53,11 +53,11 @@ Four of them: `ds_users` (one row per account — the portal email, and nothing 
 storing) · `ds_profiles` (the bidding identities you switch between) · `ds_bids` ·
 `ds_interviews`.
 
-**The CV is not in the database.** Education, certifications and work history used to be three
-child tables off `ds_profiles`; they were dropped in 8.1.0, along with `ds_achievements`. That
-material lives in each profile's `.docm`, which is where it was being written and maintained
+**The CV is not in the database at all.** Education, certifications and work history used to be
+three child tables off `ds_profiles`; they were dropped in 8.1.0, along with `ds_achievements`.
+That material lives in each profile's `.docm`, which is where it was being written and maintained
 anyway — a second copy in here only ever meant two versions of one CV, and the database's was the
-one nobody updated. All that survives is `ds_profiles.highest_education`, one free-text line.
+one nobody updated. DevStrider never reads a CV and never renders one.
 
 A captured job posting and the bid against it are **one row** in `ds_bids`. The relationship was
 always one-to-one, and a posting with nothing bid on it is exactly what `status = 'draft'` means.
@@ -119,8 +119,8 @@ One profile per real person you bid as. Each carries its own Word template, resu
 contact details; every bid and interview belongs to whichever profile was active when it was
 created. Switch from the title-bar dropdown.
 
-The CV belongs to the `.docm`, not to the profile row. DevStrider stores one line about it —
-*Highest education*, free text — and nothing else: it never reads a CV and never renders one.
+The CV belongs to the `.docm`, not to the profile row — DevStrider stores nothing about it at all:
+it never reads a CV and never renders one.
 
 ## Word template
 
@@ -175,8 +175,12 @@ UID, Company, Role, Stack1, Stack2, Stack3
 ```
 
 That line fills in the bid's resume id, company, role and stacks, and flips its status to
-`applied`. Without it the bid is still recorded, just bare. You can also paste one by hand onto a
-row in the Bids tab.
+`applied`. Without it the bid is still recorded, just bare.
+
+The same line is what the macro names its output folder with, which makes the folder name a
+complete bid. **Paste it into the box at the top of the Bids tab** and the row is recorded — that
+is how bids are added by hand. There is no URL field: by the time a folder exists the resume has
+been generated, and the posting it came from is not what you are entering.
 
 ## Environment variables
 
@@ -198,10 +202,28 @@ There is no username variable: the account name comes from `app_user`.
 Before you start, back up the machine's local MongoDB — after the migration the shared database is
 the only copy of that person's bids and interviews.
 
-On first launch with no `settings.json`, the app reads the old MongoDB once and carries the saved
-settings across (database credentials, R2 keys, listener port, Word path) so nothing has to be
-retyped. It never writes to MongoDB. Once that has happened the MongoDB service can be stopped and
-uninstalled.
+Two things move across, and neither writes to MongoDB.
+
+**Settings, automatically.** On first launch with no `settings.json`, the app reads the old
+MongoDB once and carries the saved values over — database credentials, R2 keys, listener port,
+Word path — so nothing has to be retyped.
+
+**Your history, on request.** Settings → *Import this machine's history* → **Look for legacy
+data**, then **Import**. It lifts your profiles, captured postings, bids and interviews into the
+shared database under the account you are signed in as.
+
+- Only *your own* work moves. The `peerBids` / `peerUsers` / `peerInterviews` collections that
+  older versions downloaded are skipped: they were a copy of what teammates published, not yours
+  to re-publish, and the originals are still in the shared database's `peer_*` tables.
+- Links and bids were two collections joined one-to-one and are one row now. The link is the
+  spine, so a posting you captured but never bid on arrives as a draft.
+- **Safe to run twice.** Every row keeps the ObjectId it had in MongoDB and each write is an
+  upsert on it, so a re-run finishes an interrupted import rather than duplicating what landed.
+  A profile you have already edited in 8.x is left alone.
+- The old CV (education, certifications, experience) is not imported — that lives in the `.docm`
+  now, and DevStrider keeps no copy of it.
+
+Once both have happened the MongoDB service can be stopped and uninstalled.
 
 ## Storage of credentials
 
@@ -212,5 +234,5 @@ so every machine holding this file can wipe the bucket. Treat the file according
 
 ## Version
 
-**8.1.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**8.2.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

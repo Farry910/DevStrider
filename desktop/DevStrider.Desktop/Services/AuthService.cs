@@ -79,18 +79,23 @@ public sealed class AuthService
                 // a DevStrider user without being a portal user first.
                 if (!await r.ReadAsync(ct)) return SignInResult.Fail(wrong);
 
-                id = r.GetInt64(0);
+                // Widening reads, not exact ones. app_user is the portal's table and its column
+                // types are the portal's business: today `id` is integer and `email_verified` is
+                // integer-as-flag, and a strict r.GetInt64/r.GetBoolean throws InvalidCastException
+                // on those — which surfaced as "couldn't reach the database" and made every sign-in
+                // fail for a reason nobody could act on. Read the value, then coerce.
+                id = Convert.ToInt64(r.GetValue(0));
                 // The address as the portal stores it, not as it was typed. Case and spacing are
                 // whatever the account says, and that is what ds_users is keyed by below.
                 address = r.IsDBNull(1) ? typed : r.GetString(1);
                 hash = r.IsDBNull(2) ? "" : r.GetString(2);
-                verified = !r.IsDBNull(3) && r.GetBoolean(3);
+                verified = ReadFlag(r, 3);
             }
 
             // An account with no usable hash can only have been created by something that doesn't
             // set passwords. It is not a wrong password, but it is not a way in either.
             if (hash.Length == 0) return SignInResult.Fail(wrong);
-            if (!VerifyBcrypt(password, hash)) return SignInResult.Fail(wrong);
+            if (!VerifyPortalPassword(password, hash)) return SignInResult.Fail(wrong);
 
             // Checked after the password on purpose: answering this before verifying would tell an
             // unauthenticated caller which addresses have accounts.
@@ -135,6 +140,26 @@ public sealed class AuthService
     }
 
     /// <summary>
+    /// A truthy flag from a column whose type this app does not control. The portal stores
+    /// <c>email_verified</c> as an integer; a different deployment could just as easily use a
+    /// boolean or a text 't'. Anything unrecognised reads as not-verified, which fails closed.
+    /// </summary>
+    private static bool ReadFlag(NpgsqlDataReader r, int ordinal)
+    {
+        if (r.IsDBNull(ordinal)) return false;
+        return r.GetValue(ordinal) switch
+        {
+            bool b => b,
+            short n => n != 0,
+            int n => n != 0,
+            long n => n != 0,
+            decimal n => n != 0,
+            string t => t is "1" or "t" or "T" or "true" or "True" or "TRUE" or "y" or "yes",
+            _ => false,
+        };
+    }
+
+    /// <summary>
     /// Create or refresh the <c>ds_users</c> row behind the account that just signed in.
     ///
     /// <para>
@@ -173,24 +198,90 @@ public sealed class AuthService
         }
     }
 
+    // ── password verification ───────────────────────────────────────────────
+    //
+    // The portal stores `<saltHex>:<keyHex>` — a 16-byte salt and a 64-byte derived key, both
+    // lower-case hex, 161 characters in total. That is the shape produced by Node's
+    //
+    //     const salt = crypto.randomBytes(16).toString('hex');
+    //     const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    //
+    // so scrypt at Node's default parameters is what this reproduces. It is emphatically NOT
+    // bcrypt, whatever earlier versions of this file claimed: no stored value starts with $2.
+
+    /// <summary>Node's <c>crypto.scrypt</c> defaults. Changing these invalidates every login.</summary>
+    private const int ScryptN = 16384;   // cost
+    private const int ScryptR = 8;       // block size
+    private const int ScryptP = 1;       // parallelisation
+    private const int ScryptKeyLength = 64;
+
     /// <summary>
-    /// The portal hashes with bcrypt. A stored value in any other format — a legacy scheme, a
-    /// truncated column, a placeholder — throws rather than comparing, and that has to read as a
-    /// failed sign-in and not as a crashed app.
+    /// Verify a password against the portal's stored value. Any malformed or unrecognised stored
+    /// value is a failed sign-in, never an exception — a crashed login window tells the user
+    /// nothing and loses the rest of the session with it.
     /// </summary>
-    private static bool VerifyBcrypt(string password, string hash)
+    private static bool VerifyPortalPassword(string password, string stored)
+    {
+        var sep = stored.IndexOf(':');
+        if (sep <= 0 || sep >= stored.Length - 1) return false;
+
+        if (!TryParseHex(stored.AsSpan(sep + 1), out var expected)) return false;
+        if (expected.Length != ScryptKeyLength) return false;
+
+        var saltText = stored[..sep];
+
+        // Two readings of "the salt", tried in order.
+        //
+        // Node's snippet above passes the *hex string* to scryptSync, which encodes it as UTF-8 —
+        // so the salt fed to the KDF is 32 ASCII bytes, not the 16 bytes they spell. A portal that
+        // decoded the hex first would be equally reasonable and is indistinguishable from the
+        // stored value alone. Trying both costs one extra derivation on a failed login and nothing
+        // on a successful one, and it is not a security compromise: a wrong reading simply does not
+        // match. Collapse this to whichever branch wins once the portal's source is confirmed —
+        // the Debug line below names it.
+        if (Matches(password, System.Text.Encoding.UTF8.GetBytes(saltText), expected))
+        {
+            System.Diagnostics.Debug.WriteLine("[auth] scrypt matched with UTF-8 hex-string salt (Node default)");
+            return true;
+        }
+        if (TryParseHex(saltText.AsSpan(), out var saltBytes) && Matches(password, saltBytes, expected))
+        {
+            System.Diagnostics.Debug.WriteLine("[auth] scrypt matched with decoded 16-byte salt");
+            return true;
+        }
+        return false;
+    }
+
+    private static bool Matches(string password, byte[] salt, byte[] expected)
     {
         try
         {
-            return BCrypt.Net.BCrypt.Verify(password, hash);
+            var actual = Org.BouncyCastle.Crypto.Generators.SCrypt.Generate(
+                System.Text.Encoding.UTF8.GetBytes(password), salt,
+                ScryptN, ScryptR, ScryptP, ScryptKeyLength);
+            // Fixed-time compare: a length-or-first-difference exit leaks how much of the key was
+            // right, one byte at a time.
+            return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(actual, expected);
         }
-        catch (BCrypt.Net.SaltParseException)
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[auth] scrypt derivation failed: {ex.Message}");
             return false;
         }
-        catch (ArgumentException)
+    }
+
+    private static bool TryParseHex(ReadOnlySpan<char> hex, out byte[] bytes)
+    {
+        bytes = Array.Empty<byte>();
+        if (hex.Length == 0 || hex.Length % 2 != 0) return false;
+        var buffer = new byte[hex.Length / 2];
+        for (var i = 0; i < buffer.Length; i++)
         {
-            return false;
+            if (!byte.TryParse(hex.Slice(i * 2, 2), System.Globalization.NumberStyles.HexNumber,
+                               System.Globalization.CultureInfo.InvariantCulture, out buffer[i]))
+                return false;
         }
+        bytes = buffer;
+        return true;
     }
 }

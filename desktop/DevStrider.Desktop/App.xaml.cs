@@ -134,11 +134,13 @@ public partial class App : Application
         services.AddSingleton<ProfileService>();      // the ds_users row: the account name
         services.AddSingleton<ProfilesService>();     // bidding identities
         services.AddSingleton<ProfileContext>();
+        services.AddSingleton<PendingBidQueue>();
         services.AddSingleton<BidBoardService>();
         services.AddSingleton<InterviewService>();
         services.AddSingleton<StatsService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
+        services.AddSingleton<LegacyImportService>();
         services.AddSingleton<LocalApiServer>();
 
         // ── view-models ─────────────────────────────────────────────────────
@@ -170,6 +172,11 @@ public partial class App : Application
             var profiles = Services.GetRequiredService<ProfilesService>();
             var settings = await Services.GetRequiredService<SettingsService>().GetAsync();
 
+            // Login already wrote this row. Checking again costs one statement and covers the gap
+            // where the schema was re-applied between the sign-in and here — without it, the first
+            // symptom is a foreign-key violation on whatever the user touches first.
+            await Services.GetRequiredService<ProfileService>().EnsureRowAsync();
+
             // An account signing in for the first time has no bidding identity yet, and every
             // profile-scoped screen would come up empty with no way to fix it — the Profiles tab
             // can create one, but nothing tells you that is what's wrong. Seed one instead, and
@@ -182,6 +189,12 @@ public partial class App : Application
             }
 
             await Services.GetRequiredService<ProfileContext>().InitAsync();
+
+            // Anything a previous run couldn't send is on disk. Recover it before the listener
+            // opens, so a crashed session's bids are in the database before new ones arrive.
+            var pending = Services.GetRequiredService<PendingBidQueue>();
+            await pending.RestoreAsync();
+            pending.Start();
 
             var server = Services.GetRequiredService<LocalApiServer>();
             await Current.Dispatcher.InvokeAsync(() => server.Start(settings.ListenerPort));
@@ -208,14 +221,25 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         // Watchdog: if cleanup itself hangs (slow database write, stuck FileSystemWatcher
-        // dispose, etc.), force-terminate after 3 seconds. Runs on a thread-pool thread
-        // so the timer fires even if the UI thread is stuck inside StopAsync.
+        // dispose, etc.), force-terminate. Runs on a thread-pool thread so the timer fires even
+        // if the UI thread is stuck inside StopAsync. Ten seconds rather than three because the
+        // final bid flush below is a network round-trip — and losing that race costs nothing,
+        // since anything unsent is still in pending-bids-<id>.json for the next launch.
         _ = Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(3));
+            await Task.Delay(TimeSpan.FromSeconds(10));
             try { System.Diagnostics.Process.GetCurrentProcess().Kill(); }
             catch { /* already exiting */ }
         });
+
+        try
+        {
+            // First, before anything that can hang: get queued bids into the database while there
+            // is still a process to do it with.
+            (Services?.GetService(typeof(PendingBidQueue)) as PendingBidQueue)
+                ?.FlushOnExit(TimeSpan.FromSeconds(5));
+        }
+        catch { /* the journal on disk is the fallback */ }
 
         try
         {

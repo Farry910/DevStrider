@@ -35,6 +35,18 @@ public interface IAccountRepository
     Task UpsertAsync(UserProfile account);
 
     /// <summary>
+    /// Put the account row back if it has gone missing, leaving an existing one alone.
+    ///
+    /// <para>
+    /// Login seeds it, so in the ordinary case this does nothing. It exists because the row can
+    /// disappear underneath a live session — re-applying <c>shared-db-schema.sql</c> drops
+    /// <c>ds_users</c> CASCADE — and every other table's foreign key points at it, so the first
+    /// thing the user notices is a 23503 on a profile save they had no reason to expect to fail.
+    /// </para>
+    /// </summary>
+    Task EnsureAsync(string username);
+
+    /// <summary>
     /// Whether the name is already someone else's. Usernames are unique across the team, so the
     /// Settings form has to check before saving rather than surfacing a constraint violation.
     /// </summary>
@@ -47,8 +59,8 @@ public interface IAccountRepository
 /// <para>
 /// A profile is one row. It used to be four: education, certifications and work history hung off
 /// it as child tables, which meant every save was a transaction that rewrote them. That material
-/// lives in the profile's .docm now, so the only trace of it here is
-/// <see cref="Profile.HighestEducation"/> — one line, free text, never parsed.
+/// lives in the profile's .docm now and none of it is kept here — the app never reads a CV and
+/// never renders one.
 /// </para>
 /// </summary>
 public interface IProfileRepository
@@ -58,7 +70,7 @@ public interface IProfileRepository
 
     Task<Profile?> GetAsync(ObjectId id);
 
-    /// <summary>Insert or replace, CV rows included. Idempotent on <see cref="Profile.Id"/>.</summary>
+    /// <summary>Insert or replace. Idempotent on <see cref="Profile.Id"/>.</summary>
     Task UpsertAsync(Profile profile);
 
     Task DeleteAsync(ObjectId id);
