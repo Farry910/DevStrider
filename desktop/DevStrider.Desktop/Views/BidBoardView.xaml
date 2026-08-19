@@ -60,6 +60,7 @@
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*"/>
           <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
         <TextBox Grid.Column="0"
                  Text="{Binding NewFastFeed, UpdateSourceTrigger=PropertyChanged}"
@@ -69,10 +70,20 @@
             <KeyBinding Key="Enter" Command="{Binding AddFastFeedCommand}"/>
           </TextBox.InputBindings>
         </TextBox>
-        <Button Grid.Column="1" Command="{Binding AddFastFeedCommand}" ToolTip="Record this bid">
+        <Button Grid.Column="1" Command="{Binding AddFastFeedCommand}" ToolTip="Record this bid" Margin="0,0,8,0">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="&#xE710;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
             <TextBlock Text="Add bid" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <!-- Bulk entry from the macro's output folders. See FolderBidDialog. -->
+        <Button Grid.Column="2"
+                Click="OnImportFolderClick"
+                Style="{StaticResource GhostButton}"
+                ToolTip="Record a day's bids from a folder of resume folders">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="From folder…" VerticalAlignment="Center"/>
           </StackPanel>
         </Button>
       </Grid>

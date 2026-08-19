@@ -1,4 +1,4 @@
-# DevStrider 8.2
+# DevStrider 8.3
 
 A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
 company portal's PostgreSQL database.
@@ -202,28 +202,20 @@ There is no username variable: the account name comes from `app_user`.
 Before you start, back up the machine's local MongoDB — after the migration the shared database is
 the only copy of that person's bids and interviews.
 
-Two things move across, and neither writes to MongoDB.
+**Settings carry across automatically.** On first launch with no `settings.json`, the app reads
+the old MongoDB once and copies the saved values over — database credentials, R2 keys, listener
+port, Word path — so nothing has to be retyped. It never writes to MongoDB. After that the service
+can be stopped and uninstalled.
 
-**Settings, automatically.** On first launch with no `settings.json`, the app reads the old
-MongoDB once and carries the saved values over — database credentials, R2 keys, listener port,
-Word path — so nothing has to be retyped.
+**Old bids do not carry across, by design.** There is no data migration in the app. A one-time
+importer was built and then removed: it existed to solve a problem the folder back door already
+solves without depending on anyone's old database still being installed, reachable, and holding
+what they think it holds.
 
-**Your history, on request.** Settings → *Import this machine's history* → **Look for legacy
-data**, then **Import**. It lifts your profiles, captured postings, bids and interviews into the
-shared database under the account you are signed in as.
-
-- Only *your own* work moves. The `peerBids` / `peerUsers` / `peerInterviews` collections that
-  older versions downloaded are skipped: they were a copy of what teammates published, not yours
-  to re-publish, and the originals are still in the shared database's `peer_*` tables.
-- Links and bids were two collections joined one-to-one and are one row now. The link is the
-  spine, so a posting you captured but never bid on arrives as a draft.
-- **Safe to run twice.** Every row keeps the ObjectId it had in MongoDB and each write is an
-  upsert on it, so a re-run finishes an interrupted import rather than duplicating what landed.
-  A profile you have already edited in 8.x is left alone.
-- The old CV (education, certifications, experience) is not imported — that lives in the `.docm`
-  now, and DevStrider keeps no copy of it.
-
-Once both have happened the MongoDB service can be stopped and uninstalled.
+To get historical bidding onto the board, use **Bids → From folder…** — see
+[Recording a day from resume folders](desktop/README.md#recording-a-day-from-resume-folders). It
+reads the resume folders the Word macro already wrote to disk, which is a record that outlives any
+database.
 
 ## Storage of credentials
 
@@ -234,5 +226,5 @@ so every machine holding this file can wipe the bucket. Treat the file according
 
 ## Version
 
-**8.2.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**8.3.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

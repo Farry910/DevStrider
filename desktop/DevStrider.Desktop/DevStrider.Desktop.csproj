@@ -49,8 +49,11 @@
       ds_profiles.highest_education — which 8.1.0 had added and nothing ever read. It also fixes
       sign-in, which could never have worked: the portal hashes with scrypt rather than bcrypt,
       and its app_user.id / email_verified are integers that the strict Npgsql readers threw on.
+      8.3.0 drops the legacy-MongoDB data import in favour of Bids -> From folder, which records
+      bids from the resume folders the macro already wrote to disk, each timed by its own folder's
+      creation time — a record that does not depend on anyone's old database still being installed.
     -->
-    <Version>8.2.0</Version>
+    <Version>8.3.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -71,8 +74,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver â€” read-only now: the one-time import of a machine's old local
-         database. ObjectId is still the identity type everywhere, hence MongoDB.Bson. -->
+    <!-- MongoDB driver â€” read-only, and only for one thing now: the old local database's
+         settings row, carried into settings.json on first launch. ObjectId is still the identity
+         type everywhere, hence MongoDB.Bson. -->
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
 

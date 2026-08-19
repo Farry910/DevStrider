@@ -17,31 +17,8 @@
           <TextBlock Text="Database name"/>
           <TextBox Text="{Binding Model.DatabaseName, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
                    Tag="devstrider"/>
-          <TextBlock Foreground="{StaticResource Muted}" Margin="0,0,0,12"
+          <TextBlock Foreground="{StaticResource Muted}"
                      Text="Restart DevStrider after changing these — the connection is created at startup."/>
-
-          <Border Background="{StaticResource BorderSoft}" Height="1" Margin="0,0,0,12" SnapsToDevicePixels="True"/>
-
-          <TextBlock Text="Import this machine's history" FontWeight="SemiBold" Margin="0,0,0,4"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Moves your profiles, captured postings, bids and interviews out of the old local database and into the shared one, filed under the account you are signed in as. Only your own work moves — the mirror of teammates' bids that older versions downloaded is skipped, because it was never yours to re-publish. Safe to run twice: every row keeps its original id and is matched rather than duplicated."/>
-
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Command="{Binding ScanLegacyCommand}"
-                    IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolean}}"
-                    Style="{StaticResource GhostButton}" Padding="12,7" Margin="0,0,8,0">
-              <TextBlock Text="Look for legacy data"/>
-            </Button>
-            <Button Command="{Binding ImportLegacyCommand}"
-                    IsEnabled="{Binding ImportFound}"
-                    Padding="12,7">
-              <TextBlock Text="Import"/>
-            </Button>
-          </StackPanel>
-
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
-                     Text="{Binding ImportStatus}"
-                     Visibility="{Binding ImportStatus, Converter={StaticResource NonEmptyToVisible}}"/>
         </StackPanel>
       </Border>
 

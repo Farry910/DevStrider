@@ -136,11 +136,11 @@ public partial class App : Application
         services.AddSingleton<ProfileContext>();
         services.AddSingleton<PendingBidQueue>();
         services.AddSingleton<BidBoardService>();
+        services.AddSingleton<FolderBidImport>();
         services.AddSingleton<InterviewService>();
         services.AddSingleton<StatsService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
-        services.AddSingleton<LegacyImportService>();
         services.AddSingleton<LocalApiServer>();
 
         // ── view-models ─────────────────────────────────────────────────────

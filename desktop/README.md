@@ -3,8 +3,8 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 8.2.0
-- **Chrome extension version:** 3.5.0 (the "Bid Assistant")
+- **Desktop app version:** 8.3.0
+- **Chrome extension version:** 3.5.1 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 The repo root's [README](../README.md) is the project overview and setup guide. This file is the
@@ -73,7 +73,7 @@ repository scopes its queries to the signed-in `app_user.id`, and a query issued
 throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
 DevStrider creates its `ds_users` row and seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v8.2.0`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v8.3.0`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -156,6 +156,39 @@ on is simply `status = draft`. The warning column flags three things: this exact
 before, a different listing for the same company + role, and a company you already have an
 interview at. Hand-added rows have no URL, so they take part in no URL dedup.
 
+### Recording a day from resume folders
+
+**Bids → From folder…** is the back door: pick a profile, point at the directory the
+macro wrote its resume folders into, and every folder named like a fast-feed line becomes a bid,
+timed by when that folder was created.
+
+Use it when the extension didn't record the work — the machine was offline, the app wasn't running,
+the bidding happened somewhere else, or it predates the app. The folders on disk are a record that
+outlives any database, which is why this replaced the one-time MongoDB migration rather than
+sitting alongside it.
+
+**Scan** first: it lists what it found, marking each folder recognised or skipped, and only then
+does **Record bids** light up. Folders that aren't named like a fast-feed line are ignored, not
+guessed at.
+
+What these rows do *not* have is a job URL or a job description — a folder name carries the resume
+id, company, role and stacks and nothing else. They therefore take no part in duplicate-URL
+detection and the JD viewer has nothing to show for them. That is the accepted trade for recording
+bids that would otherwise not exist at all.
+
+Each bid is timed by **its own folder's creation time** — the moment the macro wrote it, which is
+the moment the bid was made. That precision matters: the bids-per-10-minute chart buckets on
+applied time, and one date for a whole batch would stack every bid into a single bar.
+
+The timestamps are only as true as the folders, so the scan reports the range it found before you
+commit: directories that were copied or restored carry the date of the copy, and a batch that all
+reads "today" is the tell.
+
+Re-running on the same folder is safe. These rows have no prior identity, so each one's id is
+derived from the profile and the folder name — deliberately not the timestamp, so a folder whose
+creation time shifted still matches its existing row. A second pass updates rather than doubles,
+which matters because "did that work?" is exactly when someone clicks twice.
+
 ### Batched submission
 
 Bids are not written to the database one at a time. They queue, and go up as a batch on whichever
@@ -208,8 +241,8 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
 
 ### Settings (Account)
 - **Legacy MongoDB (import only)** — the old local database, read and never written to. Carries this
-  machine's settings across automatically, and its profiles / postings / bids / interviews on demand
-  via **Look for legacy data** → **Import**. Idempotent; see [Upgrading from 7.x](../README.md#upgrading-from-7x).
+  machine's saved settings across automatically on first launch. It holds no bid history the app
+  wants: there is no data migration, and none is planned — see [Recording a day from resume folders](#recording-a-day-from-resume-folders).
 - **Identity** — read-only: the portal account you are signed in as
 - **Shared database (PostgreSQL)** — service URI or host / port / database / user / password, with
   **Test connection** and **Clear password**. See [Credentials](#credentials).
@@ -375,6 +408,7 @@ service URI carries the password inline.
 | Every screen empty after signing in | No active profile — create one in the **Profiles** tab. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
 | Resume generates but no file | The Word macro must fill the bookmarks from the `[Section]:` labels and finish with `Application.Quit`. |
+| Bid hangs after the resume is written | The reply finished but the extension never sent it. Reload the ChatGPT tab (a tab opened before the extension was loaded has no content script), then check `isStreaming()` in `extension/content.js` against the live composer. |
 | ChatGPT automation stalls | ChatGPT changed its DOM — the injection/completion selectors in `extension/content.js` need updating. |
 
 ---

@@ -12,8 +12,6 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ActivityLogService _activity;
     private readonly SharedDbContext _shared;
     private readonly R2StorageService _storage;
-    private readonly LegacyImportService _import;
-    private readonly ProfileContext _profileContext;
 
     public LocalApiServer LocalApi => _localApi;
 
@@ -23,9 +21,7 @@ public partial class SettingsViewModel : ViewModelBase
         LocalApiServer localApi,
         ActivityLogService activity,
         SharedDbContext shared,
-        R2StorageService storage,
-        LegacyImportService import,
-        ProfileContext profileContext)
+        R2StorageService storage)
     {
         _settings = settings;
         _session = session;
@@ -33,53 +29,6 @@ public partial class SettingsViewModel : ViewModelBase
         _activity = activity;
         _shared = shared;
         _storage = storage;
-        _import = import;
-        _profileContext = profileContext;
-    }
-
-    // ── legacy import ───────────────────────────────────────────────────────
-
-    private string _importStatus = "";
-    public string ImportStatus { get => _importStatus; private set => SetProperty(ref _importStatus, value); }
-
-    private bool _importFound;
-    /// <summary>Gates the Import button — there is no point offering it with nothing to import.</summary>
-    public bool ImportFound { get => _importFound; private set => SetProperty(ref _importFound, value); }
-
-    /// <summary>Count what the old local database still holds. Reads only; imports nothing.</summary>
-    [RelayCommand]
-    public async Task ScanLegacyAsync()
-    {
-        IsBusy = true;
-        try
-        {
-            ImportStatus = "Looking…";
-            var preview = await _import.PreviewAsync();
-            ImportFound = preview.Available;
-            ImportStatus = preview.Message;
-        }
-        finally { IsBusy = false; }
-    }
-
-    /// <summary>
-    /// Lift this machine's own history into the shared database. Safe to run more than once — every
-    /// row keeps its original id and is upserted, never duplicated.
-    /// </summary>
-    [RelayCommand]
-    public async Task ImportLegacyAsync()
-    {
-        IsBusy = true;
-        try
-        {
-            ImportStatus = "Importing…";
-            var result = await _import.ImportAsync();
-            ImportStatus = result.Message;
-            if (!result.Ok) return;
-
-            // The switcher and every profile-scoped screen are holding a list that predates this.
-            await _profileContext.InitAsync();
-        }
-        finally { IsBusy = false; }
     }
 
     /// <summary>

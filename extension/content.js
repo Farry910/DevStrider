@@ -164,12 +164,24 @@
    * test ids, or the absence of the voice button that only returns once streaming ends.
    */
   function isStreaming() {
+    // Positive signals only: a stop control exists exactly while a reply is in flight.
     if (document.querySelector('[data-testid="stop-button"]')) return true;
     if (document.querySelector('button[aria-label*="Stop" i]')) return true;
-    // Voice button is present only when idle; its absence means a reply is in flight.
-    var idle = document.querySelector('button[aria-label="Start Voice"]') ||
-               document.querySelector('[data-testid="composer-speech-button"]');
-    return !idle;
+    if (document.querySelector('button[data-testid="composer-submit-button"][aria-label*="Stop" i]')) return true;
+
+    // No stop control found, so: not streaming.
+    //
+    // This used to ask the opposite question — "is the Start Voice button present?" — and treat
+    // its absence as proof a reply was in flight. That test fails *open*. The day ChatGPT renamed
+    // or dropped that button, isStreaming() began returning true for ever, `settled` in the
+    // service worker could never become true, and every bid hung for the full five-minute poll
+    // with a finished resume sitting on screen. An inverted check against someone else's DOM is a
+    // bet that they will never redesign their composer.
+    //
+    // Absence of evidence now means not-streaming, and completion is decided by the two signals
+    // that are actually about the reply: the text has stopped changing, and it ends with the
+    // [FolderName]: line the prompt emits last. See waitForGeneration in background.js.
+    return false;
   }
 
   // ===========================================================================

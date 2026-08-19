@@ -348,6 +348,19 @@ public class BidBoardService
         _ = wasQueued;
     }
 
+    /// <summary>
+    /// Record a bid exactly as given, without stamping its timestamps.
+    ///
+    /// <para>
+    /// Every other write path calls <c>StampLifecycle</c>, which sets <c>CreatedAt</c> /
+    /// <c>UpdatedAt</c> / <c>AppliedAt</c> to now — right when the bid is being made now, wrong
+    /// when it is being entered after the fact. The folder back door dates a whole day's bidding
+    /// to the day it happened, and overwriting that with the moment of import would put the
+    /// history on the wrong day of every chart.
+    /// </para>
+    /// </summary>
+    public Task RecordAsync(UserBid bid) => _queue.EnqueueAsync(bid);
+
     /// <summary>Send everything queued now. Bound to the board's Submit-now button.</summary>
     public Task<int> SubmitPendingAsync() => _queue.FlushAsync("manual");
 

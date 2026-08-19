@@ -19,6 +19,29 @@ public partial class BidBoardView : UserControl
     }
 
     /// <summary>
+    /// The folder back door — record a day's bids from the resume folders on disk. Lives in the
+    /// code-behind rather than the view-model because it owns a modal window, and the view-model
+    /// has no business constructing one.
+    /// </summary>
+    private async void OnImportFolderClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm == null || App.Services == null) return;
+
+        var importer = App.Services.GetService(typeof(FolderBidImport)) as FolderBidImport;
+        var profiles = App.Services.GetService(typeof(ProfileContext)) as ProfileContext;
+        if (importer == null || profiles == null) return;
+
+        var dlg = new FolderBidDialog(importer, profiles.All, profiles.Current?.Id ?? default)
+        {
+            Owner = Window.GetWindow(this),
+        };
+        if (dlg.ShowDialog() != true) return;
+
+        Vm.StatusMessage = $"Recorded {dlg.Recorded} bid{(dlg.Recorded == 1 ? "" : "s")} from folders.";
+        await Vm.ReloadAsync();
+    }
+
+    /// <summary>
     /// Open the row's URL in the OS default browser. Hyperlink.NavigateUri can't bind cleanly
     /// to a string (needs a Uri); we stash the URL on Tag and open it here.
     /// </summary>
