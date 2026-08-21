@@ -18,7 +18,13 @@
     </StackPanel>
     <DataGrid ItemsSource="{Binding Actions}" AutoGenerateColumns="False" CanUserAddRows="False" Margin="0,12,0,8">
       <DataGrid.Columns>
-        <DataGridCheckBoxColumn Header="Apply" Binding="{Binding IsSelected, Mode=TwoWay}" Width="55"/>
+        <DataGridTemplateColumn Header="Apply" Width="55">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" IsEnabled="{Binding CanApply}" HorizontalAlignment="Center"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTextColumn Header="Action" Binding="{Binding Type}" Width="150"/>
         <DataGridTextColumn Header="Company" Binding="{Binding Company}" Width="*"/>
         <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="*"/>

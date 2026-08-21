@@ -12,13 +12,38 @@
       </DockPanel>
       <wv2:WebView2 x:Name="JobSiteBrowser" Grid.Row="1"/>
     </Grid>
-    <StackPanel Grid.Column="1">
+    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel>
       <TextBlock Text="Job Browser" Style="{StaticResource H1}"/>
       <TextBlock Text="Navigate to a posting while signed in. Extracted text is reviewable before it is copied to ChatGPT." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+      <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" Margin="0,0,0,8"/>
       <Button Click="OnExtract" Content="Extract visible page text" HorizontalAlignment="Left"/>
-      <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="430" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8"/>
+      <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="300" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8"/>
       <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD for ChatGPT" HorizontalAlignment="Left"/>
+      <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+        <StackPanel>
+          <TextBlock Text="Application fields" FontWeight="SemiBold"/>
+          <TextBlock Text="Fill uses profile values, saved answers, and reviewed ChatGPT answers. It never submits the form or accepts legal declarations." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+          <StackPanel Orientation="Horizontal">
+            <Button Click="OnExtractQuestions" Content="Extract questions" Margin="0,0,8,0"/>
+            <Button Command="{Binding CopyQuestionsForChatGptCommand}" Content="Copy for ChatGPT" Style="{StaticResource GhostButton}"/>
+          </StackPanel>
+          <TextBox Text="{Binding CurrentAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" Margin="0,8,0,0" Tag="Paste ChatGPT JSON answers here"/>
+          <Button Click="OnFill" Content="Fill reviewed fields" Margin="0,8,0,0" HorizontalAlignment="Left"/>
+          <TextBlock Text="Resume file" FontWeight="SemiBold" Margin="0,14,0,2"/>
+          <TextBlock Text="Choose the exact PDF or Word file, then explicitly upload it to the page's resume input. DevStrider does not choose a file or submit the application automatically." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"/>
+          <TextBox Text="{Binding SelectedResumePath}" IsReadOnly="True" TextWrapping="NoWrap"/>
+          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+            <Button Click="OnChooseResume" Content="Choose resume..." Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
+            <Button Click="OnUploadResume" Content="Upload selected resume"/>
+          </StackPanel>
+          <TextBlock Text="Saved reusable answers (JSON object)" Margin="0,12,0,2"/>
+          <TextBox Text="{Binding SavedAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="100" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+          <Button Command="{Binding SaveAnswersCommand}" Content="Save reusable answers" Margin="0,8,0,0" HorizontalAlignment="Left" Style="{StaticResource GhostButton}"/>
+        </StackPanel>
+      </Border>
       <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
     </StackPanel>
+    </ScrollViewer>
   </Grid>
 </UserControl>

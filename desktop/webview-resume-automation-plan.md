@@ -1,351 +1,228 @@
-# DevStrider: WebView, Resume Studio, and Communication Automation Plan
+# DevStrider WebView and Assisted Automation
 
-## Purpose
+Updated: 2026-08-21
 
-Move resume generation out of the browser-driven Chrome extension workflow and into
-DevStrider. The desktop app will generate and review a resume directly, run the
-existing Word macro, and use an embedded browser only for job-site tasks such as
-extracting a job description and filling an application form.
+## Decision
 
-The plan also introduces a safe path for Gmail and Google Calendar automation. It
-does **not** make a paid ChatGPT subscription an application API: the native generation
-workflow requires an OpenAI API project and API key. Store that key with Windows
-Credential Manager, not in `settings.json` or PostgreSQL.
+This release uses the signed-in ChatGPT website inside WebView2. It does not call an
+OpenAI model endpoint and does not require an OpenAI API key. A user signs in to ChatGPT
+in the embedded browser and uses the features available to that account.
 
-## Implementation decision — ChatGPT UI only
+DevStrider does not automate or scrape ChatGPT's private page structure. Prompt and result
+transfer is intentionally user-driven through copy and paste. This is called **assisted
+automation**: the app prepares context, validates structured results, and performs explicit
+local actions after user review.
 
-The current implementation deliberately uses the user's signed-in ChatGPT UI rather than
-the OpenAI API. Resume Studio embeds one persistent ChatGPT WebView2 profile and keeps
-the interaction user-driven: DevStrider copies the profile prompt or JD; the user pastes
-it into ChatGPT and pastes the completed answer back into DevStrider. This supports a
-single conversation for several JDs without attempting to automate or scrape ChatGPT's
-private UI.
+Model and reasoning-effort selection remain in ChatGPT's own UI. DevStrider cannot reliably
+select or guarantee those options without a supported application interface.
 
-The implemented session default is five resumes, configurable from one through ten per
-profile, and the Word-macro automation toggle is stored as a non-secret local preference.
-API-specific generation, credential storage for API keys, streaming, token accounting,
-and background Gmail/Calendar polling remain deferred unless an API/back-end integration
-is later chosen.
+## Current implementation status
 
-### Assisted automation workflow
-
-`Assisted automation` is the name for the Gmail/Calendar path in this release. It means
-ChatGPT performs the connected-app research in its own UI, while DevStrider applies only
-the proposals a user explicitly selects.
-
-1. The user connects Gmail and Calendar to ChatGPT in their own ChatGPT settings.
-2. In **Job Operations**, DevStrider copies a fixed review prompt for the user to paste
-   into ChatGPT.
-3. ChatGPT returns only a JSON `actions` array, including company, role, evidence, and
-   optional interview time/link.
-4. The user pastes the JSON into DevStrider.
-5. DevStrider exact-matches company + role against the active profile's bids, shows each
-   result, and disables unmatched or ambiguous proposals.
-6. The user selects actions to apply. Applied actions are recorded in Activity; an
-   interview also preserves the ChatGPT-provided evidence in its user comment.
-
-Supported first-release actions are `mark_bid_rejected` and `create_interview`. Inbox
-polling, hidden browser scraping, automatic application submission, and automatic status
-changes are explicitly out of scope for assisted automation.
-
-### Embedded job browser
-
-The desktop app also contains an embedded **Job Browser** with an isolated persistent
-WebView2 profile. It opens job sites in the user's own signed-in session, extracts visible
-page text for review, and copies that text to the active ChatGPT resume conversation. This
-replaces the browser-extension requirement for JD capture in the current flow.
-
-Individual site adapters and field filling are deliberately disabled until a target site
-is named and its form is tested. A generic browser must not guess which fields are safe to
-write or submit; each adapter will need a separately reviewed selector contract.
-
-## Product boundaries
-
-| Workflow | What is automated | What remains explicit |
+| Area | Status | Current behavior |
 |---|---|---|
-| Resume Studio | Generate, validate, save, and optionally run the Word macro | Final review when automatic macro is off |
-| Job Browser | Extract a JD and fill known form fields | Job-site submission by default |
-| Mail automation | Detect messages and propose changes | Low-confidence updates and outbound replies |
-| Calendar automation | Propose or create interview events after a matched message | Conflict resolution and ambiguous scheduling |
+| Embedded ChatGPT | Implemented | Persistent WebView2 profile with the user's signed-in ChatGPT session. |
+| Reusable resume sessions | Implemented | One profile prompt is copied once, followed by several JDs in the same conversation. Default limit is 5; per-profile range is 1-10. |
+| Resume result handling | Implemented, assisted | User pastes ChatGPT's complete response into Resume Studio; DevStrider saves a draft and parses existing fast-feed metadata when present. |
+| Word resume generation | Implemented | User can run the Word macro explicitly, or enable the per-profile automatic macro toggle after a draft is saved. |
+| Job browser | Implemented | Separate persistent WebView2 profile for signed-in job sites, visible-text extraction, and URL-based adapter selection. |
+| Default form adapter | Initial implementation | Best-effort matching by labels, accessible names, names, IDs, and placeholders. It intentionally skips uncertain and protected fields. |
+| Greenhouse adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
+| Ashby adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
+| Lever adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
+| ApplyToJob adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
+| Resume file upload | Implemented, explicit | User chooses a local PDF/Word file and clicks Upload. DevStrider targets the most likely resume file input through WebView2's browser protocol. |
+| Gmail/Calendar workflow | Implemented, assisted | ChatGPT reviews the connections authorized in its UI; the user pastes structured proposals into DevStrider. |
+| Proposal application | Implemented | Required evidence and exact company + role matching; selected actions can reject a bid or create an interview. |
+| Application submission | Not implemented | DevStrider never clicks Submit or advances the application. |
+| Live-site adapter certification | Not completed | The code compiles, but every supported site still needs fixture and signed-in live-form verification. |
+| Durable automation audit | Not completed | Relevant actions appear in the in-memory Activity feed; there is no immutable database audit table yet. |
+| Dependency hygiene | Requires follow-up | The build reports known vulnerabilities in transitive `SharpCompress` and `Snappier` packages, plus older graphics-package compatibility warnings. |
 
-### Automatic macro toggle
+“Initial implementation” is deliberate wording. Job sites change markup and frequently use
+custom controls, frames, and multi-step forms. The adapters are useful starting points, not a
+claim that every form variant is covered.
 
-Add a profile-level setting named **Automatically generate Word resume after validation**.
-
-- Default: disabled.
-- Disabled: `Generate -> Review/Edit -> Generate Word Resume`.
-- Enabled: `Generate -> Validate -> Save draft -> Run Word macro`.
-- This setting must never submit a job application. Site submission is a distinct,
-  future per-site opt-in capability.
-- A failed validation, cancelled generation, unavailable Word template, or failed macro
-  leaves the draft intact and shows a visible failure state.
-- Every automatic macro invocation is activity-logged with the bid, profile, prompt
-  version, model, effort, and result.
-
-### Reusable generation sessions
-
-Resume generation must not rebuild the profile's full resume prompt from scratch for
-every JD. Add a bounded **generation session** that loads the profile prompt once and
-processes several JDs using the same prompt-cache group.
-
-- Default maximum resumes per session: **5**.
-- User setting: editable per profile, from 1 to 10; 10 is the initial hard safety cap.
-- The Resume Studio shows `3 of 5 resumes generated in this session`, plus **End session**
-  and **Start new session** actions.
-- A session ends automatically when it reaches its configured limit, its profile/prompt,
-  model, or effort changes, the cache window expires, the user signs out, or the user
-  explicitly ends it.
-- The shared profile prompt is cacheable context. Each JD and its output remain an
-  independent generation request so one job's facts cannot contaminate another job's
-  resume.
-- Record session ID, prompt version, model, effort, sequence number, input/output token
-  totals, and cached-token totals for every generation. The UI should report observed
-  cost and cache effectiveness rather than promise a fixed saving.
-
-This is the API equivalent of keeping one ChatGPT tab open, but without browser rendering
-or fragile DOM automation. Do not blindly chain every prior resume through one long chat:
-that grows context, can dilute instructions, and can leak details from an earlier JD.
-
-## Target architecture
+## Implemented workflow
 
 ```text
-                           +-------------------+
-                           | Resume Studio UI  |
-                           +---------+---------+
-                                     |
-                     JD + profile + selected model/effort
-                                     |
-                           +---------v---------+
-                           | ResumeGeneration  |
-                           | Service           |
-                           +----+---------+----+
-                                |         |
-                    API response|         |validated ResumeDraft
-                                |         v
-                         Credential Store  +--------------------+
-                                |          | Bid + Word services|
-                                |          +--------------------+
-                         OpenAI Responses API
+Profile prompt ──copy once──> signed-in ChatGPT conversation
+     JD 1..N ─────copy───────> same conversation
+ChatGPT reply ───paste───────> basic check/save draft ──> optional Word macro
 
- +------------------+        +---------------------+        +------------------+
- | Embedded WebView |<------>| IJobSiteAdapter     |------->| Job-site forms   |
- +------------------+        +---------------------+        +------------------+
+Job page ──extract──> reviewed questions ──copy──> ChatGPT
+ChatGPT JSON ──paste──> current answers ──review──> site adapter fills fields
+Chosen resume file ──explicit upload──────────────> detected resume input
 
- Gmail / Calendar -> Google integration -> classifier + matcher -> review queue -> audited update
+Gmail/Calendar in ChatGPT ──JSON proposals──> exact bid match ──user selection──> update
 ```
 
-The existing `WordMacroService`, `BidBoardService`, `FastFeed`, profiles, and local
-activity log remain the integration points. The first release can continue to transform
-a validated draft into the current label-based macro input. A later release should
-replace trailing fast-feed parsing with a structured response contract.
+The ChatGPT and job-site WebViews use separate local WebView2 data folders. This keeps each
+browser session persistent without placing ChatGPT credentials in DevStrider settings.
 
-## Phase 0 — prerequisites and decisions
+## Resume Studio
 
-1. Create an OpenAI API project, enable API billing, and create a project-scoped key.
-   ChatGPT subscription billing is separate from API billing.
-2. Select the initial supported model list and effort levels. Do not let users type an
-   arbitrary model identifier: model capabilities and accepted effort values vary.
-3. Decide whether the API key is per user or owned by a server:
-   - **Per user/local key:** fastest first release; store each key in Credential Manager.
-   - **Backend-owned key:** preferred for a shared team; the desktop app authenticates to
-     a backend, and the key never reaches client machines.
-4. Establish a small anonymized JD test set and success criteria before selecting a
-   default model/effort.
+1. The active profile supplies the whole resume prompt.
+2. **Start session** copies that prompt and resets the saved-resume counter.
+3. The user pastes it into one ChatGPT conversation.
+4. For each job, **Copy JD for ChatGPT** copies the new description.
+5. The user pastes the response into Resume Studio and reviews it.
+6. **Save draft** records the content with bid status `Draft`.
+7. The Word macro runs only when the user clicks it or enables **Automatically generate
+   Word resume after validation**. At present, that validation is limited to non-empty resume
+   content; structural validation is listed below as remaining work.
 
-**Exit criteria:** an API credential strategy, supported generation choices, and a
-representative quality test set are approved.
+The session limit counts saved drafts, not messages sent to ChatGPT. When the limit is
+reached, Resume Studio blocks another JD/save until the user starts a new session. A profile
+change also resets the session. The app does not calculate token use because the ChatGPT UI
+does not expose reliable request token accounting to this workflow.
 
-## Phase 1 — secure credential storage
+## Job Browser and adapters
 
-### New services
+### Value priority
 
-- `ICredentialStore`
-- `WindowsCredentialStore`
-- `OpenAiSettings` (non-secret preferences only: model, effort, automatic macro toggle)
+The fill payload is assembled in this order, with later values overriding earlier ones:
 
-### Credential names
+1. Active profile: full/first/last name, personal email, phone, location, LinkedIn URL,
+   and headline.
+2. Per-profile saved answers for repetitive questions.
+3. Current application answers pasted from ChatGPT as JSON.
 
-Use stable, account-scoped names, for example:
+The accepted answer format is either a direct JSON object or:
 
-- `DevStrider/OpenAI/<app-user-id>`
-- `DevStrider/GoogleOAuth/<app-user-id>`
+```json
+{
+  "answers": {
+    "exact question text": "reviewed answer"
+  }
+}
+```
 
-Do not write secret values into `AppSettings`, `settings.json`, activity logs, exception
-text, SQL, or telemetry. Read a secret only at the call site that needs it and redact it
-from errors.
+### Fill behavior
 
-**Exit criteria:** a credential can be saved, read, replaced, and deleted without a
-secret appearing in application settings or logs.
+- Detect the adapter from the current URL.
+- Try site-specific selectors for core candidate fields first.
+- Use normalized visible labels and accessible attributes for remaining reviewed answers.
+- Dispatch `input`, `change`, and `blur` events so controlled form code sees updates.
+- Skip hidden, disabled, read-only, pre-filled, and file controls during normal field fill.
+- Skip declarations involving agreements, attestation, certification, consent, privacy,
+  signatures, terms, or truthfulness.
+- Do not click Submit, Continue, Next, or CAPTCHA controls.
+- Record successful fills and failures in Activity.
 
-## Phase 2 — Resume Studio
+Checkboxes and radio buttons are changed only when the reviewed answer has an explicit
+boolean or matching option value. Users must review every populated form before submission.
 
-### UI
+### Resume upload
 
-Add a `Resume Studio` navigation item containing:
+File upload is a separate explicit action because browsers do not allow normal page
+JavaScript to assign a local path. The user chooses the exact file in a native file picker,
+then clicks **Upload selected resume**. DevStrider uses the WebView2 browser protocol to:
 
-- profile selector (defaulting to the active profile);
-- job URL, company, role, and JD input;
-- model and reasoning-effort selectors;
-- Generate, Cancel, Retry, Save draft, and Generate Word Resume actions;
-- streaming, editable resume preview;
-- validation/errors panel;
-- automatic-macro toggle in the profile settings page.
+1. inspect file inputs, including flattened frame/shadow-DOM nodes where available;
+2. prefer controls described as `resume` or `CV` and avoid likely cover-letter controls;
+3. assign only the file the user selected; and
+4. dispatch input/change notifications for the page.
 
-The Generate button remains disabled until the selected profile has a resume prompt and
-a JD is present. The macro action remains disabled until the draft validates and the
-profile has a valid Word document/macro configuration.
+If no likely input is found, the app fails closed and asks for manual upload. Custom upload
+widgets and cross-origin frame variations still require live-site testing.
 
-### New types
+## Gmail and Calendar assisted automation
 
-- `ResumeDraft`: canonical structured response model.
-- `ResumeGenerationRequest`: profile snapshot, JD, job metadata, selected model/effort,
-  prompt version, and generation-session context.
-- `ResumeGenerationResult`: draft, response identifier, usage summary, duration, and
-  validation issues.
-- `ResumeDraftValidator`: validates section completeness, metadata, size limits, and
-  macro compatibility.
-- `IResumeGenerationService`: streams output and supports cancellation.
-- `ResumeGenerationSession`: profile/prompt snapshot, selected model/effort, configured
-  generation limit, completed count, cache key, and expiry state.
+1. The user authorizes Gmail and Calendar in their ChatGPT account.
+2. DevStrider copies a constrained review prompt.
+3. The user runs it in ChatGPT and pastes the returned JSON into Job Operations.
+4. DevStrider requires source evidence, accepts only supported actions and interview types,
+   and exact-matches one bid by company + role.
+5. Unmatched or ambiguous items cannot be applied.
+6. The user selects proposals and applies them explicitly.
 
-### Generation contract
+Currently supported actions:
 
-Request structured fields for title, summary, skills, subtitles, three experience blocks,
-folder metadata, and fast-feed metadata. Then locally render that data into the existing
-`[Section]:` format consumed by the Word macro. Retain `FastFeed.SplitTrailing` only as
-a backward-compatible parser for legacy extension-generated content.
+- `mark_bid_rejected`
+- `create_interview`
 
-For API requests, keep the complete profile prompt as a stable prefix and apply a stable,
-profile-and-prompt-version-specific `prompt_cache_key`. Start each JD as an independent
-request with that same cached prefix. Measure `cached_tokens` and `cache_write_tokens`
-from each response. Use `previous_response_id` only for an intentional multi-turn edit
-of the **same** resume, not as the default way to generate separate resumes for separate
-JDs.
+An interview stores the supplied evidence in its user comment. Outbound email, automatic
+calendar booking, background inbox polling, and automatic proposal application are not
+implemented in the UI-only workflow.
 
-On successful validation:
+## Safety boundaries
 
-1. Create or update the bid as `draft` with its JD and generated content.
-2. Save generation metadata.
-3. If automatic macro is enabled, invoke `WordMacroService`.
-4. Never switch the bid to `applied` merely because a resume was generated. That change
-   occurs only after an application was actually submitted or explicitly confirmed.
+- No OpenAI API key is requested or stored.
+- ChatGPT login state remains in WebView2's local browser profile.
+- Generated and ChatGPT-assisted content is untrusted until reviewed.
+- Legal declarations and final submission always remain manual.
+- Resume upload requires a file chosen by the user and a separate upload click.
+- Current-answer JSON affects only the current form unless the user explicitly saves it.
+- Site markup failure must skip fields rather than guess.
 
-**Exit criteria:** an operator can generate, edit, validate, save, and manually run a
-resume; the automatic-macro setting performs the same macro step after validation.
+## Implementation map
 
-## Phase 3 — persistence and migrations
+| Concern | Main code |
+|---|---|
+| Resume session and macro toggle | `ViewModels/ResumeStudioViewModel.cs`, `Views/ResumeStudioView.xaml` |
+| ChatGPT WebView | `Views/ResumeStudioView.xaml.cs` |
+| Assisted proposals | `ViewModels/AssistedAutomationViewModel.cs`, `Views/AssistedAutomationView.xaml` |
+| Job form values | `ViewModels/JobBrowserViewModel.cs` |
+| Adapter scripts | `Services/JobSiteFormAdapters.cs` |
+| Job WebView, fill, and upload | `Views/JobBrowserView.xaml.cs`, `Views/JobBrowserView.xaml` |
+| Per-profile preferences | `Models/AppSettings.cs` |
+| Word output | `Services/WordMacroService.cs` |
 
-Do not re-run `shared-db-schema.sql` on a database containing data: it intentionally
-drops DevStrider tables. Add numbered, non-destructive migration scripts instead.
+## Remaining implementation plan
 
-### Proposed tables
+### P0: dependency security
 
-`ds_resume_generations`
+1. Identify the direct packages that introduce `SharpCompress` and `Snappier`.
+2. Upgrade through supported direct-package versions and run database/import regression tests.
+3. Re-run the vulnerable-package report and do not suppress the warnings without remediation.
 
-- `id`, `user_id`, `profile_id`, `bid_id`
-- `prompt_version`, `model`, `reasoning_effort`
-- `request_hash`, `response_id`, `status`, `error_code`
-- `generation_session_id`, `session_sequence`, `prompt_cache_key`
-- `input_tokens`, `cached_input_tokens`, `cache_write_tokens`, `output_tokens`
-- `generated_at`, `completed_at`, `duration_ms`
-- `output_json` or a normalized snapshot reference
+### P0: verify adapters before calling them production-ready
 
-`ds_automation_events`
+1. Save sanitized HTML fixtures for each supported provider and major form variant.
+2. Add tests for URL detection, selector fallback, protected-field skipping, select/radio/
+   checkbox handling, and missing controls.
+3. Test core fill and resume upload on signed-in live forms without submitting them.
+4. Record the tested host, form variant, date, and observed limitations.
 
-- `id`, `user_id`, `profile_id`
-- `provider` (`gmail`, `calendar`, `job-site`, `system`)
-- `source_external_id` (unique with provider for idempotency)
-- `target_kind`, `target_id`, `proposed_action`, `applied_action`
-- `confidence`, `rule_version`, `model`, `reasoning_effort`
-- `state` (`proposed`, `approved`, `applied`, `rejected`, `reverted`, `failed`)
-- `created_at`, `reviewed_at`, `applied_at`, `reversed_at`
+### P1: improve form coverage
 
-Add indexes for user/profile/date, source idempotency, and target lookups. Keep the
-existing `gpt_resume_content` as the current rendered content until migration and UI
-readers are complete.
+1. Move each provider into a separate adapter class with a version and selector contract.
+2. Handle provider-specific React select/autocomplete components and multi-step forms.
+3. Show a pre-fill preview mapping each answer to its target field and confidence.
+4. Let the user deselect individual fields before fill.
+5. Detect page changes and warn when a previously healthy selector contract stops matching.
 
-**Exit criteria:** migrations apply to an existing populated database without deleting
-or rewriting unrelated rows; duplicate events cannot apply twice.
+### P1: strengthen result validation
 
-## Phase 4 — embedded job browser and adapters
+1. Replace trailing free-text metadata with a versioned structured resume envelope.
+2. Validate required resume sections before saving or running Word.
+3. Show field-level validation errors and retain the pasted draft on failure.
+4. Distinguish generated, validated, Word-created, and submitted states explicitly.
 
-1. Add the WebView2 package and a persistent user-data folder that is separate from app
-   settings and secrets.
-2. Add `IJobSiteAdapter` with:
-   - `CanHandle(Uri)`;
-   - `ExtractJobAsync`;
-   - `GetCapabilities`;
-   - `FillApplicationAsync`;
-   - `ValidateBeforeFillAsync`.
-3. Create adapters in a dedicated `JobSites` folder, one class per supported site.
-4. Begin with one target site and these capabilities only: extract JD, create a draft,
-   and fill fields after user confirmation.
-5. Keep a selector health report and adapter version in the activity log so UI changes
-   on a job site are diagnosable.
+### P1: durable audit and recovery
 
-Use script messages with explicit schemas between WebView2 and C#. Never interpolate
-untrusted JD or user data directly into JavaScript strings.
+1. Add an append-only database audit table for assisted proposals, matching decisions,
+   field-fill summaries, uploads, macro runs, and applied actions.
+2. Store source evidence metadata without storing full email bodies by default.
+3. Add idempotency keys so retrying an action cannot duplicate an interview.
+4. Add undo where the underlying operation is safely reversible.
 
-**Exit criteria:** one signed-in job site can extract a JD and fill a reviewed application
-without the Chrome extension.
+### P2: broader communication actions
 
-## Phase 5 — Gmail and Calendar integration
+Add more reviewed actions only after schemas and confirmation UI exist, for example bid
+stage changes, interview rescheduling, and reply drafts. Keep sending messages and booking
+or changing external events behind explicit user confirmation in this architecture.
 
-Use the app's own Google OAuth authorization, stored in Credential Manager. A ChatGPT
-Google connection is useful for interactive ChatGPT work but is not an API credential
-for DevStrider.
+## Acceptance criteria for the current release
 
-Start in review-only mode:
-
-1. Ingest an email/event with provider message/event ID.
-2. Classify it into a limited action taxonomy: bid rejected, interview invitation,
-   interview changed, interview cancelled, request for availability, or no action.
-3. Match it to a bid/interview using multiple signals: recipient profile email, sender
-   domain, company, role, application ID, recruiter, and date.
-4. Create an immutable `ds_automation_events` proposal.
-5. Present the proposal in an Automation Review screen.
-6. Apply only after user approval.
-
-Automatic updates may be enabled only for explicit high-confidence rules, with an audit
-record and a Revert action. Ambiguous emails must never mark a bid rejected or schedule
-a calendar event automatically.
-
-**Exit criteria:** duplicate emails are idempotent, every update can be traced to its
-source, and users can review/revert changes.
-
-## Phase 6 — controlled automation and rollout
-
-1. Feature-flag Resume Studio by account/profile.
-2. Pilot direct generation with a five-resume session limit and manual macro execution.
-   Compare cached versus uncached token usage and generated-resume quality.
-3. Enable the automatic-macro toggle for test profiles.
-4. Let users configure the session limit after the default has been validated; retain
-   the initial 1-10 bound until cost, latency, and quality data supports a change.
-5. Pilot one job-site adapter with fill-only behavior.
-6. Enable mail/calendar suggestions.
-7. Consider automatic status changes only after measured matching accuracy and a clear
-   rollback workflow.
-8. Consider per-site automatic submission only after a site-specific policy and
-   reliability review; it is not implied by the macro toggle.
-
-## Testing and acceptance criteria
-
-- Unit tests: response validation, structured-to-macro rendering, fast-feed compatibility,
-  credential redaction, generation-session expiry/limits, cache-key isolation, status
-  transitions, event idempotency, and matching confidence.
-- Integration tests: API cancellation/retry, Word macro failure handling, and migration on
-  a populated schema copy.
-- WebView tests: adapter URL matching, extraction fixtures, missing selector fallbacks,
-  and fill confirmation.
-- Manual acceptance: generated resumes render correctly through the existing Word macro;
-  five successive JDs reuse the correct profile-prompt cache without cross-job content;
-  no generated draft becomes `applied` without confirmation; no automatic event changes
-  a record without an audit entry.
-
-## Explicit non-goals for the first release
-
-- Automating the ChatGPT web UI.
-- Storing OpenAI or Google secrets in the database or `settings.json`.
-- Automatic job-site submission.
-- Fully autonomous mailbox decisions.
-- Replacing the existing Word macro or profile prompt format before Resume Studio is stable.
+- The desktop project builds successfully.
+- A ChatGPT sign-in persists across Resume Studio navigation and app restarts.
+- A job-site sign-in persists in the Job Browser profile.
+- Session limit and automatic Word-macro preference persist per profile.
+- Saving a resume creates/updates a draft and never marks it submitted.
+- Current ChatGPT answers override saved answers without overwriting them.
+- Protected/legal fields and submit controls remain unchanged.
+- Upload uses only the explicitly selected file and reports when no suitable input exists.
+- Assisted actions cannot apply without one exact bid match and explicit selection.
+- Greenhouse, Ashby, Lever, ApplyToJob, and generic fixtures pass before a production-ready
+  adapter claim is made.

@@ -67,6 +67,8 @@ Only propose an action when the company and role are explicit in the source. Nev
             using var document = JsonDocument.Parse(ProposalJson);
             if (!document.RootElement.TryGetProperty("actions", out var actions) || actions.ValueKind != JsonValueKind.Array)
                 throw new JsonException("Expected an 'actions' array.");
+            if (actions.GetArrayLength() > 100)
+                throw new JsonException("At most 100 proposed actions can be reviewed at once.");
             var bids = await _bidRepository.ListByProfileAsync(profileId);
             foreach (var item in actions.EnumerateArray())
                 Actions.Add(CreateRow(item, bids));
@@ -131,8 +133,10 @@ Only propose an action when the company and role are explicit in the source. Nev
         var type = Text(item, "type");
         var company = Text(item, "company");
         var role = Text(item, "role");
-        var matches = bids.Where(b => string.Equals(b.Company.Trim(), company, StringComparison.OrdinalIgnoreCase)
-                                   && string.Equals(b.Role.Trim(), role, StringComparison.OrdinalIgnoreCase)).ToList();
+        var matches = string.IsNullOrWhiteSpace(company) || string.IsNullOrWhiteSpace(role)
+            ? new List<UserBid>()
+            : bids.Where(b => string.Equals(b.Company.Trim(), company, StringComparison.OrdinalIgnoreCase)
+                           && string.Equals(b.Role.Trim(), role, StringComparison.OrdinalIgnoreCase)).ToList();
         var row = new AssistedActionRow
         {
             Type = type,
@@ -152,6 +156,17 @@ Only propose an action when the company and role are explicit in the source. Nev
         if (DateTimeOffset.TryParse(Text(item, "scheduled_at"), CultureInfo.InvariantCulture, DateTimeStyles.None, out var scheduled)) row.ScheduledAt = scheduled;
         row.IsSupported = type is "mark_bid_rejected" or "create_interview";
         if (type == "create_interview" && string.IsNullOrWhiteSpace(row.InterviewType)) row.InterviewType = InterviewTypes.HR;
+        if (!row.IsSupported) row.MatchMessage = "Unsupported action type";
+        else if (string.IsNullOrWhiteSpace(company)) { row.IsSupported = false; row.MatchMessage = "Company is required"; }
+        else if (string.IsNullOrWhiteSpace(role)) { row.IsSupported = false; row.MatchMessage = "Role is required"; }
+        else if (string.IsNullOrWhiteSpace(row.Evidence)) { row.IsSupported = false; row.MatchMessage = "Source evidence is required"; }
+        else if (type == "create_interview")
+        {
+            var canonicalType = InterviewTypes.All.FirstOrDefault(candidate =>
+                string.Equals(candidate, row.InterviewType, StringComparison.OrdinalIgnoreCase));
+            if (canonicalType == null) { row.IsSupported = false; row.MatchMessage = "Unsupported interview type"; }
+            else row.InterviewType = canonicalType;
+        }
         return row;
     }
 }
@@ -169,7 +184,8 @@ public sealed partial class AssistedActionRow : ObservableObject
     public DateTimeOffset? ScheduledAt { get; set; }
     public ObjectId? BidId { get; init; }
     public bool IsSupported { get; set; }
-    public string MatchMessage { get; init; } = "";
+    public string MatchMessage { get; set; } = "";
     public bool CanApply => IsSupported && BidId != null && !Applied;
+    partial void OnAppliedChanged(bool value) => OnPropertyChanged(nameof(CanApply));
     public string Summary => $"{Type}: {Company} · {Role}";
 }

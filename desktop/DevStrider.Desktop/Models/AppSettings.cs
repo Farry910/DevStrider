@@ -78,6 +78,9 @@ public class AppSettings
     /// </summary>
     public Dictionary<string, ChatGptResumeSessionSettings> ChatGptResumeSessions { get; set; } = new();
 
+    /// <summary>Per-profile reusable job-form answers. These are user-provided answers, never secrets.</summary>
+    public Dictionary<string, Dictionary<string, string>> JobFormAnswers { get; set; } = new();
+
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at
     // startup by SettingsService, never re-read per use.
@@ -117,9 +120,12 @@ public class AppSettings
     public AppSettings Clone()
     {
         var clone = (AppSettings)MemberwiseClone();
-        clone.ChatGptResumeSessions = ChatGptResumeSessions.ToDictionary(
+        clone.ChatGptResumeSessions = (ChatGptResumeSessions ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Clone());
+        clone.JobFormAnswers = (JobFormAnswers ?? new()).ToDictionary(
+            pair => pair.Key,
+            pair => new Dictionary<string, string>(pair.Value, StringComparer.OrdinalIgnoreCase));
         return clone;
     }
 }
