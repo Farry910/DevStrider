@@ -21,6 +21,9 @@ public partial class MainWindowViewModel : ViewModelBase
     public ActivityViewModel Activity { get; }
     public ProfilesViewModel ProfilesPage { get; }
     public PeersViewModel Peers { get; }
+    public ResumeStudioViewModel ResumeStudio { get; }
+    public AssistedAutomationViewModel AssistedAutomation { get; }
+    public JobBrowserViewModel JobBrowser { get; }
 
     public ProfileContext ProfileContext { get; }
 
@@ -63,6 +66,9 @@ public partial class MainWindowViewModel : ViewModelBase
         ActivityViewModel activity,
         ProfilesViewModel profilesPage,
         PeersViewModel peers,
+        ResumeStudioViewModel resumeStudio,
+        AssistedAutomationViewModel assistedAutomation,
+        JobBrowserViewModel jobBrowser,
         ProfileContext profileContext)
     {
         Bids = bids;
@@ -75,6 +81,9 @@ public partial class MainWindowViewModel : ViewModelBase
         Activity = activity;
         ProfilesPage = profilesPage;
         Peers = peers;
+        ResumeStudio = resumeStudio;
+        AssistedAutomation = assistedAutomation;
+        JobBrowser = jobBrowser;
         ProfileContext = profileContext;
         Current = bids;
 
@@ -93,4 +102,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowActivity() => Current = Activity;
     [RelayCommand] private void ShowProfiles() => Current = ProfilesPage;
     [RelayCommand] private void ShowPeers() => Current = Peers;
+    [RelayCommand] private void ShowResumeStudio() => Current = ResumeStudio;
+    [RelayCommand] private void ShowAssistedAutomation() => Current = AssistedAutomation;
+    [RelayCommand] private void ShowJobBrowser() => Current = JobBrowser;
 }

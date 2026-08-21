@@ -155,6 +155,9 @@ public partial class App : Application
         services.AddSingleton<ActivityViewModel>();
         services.AddSingleton<ProfilesViewModel>();
         services.AddSingleton<PeersViewModel>();
+        services.AddSingleton<ResumeStudioViewModel>();
+        services.AddSingleton<AssistedAutomationViewModel>();
+        services.AddSingleton<JobBrowserViewModel>();
         services.AddSingleton<MainWindowViewModel>();
 
         return services.BuildServiceProvider();

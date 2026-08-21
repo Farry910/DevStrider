@@ -102,6 +102,9 @@
 
     <!-- MVVM helpers -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+
+    <!-- Embedded Chromium surface for the deliberately user-driven ChatGPT workspace. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
   </ItemGroup>
 
 </Project>

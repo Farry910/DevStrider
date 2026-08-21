@@ -1,0 +1,24 @@
+<UserControl x:Class="DevStrider.Desktop.Views.JobBrowserView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="400"/></Grid.ColumnDefinitions>
+    <Grid Grid.Column="0" Margin="0,0,12,0">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <DockPanel Margin="0,0,0,8">
+        <Button DockPanel.Dock="Right" Click="OnNavigate" Content="Go" Margin="8,0,0,0"/>
+        <TextBox Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"/>
+      </DockPanel>
+      <wv2:WebView2 x:Name="JobSiteBrowser" Grid.Row="1"/>
+    </Grid>
+    <StackPanel Grid.Column="1">
+      <TextBlock Text="Job Browser" Style="{StaticResource H1}"/>
+      <TextBlock Text="Navigate to a posting while signed in. Extracted text is reviewable before it is copied to ChatGPT." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+      <Button Click="OnExtract" Content="Extract visible page text" HorizontalAlignment="Left"/>
+      <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="430" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8"/>
+      <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD for ChatGPT" HorizontalAlignment="Left"/>
+      <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+    </StackPanel>
+  </Grid>
+</UserControl>

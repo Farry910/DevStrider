@@ -46,6 +46,15 @@
       <DataTemplate DataType="{x:Type vm:PeersViewModel}">
         <views:PeersView/>
       </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ResumeStudioViewModel}">
+        <views:ResumeStudioView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:AssistedAutomationViewModel}">
+        <views:AssistedAutomationView/>
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:JobBrowserViewModel}">
+        <views:JobBrowserView/>
+      </DataTemplate>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

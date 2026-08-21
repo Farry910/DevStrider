@@ -145,6 +145,24 @@
                 <TextBlock Text="Bids" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
+            <Button Command="{Binding ShowResumeStudioCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Resume Studio" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowJobBrowserCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE774;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Job Browser" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowAssistedAutomationCommand}" Style="{StaticResource NavButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE715;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Job Operations" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
             <Button Command="{Binding ShowInterviewsCommand}" Style="{StaticResource NavButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE787;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>

@@ -72,6 +72,12 @@ public class AppSettings
     /// <summary>Hotkey assigned to the Word macro. Default F9 triggers field updates.</summary>
     public string WordHotkey { get; set; } = "F9";
 
+    /// <summary>
+    /// Per-profile preferences for the user-driven ChatGPT Resume Studio. They contain no
+    /// credentials and are machine preferences, so they belong beside the active-profile choice.
+    /// </summary>
+    public Dictionary<string, ChatGptResumeSessionSettings> ChatGptResumeSessions { get; set; } = new();
+
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at
     // startup by SettingsService, never re-read per use.
@@ -108,5 +114,25 @@ public class AppSettings
     /// in the form would be visible to the listener and every other service before Save.
     /// Every property here is a value type or string, so a member-wise copy is a full copy.
     /// </summary>
-    public AppSettings Clone() => (AppSettings)MemberwiseClone();
+    public AppSettings Clone()
+    {
+        var clone = (AppSettings)MemberwiseClone();
+        clone.ChatGptResumeSessions = ChatGptResumeSessions.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Clone());
+        return clone;
+    }
+}
+
+/// <summary>Non-secret local preferences for one profile's ChatGPT UI generation session.</summary>
+public sealed class ChatGptResumeSessionSettings
+{
+    public int GenerationLimit { get; set; } = 5;
+    public bool AutomaticallyRunWordMacro { get; set; }
+
+    public ChatGptResumeSessionSettings Clone() => new()
+    {
+        GenerationLimit = GenerationLimit,
+        AutomaticallyRunWordMacro = AutomaticallyRunWordMacro,
+    };
 }
