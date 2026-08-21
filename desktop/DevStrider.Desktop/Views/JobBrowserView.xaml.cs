@@ -28,7 +28,8 @@ public partial class JobBrowserView : UserControl
             var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevStrider", "webview2", "job-sites");
             await JobSiteBrowser.EnsureCoreWebView2Async(await CoreWebView2Environment.CreateAsync(userDataFolder: path));
             JobSiteBrowser.CoreWebView2.SourceChanged += OnBrowserSourceChanged;
-            OnNavigate(sender, e);
+            if (DataContext is JobBrowserViewModel vm)
+                vm.QueueNavigationRequested += NavigateToQueuedLink;
         }
         catch (Exception ex) when (DataContext is JobBrowserViewModel vm)
         {
@@ -44,6 +45,13 @@ public partial class JobBrowserView : UserControl
             if (DataContext is JobBrowserViewModel invalid) invalid.StatusMessage = "Enter a valid https:// address.";
             return;
         }
+        JobSiteBrowser.Source = uri;
+        vm.AdapterName = JobSiteFormAdapters.NameFor(uri);
+    }
+
+    private void NavigateToQueuedLink()
+    {
+        if (DataContext is not JobBrowserViewModel vm || !Uri.TryCreate(vm.Address, UriKind.Absolute, out var uri)) return;
         JobSiteBrowser.Source = uri;
         vm.AdapterName = JobSiteFormAdapters.NameFor(uri);
     }
@@ -66,6 +74,23 @@ public partial class JobBrowserView : UserControl
             vm.StatusMessage = string.IsNullOrWhiteSpace(vm.JobDescription) ? "No visible page text was found." : "Visible page text extracted. Review it before copying.";
         }
         catch (Exception ex) { vm.StatusMessage = "Couldn't extract page text: " + ex.Message; }
+    }
+
+    private async void OnStartBid(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null || JobSiteBrowser.Source == null) return;
+        try
+        {
+            var json = await JobSiteBrowser.ExecuteScriptAsync("document.body ? document.body.innerText : ''");
+            var jobDescription = JsonSerializer.Deserialize<string>(json) ?? "";
+            vm.JobDescription = jobDescription;
+            vm.StartBidFromCurrentPage(JobSiteBrowser.Source.AbsoluteUri, jobDescription);
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = "Couldn't start the bid: " + ex.Message;
+            vm.RecordFailure("Bid start failed", ex.Message);
+        }
     }
 
     private async void OnExtractQuestions(object sender, RoutedEventArgs e)

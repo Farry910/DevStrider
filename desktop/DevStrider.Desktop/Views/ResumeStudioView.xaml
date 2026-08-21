@@ -23,8 +23,9 @@
             </StackPanel>
             <TextBlock Text="Resumes per session" Margin="0,12,0,2"/>
             <TextBox Text="{Binding GenerationLimit, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
+            <CheckBox Content="Automate ChatGPT bid flow and finish Word resume" IsChecked="{Binding AutomaticallySubmitChatGptPrompt, Mode=TwoWay}" Margin="0,10,0,0"/>
             <CheckBox Content="Automatically generate Word resume after validation" IsChecked="{Binding AutomaticallyRunWordMacro, Mode=TwoWay}" Margin="0,10,0,0"/>
-            <TextBlock Text="This never submits a job application." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="22,2,0,0"/>
+            <TextBlock Text="This sends ChatGPT prompts and finishes the Word resume. It never submits a job application." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="22,2,0,0"/>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource Card}">
@@ -40,10 +41,11 @@
         <Border Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Text="ChatGPT reply" FontWeight="SemiBold"/>
-            <TextBlock Text="Copy the complete answer from ChatGPT and paste it here. The trailing fast-feed metadata remains supported." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+            <TextBlock Text="Copy the complete answer from ChatGPT, then use Finish from clipboard. The trailing fast-feed metadata remains supported." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
             <TextBox Text="{Binding GeneratedResume, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="220" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
               <Button Command="{Binding SaveDraftCommand}" Content="Save draft" Margin="0,0,8,0"/>
+              <Button Command="{Binding FinishFromClipboardCommand}" Content="Finish from clipboard" Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
               <Button Command="{Binding RunWordMacroCommand}" Content="Generate Word resume" Style="{StaticResource GhostButton}"/>
             </StackPanel>
           </StackPanel>
@@ -60,7 +62,7 @@
           <Button DockPanel.Dock="Right" Click="OnOpenChatGpt" Content="Open ChatGPT" Style="{StaticResource GhostButton}"/>
           <TextBlock Text="ChatGPT" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </DockPanel>
-        <wv2:WebView2 x:Name="ChatGptBrowser" Grid.Row="1" Source="https://chatgpt.com/"/>
+        <wv2:WebView2 x:Name="ChatGptBrowser" Grid.Row="1"/>
       </Grid>
     </Border>
   </Grid>

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Text.Json;
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
@@ -15,8 +16,34 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private readonly SettingsService _settings;
     private readonly ProfileContext _profiles;
     private readonly ActivityLogService _activity;
-    private string _address = "https://www.linkedin.com/jobs/";
+    private string _address = "";
     public string Address { get => _address; set => SetProperty(ref _address, value); }
+
+    private string _queueLinksInput = "";
+    public string QueueLinksInput { get => _queueLinksInput; set => SetProperty(ref _queueLinksInput, value); }
+
+    public ObservableCollection<JobLinkQueueItem> JobQueue { get; } = new();
+
+    private JobLinkQueueItem? _currentQueueItem;
+    public JobLinkQueueItem? CurrentQueueItem
+    {
+        get => _currentQueueItem;
+        private set
+        {
+            if (!SetProperty(ref _currentQueueItem, value)) return;
+            OnPropertyChanged(nameof(QueueSummary));
+        }
+    }
+
+    public string QueueSummary => CurrentQueueItem == null
+        ? $"{JobQueue.Count(item => item.Status == JobLinkQueueStatuses.Queued)} link(s) waiting."
+        : $"Processing: {CurrentQueueItem.Url}";
+
+    /// <summary>Raised after a queued link becomes the active application.</summary>
+    public event Action? QueueNavigationRequested;
+
+    /// <summary>Raised when the current job page should begin the resume-generation handoff.</summary>
+    public event Action<string, string>? BidPreparationRequested;
 
     private string _jobDescription = "";
     public string JobDescription { get => _jobDescription; set => SetProperty(ref _jobDescription, value); }
@@ -41,8 +68,13 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         _settings = settings;
         _profiles = profiles;
         _activity = activity;
-        _profiles.ProfileChanged += () => _ = LoadSavedAnswersAsync();
+        _profiles.ProfileChanged += () =>
+        {
+            _ = LoadSavedAnswersAsync();
+            _ = LoadQueueAsync();
+        };
         _ = LoadSavedAnswersAsync();
+        _ = LoadQueueAsync();
     }
 
     [RelayCommand]
@@ -88,6 +120,113 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         catch (JsonException ex) { StatusMessage = "Saved answers must be a JSON object: " + ex.Message; }
     }
 
+    [RelayCommand]
+    private async Task AddLinksToQueueAsync()
+    {
+        var profile = _profiles.Current;
+        if (profile == null) { StatusMessage = "No active profile."; return; }
+
+        var candidates = QueueLinksInput
+            .Split(new[] { '\r', '\n', ',', ';', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(text => Uri.TryCreate(text, UriKind.Absolute, out var uri) &&
+                            (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+                ? NormalizeUrl(uri) : null)
+            .Where(url => url != null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            StatusMessage = "Paste one or more valid http(s) job links, one per line.";
+            return;
+        }
+
+        var known = JobQueue.Select(item => item.Url).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var added = candidates.Where(url => known.Add(url)).Select(url => new JobLinkQueueItem { Url = url }).ToList();
+        if (added.Count == 0)
+        {
+            StatusMessage = "Those job links are already in this profile's queue.";
+            return;
+        }
+        foreach (var item in added) JobQueue.Add(item);
+        QueueLinksInput = "";
+        await SaveQueueAsync();
+        OnPropertyChanged(nameof(QueueSummary));
+        StatusMessage = $"{added.Count} job link(s) added. Open next when you are ready to apply.";
+        _activity.Success("Job Browser", "Job links queued", $"{added.Count} link(s) for {profile.Name}");
+    }
+
+    [RelayCommand]
+    private async Task OpenNextQueuedLinkAsync()
+    {
+        var active = CurrentQueueItem ?? JobQueue.FirstOrDefault(item => item.Status == JobLinkQueueStatuses.InProgress);
+        if (active == null)
+        {
+            active = JobQueue.FirstOrDefault(item => item.Status == JobLinkQueueStatuses.Queued);
+            if (active == null)
+            {
+                StatusMessage = "No queued job links remain.";
+                return;
+            }
+            active.Status = JobLinkQueueStatuses.InProgress;
+            CurrentQueueItem = active;
+            await SaveQueueAsync();
+        }
+
+        Address = active.Url;
+        JobDescription = "";
+        CurrentAnswersJson = "{}";
+        FormQuestionsJson = "[]";
+        QueueNavigationRequested?.Invoke();
+        OnPropertyChanged(nameof(QueueSummary));
+        StatusMessage = "Opened the queued job link. Complete and review this application, then mark it completed or skipped.";
+        _activity.Info("Job Browser", "Queued job opened", active.Url);
+    }
+
+    [RelayCommand]
+    private async Task CompleteCurrentQueuedLinkAsync()
+    {
+        if (CurrentQueueItem == null)
+        {
+            StatusMessage = "Open a queued job link first.";
+            return;
+        }
+        CurrentQueueItem.Status = JobLinkQueueStatuses.Completed;
+        var url = CurrentQueueItem.Url;
+        CurrentQueueItem = null;
+        await SaveQueueAsync();
+        OnPropertyChanged(nameof(QueueSummary));
+        StatusMessage = "Job link marked completed. Open next when you are ready.";
+        _activity.Success("Job Browser", "Queued job completed", url);
+    }
+
+    [RelayCommand]
+    private async Task SkipCurrentQueuedLinkAsync()
+    {
+        if (CurrentQueueItem == null)
+        {
+            StatusMessage = "Open a queued job link first.";
+            return;
+        }
+        CurrentQueueItem.Status = JobLinkQueueStatuses.Skipped;
+        var url = CurrentQueueItem.Url;
+        CurrentQueueItem = null;
+        await SaveQueueAsync();
+        OnPropertyChanged(nameof(QueueSummary));
+        StatusMessage = "Job link skipped. Open next when you are ready.";
+        _activity.Info("Job Browser", "Queued job skipped", url);
+    }
+
+    public void StartBidFromCurrentPage(string jobUrl, string jobDescription)
+    {
+        if (string.IsNullOrWhiteSpace(jobDescription))
+        {
+            StatusMessage = "No visible job description was found.";
+            return;
+        }
+        BidPreparationRequested?.Invoke(jobUrl, jobDescription);
+    }
+
     public Dictionary<string, string> BuildFillValues()
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -119,6 +258,31 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             ? saved : new Dictionary<string, string>();
         SavedAnswersJson = JsonSerializer.Serialize(answers, new JsonSerializerOptions { WriteIndented = true });
     }
+
+    private async Task LoadQueueAsync()
+    {
+        var profile = _profiles.Current;
+        if (profile == null) return;
+        var settings = await _settings.GetAsync();
+        var items = settings.JobLinkQueues?.TryGetValue(profile.Id.ToString(), out var saved) == true
+            ? saved.Select(item => item.Clone()).ToList() : new List<JobLinkQueueItem>();
+        JobQueue.Clear();
+        foreach (var item in items) JobQueue.Add(item);
+        CurrentQueueItem = JobQueue.FirstOrDefault(item => item.Status == JobLinkQueueStatuses.InProgress);
+        OnPropertyChanged(nameof(QueueSummary));
+    }
+
+    private async Task SaveQueueAsync()
+    {
+        var profile = _profiles.Current;
+        if (profile == null) return;
+        var settings = await _settings.GetForEditAsync();
+        settings.JobLinkQueues ??= new Dictionary<string, List<JobLinkQueueItem>>();
+        settings.JobLinkQueues[profile.Id.ToString()] = JobQueue.Select(item => item.Clone()).ToList();
+        await _settings.SaveAsync(settings);
+    }
+
+    private static string NormalizeUrl(Uri uri) => uri.GetComponents(UriComponents.HttpRequestUrl, UriFormat.UriEscaped).TrimEnd('/');
 
     public void RecordFill(string host, string adapter, int filled, int skipped)
     {

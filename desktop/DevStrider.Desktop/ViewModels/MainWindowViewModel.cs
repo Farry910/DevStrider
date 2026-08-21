@@ -86,6 +86,11 @@ public partial class MainWindowViewModel : ViewModelBase
         JobBrowser = jobBrowser;
         ProfileContext = profileContext;
         Current = bids;
+        JobBrowser.BidPreparationRequested += (jobUrl, jobDescription) =>
+        {
+            ResumeStudio.PrepareBidFromJob(jobUrl, jobDescription);
+            Current = ResumeStudio;
+        };
 
         // Forward profile-context changes so the title-bar ComboBox + nav bindings refresh.
         ProfileContext.ProfileChanged += () => OnPropertyChanged(nameof(ActiveProfile));

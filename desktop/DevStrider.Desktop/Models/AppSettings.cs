@@ -81,6 +81,9 @@ public class AppSettings
     /// <summary>Per-profile reusable job-form answers. These are user-provided answers, never secrets.</summary>
     public Dictionary<string, Dictionary<string, string>> JobFormAnswers { get; set; } = new();
 
+    /// <summary>Per-profile, local job links to process one application at a time.</summary>
+    public Dictionary<string, List<JobLinkQueueItem>> JobLinkQueues { get; set; } = new();
+
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at
     // startup by SettingsService, never re-read per use.
@@ -126,6 +129,9 @@ public class AppSettings
         clone.JobFormAnswers = (JobFormAnswers ?? new()).ToDictionary(
             pair => pair.Key,
             pair => new Dictionary<string, string>(pair.Value, StringComparer.OrdinalIgnoreCase));
+        clone.JobLinkQueues = (JobLinkQueues ?? new()).ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Select(item => item.Clone()).ToList());
         return clone;
     }
 }
@@ -135,10 +141,37 @@ public sealed class ChatGptResumeSessionSettings
 {
     public int GenerationLimit { get; set; } = 5;
     public bool AutomaticallyRunWordMacro { get; set; }
+    public bool AutomaticallySubmitChatGptPrompt { get; set; }
 
     public ChatGptResumeSessionSettings Clone() => new()
     {
         GenerationLimit = GenerationLimit,
         AutomaticallyRunWordMacro = AutomaticallyRunWordMacro,
+        AutomaticallySubmitChatGptPrompt = AutomaticallySubmitChatGptPrompt,
     };
+}
+
+/// <summary>A user-supplied job link awaiting manual processing in the Job Browser.</summary>
+public sealed class JobLinkQueueItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Url { get; set; } = "";
+    public DateTime AddedAt { get; set; } = DateTime.UtcNow;
+    public string Status { get; set; } = JobLinkQueueStatuses.Queued;
+
+    public JobLinkQueueItem Clone() => new()
+    {
+        Id = Id,
+        Url = Url,
+        AddedAt = AddedAt,
+        Status = Status,
+    };
+}
+
+public static class JobLinkQueueStatuses
+{
+    public const string Queued = "Queued";
+    public const string InProgress = "In progress";
+    public const string Completed = "Completed";
+    public const string Skipped = "Skipped";
 }

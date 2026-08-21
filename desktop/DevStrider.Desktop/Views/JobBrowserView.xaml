@@ -15,9 +15,32 @@
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel>
       <TextBlock Text="Job Browser" Style="{StaticResource H1}"/>
-      <TextBlock Text="Navigate to a posting while signed in. Extracted text is reviewable before it is copied to ChatGPT." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+      <TextBlock Text="Paste job links into the queue, then process one signed-in application at a time. Extracted text is reviewable before it is copied to ChatGPT." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+      <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+        <StackPanel>
+          <TextBlock Text="Application queue" FontWeight="SemiBold"/>
+          <TextBlock Text="Paste job URLs from your other app, one per line. The queue is local to the active profile." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+          <TextBox Text="{Binding QueueLinksInput, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="NoWrap" Height="74" VerticalScrollBarVisibility="Auto" Tag="https://company.example/jobs/123&#x0A;https://boards.greenhouse.io/..."/>
+          <Button Command="{Binding AddLinksToQueueCommand}" Content="Add job links" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+          <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" Margin="0,8,0,4"/>
+          <StackPanel Orientation="Horizontal">
+            <Button Command="{Binding OpenNextQueuedLinkCommand}" Content="Open next" Margin="0,0,8,0"/>
+            <Button Command="{Binding CompleteCurrentQueuedLinkCommand}" Content="Mark completed" Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
+            <Button Command="{Binding SkipCurrentQueuedLinkCommand}" Content="Skip" Style="{StaticResource GhostButton}"/>
+          </StackPanel>
+          <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="140" Margin="0,8,0,0">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="95"/>
+              <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
+            </DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
       <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" Margin="0,0,0,8"/>
-      <Button Click="OnExtract" Content="Extract visible page text" HorizontalAlignment="Left"/>
+      <StackPanel Orientation="Horizontal">
+        <Button Click="OnStartBid" Content="Start bid" Margin="0,0,8,0"/>
+        <Button Click="OnExtract" Content="Extract visible page text" Style="{StaticResource GhostButton}"/>
+      </StackPanel>
       <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="300" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8"/>
       <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD for ChatGPT" HorizontalAlignment="Left"/>
       <Border Style="{StaticResource Card}" Margin="0,12,0,0">

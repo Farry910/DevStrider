@@ -57,11 +57,33 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
     }
 
+    private bool _automaticallySubmitChatGptPrompt;
+    public bool AutomaticallySubmitChatGptPrompt
+    {
+        get => _automaticallySubmitChatGptPrompt;
+        set
+        {
+            if (!SetProperty(ref _automaticallySubmitChatGptPrompt, value)) return;
+            if (value && !AutomaticallyRunWordMacro)
+            {
+                _automaticallyRunWordMacro = true;
+                OnPropertyChanged(nameof(AutomaticallyRunWordMacro));
+            }
+            _ = SavePreferencesAsync();
+        }
+    }
+
     public string SessionProgress => SessionStarted
         ? $"{CompletedInSession} of {GenerationLimit} resumes saved in this session"
         : $"Start a session to generate up to {GenerationLimit} resumes with this profile prompt.";
 
     public string ActiveProfileName => _profiles.Current?.Name ?? "No active profile";
+
+    /// <summary>Lets the view focus the already initialized ChatGPT WebView after bid handoff.</summary>
+    public event Action? ChatGptFocusRequested;
+    public event Action<ChatGptBidRequest>? AutoBidRequested;
+    private ChatGptBidRequest? _pendingAutoBid;
+    private bool _chatGptBrowserReady;
 
     public ResumeStudioViewModel(
         SettingsService settings,
@@ -98,6 +120,91 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         CompletedInSession = 0;
         StatusMessage = "Profile prompt copied. Paste it into the ChatGPT conversation once, then use Copy JD for each job.";
         _activity.Info("Resume Studio", "ChatGPT session started", profile.Name);
+    }
+
+    /// <summary>
+    /// Starts the shortest supported handoff from a job-site page: the first job in a session
+    /// copies profile prompt + JD together; later jobs copy only the JD into the same chat.
+    /// </summary>
+    public void PrepareBidFromJob(string jobUrl, string jobDescription)
+    {
+        var profile = _profiles.Current;
+        if (profile == null || string.IsNullOrWhiteSpace(profile.ResumePrompt))
+        {
+            StatusMessage = "The active profile needs a resume prompt first.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(jobDescription))
+        {
+            StatusMessage = "No visible job description was found.";
+            return;
+        }
+        if (SessionStarted && CompletedInSession >= GenerationLimit)
+        {
+            StatusMessage = $"This session reached its {GenerationLimit}-resume limit. Start a new session first.";
+            return;
+        }
+
+        JobUrl = jobUrl;
+        JobDescription = jobDescription.Trim();
+        GeneratedResume = "";
+
+        var isNewSession = !SessionStarted;
+        var prompt = isNewSession
+            ? profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + JobDescription
+            : "Job description:\n\n" + JobDescription;
+
+        if (isNewSession)
+        {
+            SessionStarted = true;
+            CompletedInSession = 0;
+            _activity.Info("Resume Studio", "Bid generation started", jobUrl);
+        }
+        else
+        {
+            _activity.Info("Resume Studio", "Next bid generation started", jobUrl);
+        }
+
+        if (AutomaticallySubmitChatGptPrompt)
+        {
+            _pendingAutoBid = new ChatGptBidRequest(prompt, jobUrl);
+            StatusMessage = "Sending the job prompt to ChatGPT and waiting for its resume reply…";
+            DispatchPendingAutoBid();
+        }
+        else
+        {
+            Clipboard.SetText(prompt);
+            StatusMessage = isNewSession
+                ? "Profile prompt and job description are ready. Paste once into ChatGPT, then copy its completed reply."
+                : "Job description is ready. Paste it into the active ChatGPT conversation, then copy its completed reply.";
+        }
+        ChatGptFocusRequested?.Invoke();
+    }
+
+    public void MarkChatGptBrowserReady()
+    {
+        _chatGptBrowserReady = true;
+        DispatchPendingAutoBid();
+    }
+
+    public async Task CompleteAutomatedBidAsync(string reply)
+    {
+        GeneratedResume = reply;
+        await SaveDraftAsync();
+    }
+
+    public void ReportAutomatedBidFailure(string message)
+    {
+        StatusMessage = message;
+        _activity.Error("Resume Studio", "ChatGPT automation failed", message);
+    }
+
+    private void DispatchPendingAutoBid()
+    {
+        if (!_chatGptBrowserReady || _pendingAutoBid == null) return;
+        var request = _pendingAutoBid;
+        _pendingAutoBid = null;
+        AutoBidRequested?.Invoke(request);
     }
 
     [RelayCommand]
@@ -197,6 +304,25 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task FinishFromClipboardAsync()
+    {
+        string reply;
+        try { reply = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+        catch (Exception ex)
+        {
+            StatusMessage = "Couldn't read the clipboard: " + ex.Message;
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            StatusMessage = "Copy ChatGPT's completed resume reply first.";
+            return;
+        }
+        GeneratedResume = reply;
+        await SaveDraftAsync();
+    }
+
+    [RelayCommand]
     private async Task RunWordMacroAsync()
     {
         var split = FastFeed.SplitTrailing(GeneratedResume);
@@ -228,16 +354,20 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         {
             _generationLimit = Math.Clamp(saved.GenerationLimit, 1, 10);
             _automaticallyRunWordMacro = saved.AutomaticallyRunWordMacro;
+            _automaticallySubmitChatGptPrompt = saved.AutomaticallySubmitChatGptPrompt;
+            if (_automaticallySubmitChatGptPrompt) _automaticallyRunWordMacro = true;
         }
         else
         {
             _generationLimit = 5;
             _automaticallyRunWordMacro = false;
+            _automaticallySubmitChatGptPrompt = false;
         }
         CompletedInSession = 0;
         SessionStarted = false;
         OnPropertyChanged(nameof(GenerationLimit));
         OnPropertyChanged(nameof(AutomaticallyRunWordMacro));
+        OnPropertyChanged(nameof(AutomaticallySubmitChatGptPrompt));
         OnPropertyChanged(nameof(SessionProgress));
     }
 
@@ -250,7 +380,10 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         {
             GenerationLimit = Math.Clamp(GenerationLimit, 1, 10),
             AutomaticallyRunWordMacro = AutomaticallyRunWordMacro,
+            AutomaticallySubmitChatGptPrompt = AutomaticallySubmitChatGptPrompt,
         };
         await _settings.SaveAsync(settings);
     }
 }
+
+public sealed record ChatGptBidRequest(string Prompt, string JobUrl);

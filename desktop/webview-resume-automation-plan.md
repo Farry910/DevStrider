@@ -22,9 +22,12 @@ select or guarantee those options without a supported application interface.
 |---|---|---|
 | Embedded ChatGPT | Implemented | Persistent WebView2 profile with the user's signed-in ChatGPT session. |
 | Reusable resume sessions | Implemented | One profile prompt is copied once, followed by several JDs in the same conversation. Default limit is 5; per-profile range is 1-10. |
+| One-click bid handoff | Implemented, assisted | Start bid extracts the current JD, prepares the ChatGPT prompt, switches to Resume Studio, and focuses ChatGPT. |
+| Automatic ChatGPT bid flow | Implemented, opt-in | The embedded ChatGPT page receives the prompt, sends it, waits for a new reply, saves the draft, and runs Word; job-site submission remains manual. |
 | Resume result handling | Implemented, assisted | User pastes ChatGPT's complete response into Resume Studio; DevStrider saves a draft and parses existing fast-feed metadata when present. |
 | Word resume generation | Implemented | User can run the Word macro explicitly, or enable the per-profile automatic macro toggle after a draft is saved. |
 | Job browser | Implemented | Separate persistent WebView2 profile for signed-in job sites, visible-text extraction, and URL-based adapter selection. |
+| Application-link queue | Implemented | Per-profile local queue accepts pasted job URLs and opens one active application at a time. |
 | Default form adapter | Initial implementation | Best-effort matching by labels, accessible names, names, IDs, and placeholders. It intentionally skips uncertain and protected fields. |
 | Greenhouse adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
 | Ashby adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
@@ -53,6 +56,8 @@ Job page ──extract──> reviewed questions ──copy──> ChatGPT
 ChatGPT JSON ──paste──> current answers ──review──> site adapter fills fields
 Chosen resume file ──explicit upload──────────────> detected resume input
 
+Job links from another app ──paste──> per-profile queue ──open next──> Job Browser
+
 Gmail/Calendar in ChatGPT ──JSON proposals──> exact bid match ──user selection──> update
 ```
 
@@ -60,6 +65,20 @@ The ChatGPT and job-site WebViews use separate local WebView2 data folders. This
 browser session persistent without placing ChatGPT credentials in DevStrider settings.
 
 ## Resume Studio
+
+### One-click bid handoff
+
+1. In Job Browser, **Start bid** extracts the visible JD and opens Resume Studio.
+2. For the first job, DevStrider copies the profile prompt plus JD together; later jobs copy
+   only the new JD into the same ChatGPT conversation.
+3. The user pastes that clipboard content into ChatGPT and copies ChatGPT's completed reply.
+4. **Finish from clipboard** saves the draft directly from that copied reply and runs Word
+   automatically when the macro toggle is enabled.
+
+This removes the extra manual transfer between Job Browser and Resume Studio. The ChatGPT paste
+and copy actions can be automated by enabling **Automate ChatGPT bid flow and finish Word
+resume**. This mode uses visible-page selectors and reports a clear failure if ChatGPT is signed
+out or its page layout changes. Job-site submission remains manual.
 
 1. The active profile supplies the whole resume prompt.
 2. **Start session** copies that prompt and resets the saved-resume counter.
@@ -77,6 +96,14 @@ change also resets the session. The app does not calculate token use because the
 does not expose reliable request token accounting to this workflow.
 
 ## Job Browser and adapters
+
+### Application-link queue
+
+DevStrider does not need to search job boards. Paste one or more HTTP(S) job links from the
+separate job-gathering app, one per line, and save them to the active profile's local queue.
+**Open next** starts or returns to the one in-progress link; after the user has finished their
+manual application review, **Mark completed** or **Skip** records the result and unlocks the
+next queued link. Queue items survive restart and do not mark a bid as submitted by themselves.
 
 ### Value priority
 
