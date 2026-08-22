@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 namespace DevStrider.Desktop.Services;
 
@@ -378,11 +380,50 @@ public sealed class WordMacroService : IDisposable
         _openDocPath = documentPath;
     }
 
+    /// <summary>
+    /// Clears Word's record of documents that "caused a serious error".
+    ///
+    /// <para>
+    /// A macro that overruns its budget is killed with <see cref="Process.Kill(bool)"/> while the
+    /// template is still open, which Word sees as an abnormal termination. It files the document
+    /// under Resiliency, and the next open stops on a modal asking whether to try again — a prompt
+    /// <c>DisplayAlerts</c> does not suppress, because it is raised before the document loads.
+    /// During an automatic bid nothing is there to answer it, so the whole queue hangs on a dialog
+    /// on a hidden window. Word rebuilds these keys on demand, so clearing them costs nothing; it
+    /// is the same thing as emptying the Disabled Items list by hand.
+    /// </para>
+    /// </summary>
+    private static void ClearWordResiliency()
+    {
+        try
+        {
+            using var office = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Office");
+            if (office == null) return;
+            foreach (var version in office.GetSubKeyNames())
+            {
+                // Only the numeric version hives (16.0, 15.0, …) carry a Word\Resiliency branch.
+                if (!double.TryParse(version, NumberStyles.Any, CultureInfo.InvariantCulture, out _)) continue;
+                using var resiliency = Registry.CurrentUser.OpenSubKey(
+                    $@"Software\Microsoft\Office\{version}\Word\Resiliency", writable: true);
+                if (resiliency == null) continue;
+                foreach (var branch in new[] { "DisabledItems", "StartupItems" })
+                {
+                    try { resiliency.DeleteSubKeyTree(branch, throwOnMissingSubKey: false); }
+                    catch { /* another Word holds it; one prompt is survivable, a failed bid is not */ }
+                }
+            }
+        }
+        catch { /* never fail a bid over a cosmetic prompt */ }
+    }
+
     private void LaunchWord()
     {
         var type = Type.GetTypeFromProgID("Word.Application", throwOnError: false)
             ?? throw new InvalidOperationException(
                 "Microsoft Word isn't installed, or its COM automation class isn't registered.");
+
+        // Word reads Resiliency at startup, so this has to happen before the instance exists.
+        ClearWordResiliency();
 
         var before = WinwordPids();
         _word = Activator.CreateInstance(type)

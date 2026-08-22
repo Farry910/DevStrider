@@ -3,7 +3,6 @@ using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
 

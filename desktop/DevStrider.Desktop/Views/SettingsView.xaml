@@ -8,22 +8,6 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Legacy MongoDB (import only)" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="This machine's old local database. It is read once, to carry an existing install's saved settings across, and never written to. Once that has happened the MongoDB service can be stopped and uninstalled — leave these fields alone on a machine that never had one."/>
-          <TextBlock Text="Connection URI"/>
-          <TextBox Text="{Binding Model.MongoUri, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,8"
-                   Tag="mongodb://127.0.0.1:27017"/>
-          <TextBlock Text="Database name"/>
-          <TextBox Text="{Binding Model.DatabaseName, UpdateSourceTrigger=PropertyChanged}" Margin="0,2,0,4"
-                   Tag="devstrider"/>
-          <TextBlock Foreground="{StaticResource Muted}"
-                     Text="Restart DevStrider after changing these — the connection is created at startup."/>
-        </StackPanel>
-      </Border>
-
-      <Border Style="{StaticResource Card}">
-        <StackPanel>
           <TextBlock Text="Identity" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
                      Text="Who you are signed in as, and how teammates see you on the Peers tab. Your account owns the profiles you bid as — peers pick you first, then one of your profiles."/>

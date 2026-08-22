@@ -278,9 +278,11 @@ public partial class JobBrowserView : UserControl
             // submit time, so it belongs in the review note rather than failing a filled application.
             var (_, advisory) = await DetectHumanGateAsync();
             if (!string.IsNullOrWhiteSpace(advisory)) notes.Add(advisory);
+            var outstanding = DescribeUnfilled(fill.Unfilled);
+            if (!string.IsNullOrWhiteSpace(outstanding)) notes.Add(outstanding);
 
             await vm.MarkReadyForReviewAsync(fill.Adapter, fill.Filled, fill.Skipped, fill.Touched, uploaded,
-                string.Join(" ", notes));
+                string.Join(" ", notes), fill.Unfilled);
         }
         catch (Exception ex)
         {
@@ -288,20 +290,86 @@ public partial class JobBrowserView : UserControl
         }
     }
 
-    private async Task<(string Adapter, int Filled, int Skipped, IReadOnlyList<string> Touched)> FillFieldsAsync(JobBrowserViewModel vm)
+    private async Task<FillOutcome> FillFieldsAsync(JobBrowserViewModel vm)
     {
         if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var uri))
             throw new InvalidOperationException("No application page is open.");
-        var script = JobSiteFormAdapters.BuildFillScript(uri, vm.BuildFillValues());
-        var json = await JobSiteBrowser.ExecuteScriptAsync(script);
+        var values = vm.BuildFillValues();
+        var json = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildFillScript(uri, values));
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        var touched = root.TryGetProperty("touched", out var touchedElement) && touchedElement.ValueKind == JsonValueKind.Array
-            ? touchedElement.EnumerateArray().Select(item => item.GetString() ?? "").Where(item => item.Length > 0).ToArray()
-            : Array.Empty<string>();
-        return (root.GetProperty("adapter").GetString() ?? "Default (generic)",
-            root.GetProperty("filled").GetInt32(), root.GetProperty("skipped").GetInt32(), touched);
+
+        // Custom dropdowns are driven after the plain fields, because typing into one opens an
+        // overlay that would sit on top of anything still to be filled.
+        var (comboFilled, comboTouched) = await FillCustomDropdownsAsync(values);
+
+        var outcome = new FillOutcome(
+            root.GetProperty("adapter").GetString() ?? "Default (generic)",
+            root.GetProperty("filled").GetInt32() + comboFilled,
+            root.GetProperty("skipped").GetInt32(),
+            StringList(root, "touched").Concat(comboTouched).ToArray(),
+            StringList(root, "unfilled"));
+
+        // Re-ask what is outstanding: the first answer was taken before the dropdowns were driven.
+        if (comboFilled > 0)
+        {
+            var after = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildFillScript(uri, values));
+            using var refreshed = JsonDocument.Parse(after);
+            outcome = outcome with { Unfilled = StringList(refreshed.RootElement, "unfilled") };
+        }
+        return outcome;
     }
+
+    /// <summary>
+    /// Works each React combobox the way a person does: focus it, type the answer so its list
+    /// filters, wait for that list to render, then press Enter. The wait is why this cannot live
+    /// inside the fill script — ExecuteScriptAsync returns immediately on a promise.
+    /// </summary>
+    private async Task<(int Filled, List<string> Touched)> FillCustomDropdownsAsync(
+        IReadOnlyDictionary<string, string> values)
+    {
+        var touched = new List<string>();
+        var planJson = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildComboboxPlanScript(values));
+        using var plan = JsonDocument.Parse(planJson);
+        if (plan.RootElement.ValueKind != JsonValueKind.Array) return (0, touched);
+
+        foreach (var entry in plan.RootElement.EnumerateArray())
+        {
+            var index = entry.GetProperty("index").GetInt32();
+            var value = entry.GetProperty("value").GetString() ?? "";
+            var label = entry.GetProperty("label").GetString() ?? "";
+            if (value.Length == 0) continue;
+
+            var typedJson = await JobSiteBrowser.ExecuteScriptAsync(
+                JobSiteFormAdapters.BuildComboboxTypeScript(index, value));
+            using var typed = JsonDocument.Parse(typedJson);
+            if (!typed.RootElement.TryGetProperty("ok", out var ok) || !ok.GetBoolean()) continue;
+
+            await Task.Delay(450);
+            var committedJson = await JobSiteBrowser.ExecuteScriptAsync(
+                JobSiteFormAdapters.BuildComboboxCommitScript(index));
+            using var committed = JsonDocument.Parse(committedJson);
+            if (committed.RootElement.TryGetProperty("ok", out var done) && done.GetBoolean())
+                touched.Add(label.Length > 0 ? label : value);
+        }
+        return (touched.Count, touched);
+    }
+
+    private sealed record FillOutcome(
+        string Adapter, int Filled, int Skipped,
+        IReadOnlyList<string> Touched, IReadOnlyList<string> Unfilled);
+
+    private static IReadOnlyList<string> StringList(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.Array
+            ? element.EnumerateArray().Select(item => item.GetString() ?? "").Where(item => item.Length > 0).ToArray()
+            : Array.Empty<string>();
+
+    /// <summary>Names what the page still needs, so "review before submitting" says what to review.</summary>
+    private static string DescribeUnfilled(IReadOnlyList<string> unfilled) =>
+        unfilled.Count == 0
+            ? ""
+            : $"Still needs you ({unfilled.Count}): " + string.Join("; ", unfilled.Take(8)) +
+              (unfilled.Count > 8 ? "; ..." : "");
 
     private async void OnFill(object sender, RoutedEventArgs e)
     {
@@ -310,7 +378,8 @@ public partial class JobBrowserView : UserControl
         {
             var result = await FillFieldsAsync(vm);
             var (_, advisory) = await DetectHumanGateAsync();
-            vm.StatusMessage = $"{result.Adapter}: filled {result.Filled}, skipped {result.Skipped}. Review before submitting. {advisory}".Trim();
+            vm.StatusMessage = $"{result.Adapter}: filled {result.Filled}, skipped {result.Skipped}. " +
+                $"Review before submitting. {advisory} {DescribeUnfilled(result.Unfilled)}".Trim();
             if (TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out var uri))
             vm.RecordFill(uri.Host, result.Adapter, result.Filled, result.Skipped, result.Touched);
         }

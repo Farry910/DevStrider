@@ -74,8 +74,50 @@
          still asked for a review, and the ChatGPT driver never found its send button unless that
          tab was on screen. The workspaces bind to Hidden instead, which keeps the arranged size,
          and each handoff now brings its own workspace forward. Submitted links also leave the
-         queue, since the bid row and the Activity entry are the durable record by then. -->
-    <Version>9.1.2</Version>
+         queue, since the bid row and the Activity entry are the durable record by then.
+         9.1.3 stops ChatGPT's answer being filed as a Word fault. Word cannot fail fast on a reply
+         that is not a resume — the macro never finds its labels, never quits, and reports "Macro
+         timed out after 90s" — so a refusal, a rate-limit notice or a half-streamed message looked
+         like a broken macro. The reply is now checked for the [Section]: labels the macro fills in
+         before Word is launched, on the clipboard path as well as the automatic one, and the wait
+         holds out for that shape instead of settling on the first text that stops changing.
+         9.1.4 clears Word's Resiliency keys before launching it. Killing a wedged Word leaves the
+         template filed as having "caused a serious error", and the next open stops on a modal that
+         DisplayAlerts cannot suppress because it precedes the load — hanging the queue on a dialog
+         on a hidden window. Dropdowns also fill now: a native select was assigned with a plain
+         e.value, which React's value tracker treats as no change and reverts on the next render,
+         and option matching accepted any substring, so "No" could answer "Norway". The review note
+         now lists what is still empty, dropdowns included.
+         9.1.5 stops the filler putting answers in the wrong boxes. textFor concatenated every
+         label it could reach, including the first one inside an ancestor div — a neighbour's on
+         any two-column form — so on Greenhouse the Country dropdown resolved as "Phone" and took
+         the phone number, and "how many years of experience" resolved as "LinkedIn Profile" and
+         took the URL. It now takes one authoritative label: aria-labelledby, then the description
+         attribute, then label[for], then the element's own. react-select's search input is also
+         excluded from the text pass, where typing into it looked like a fill and selected nothing,
+         and a dropdown counts as answered only when it renders a chosen value.
+         9.1.6 finds the generated resume. The macro names the file for the person the profile is
+         for — Fernando.pdf — while this looked for {ResumeOutputFileBase}.pdf, defaulting to
+         Resume.pdf, so every application reported no generated resume and asked for a manual
+         upload. The folder is searched by extension now, preferring the PDF, with the newest
+         folder under the root as a fallback when the macro's folder name does not match verbatim;
+         only the parent folder has to be configured. The blanket refusal list also shrinks to what
+         this app is never given — government ID, bank details — because the user supplies
+         demographic, salary, work-authorisation and attestation answers themselves.
+         9.2.0 adds the answer bank: ds_form_answers, one row per question per profile, keyed on
+         the normalised question rather than the site, because every board words the same question
+         differently. ChatGPT now answers from a reference block — profile, approved answers and
+         the generated resume — and what it returns is stored unapproved; questions nothing could
+         answer are stored empty. Job Operations gains an Answers tab listing site, field, question
+         and answer, with per-row and bulk approval and a coverage line. A minor: it adds a table
+         and a tab, and retires AppSettings.JobFormAnswers, whose contents migrate on first read.
+         9.3.0 removes MongoDB. The driver had outlived the 8.3.0 import: all that still used it was
+         SettingsService lifting an old settings row on first launch, which meant a fresh install
+         spent five seconds reaching for a database nobody has any more. LegacyStore, that import,
+         MongoUri/DatabaseName and their env vars and Settings panel are gone. ObjectId stayed
+         behind as the identity type for every ds_*.id, so it is defined here now — same 12 bytes,
+         same 24-character hex, same chronological ordering — and existing rows are untouched. -->
+    <Version>9.3.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -96,12 +138,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver â€” read-only, and only for one thing now: the old local database's
-         settings row, carried into settings.json on first launch. ObjectId is still the identity
-         type everywhere, hence MongoDB.Bson. -->
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
-    <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
-
     <!-- PostgreSQL â€” the shared database, which is now the only store -->
     <PackageReference Include="Npgsql" Version="8.0.5" />
 

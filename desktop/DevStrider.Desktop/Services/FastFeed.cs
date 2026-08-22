@@ -14,6 +14,23 @@ public static class FastFeed
 {
     public record Parsed(string ResumeId, string Company, string Role, IReadOnlyList<string> PrimaryStacks);
 
+    private static readonly Regex SectionLabel =
+        new(@"^\s*\[[^\]\r\n]{1,40}\]\s*:", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Whether text carries the <c>[Section]:</c> labels the Word macro looks up.
+    ///
+    /// <para>
+    /// Word cannot fail fast on a reply that is not a resume: the macro simply never finds its
+    /// labels, never reaches <c>Application.Quit</c>, and surfaces as "Macro timed out after 90s" —
+    /// blaming Word for what ChatGPT sent. Checking first turns that into an accurate report of a
+    /// refusal, a rate-limit notice, or a half-streamed message. Counts labels rather than naming
+    /// them, because each profile's prompt picks its own.
+    /// </para>
+    /// </summary>
+    public static bool HasSectionLabels(string? text) =>
+        !string.IsNullOrWhiteSpace(text) && SectionLabel.Matches(text).Count >= 3;
+
     /// <summary>Parse a single fast-feed line. Returns null if fewer than 3 comma-segments.</summary>
     public static Parsed? ParseLine(string? line)
     {

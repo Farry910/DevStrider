@@ -230,12 +230,48 @@ CREATE INDEX ix_ds_ivs_process  ON ds_interviews (process_id);
 CREATE INDEX ix_ds_ivs_user_upd ON ds_interviews (user_id, updated_at DESC);
 
 
+-- ── ds_form_answers ─────────────────────────────────────────────────────────────────
+-- What this person has told job application forms before, so the same question is only
+-- ever answered once.
+--
+-- Deliberately NOT keyed by job site. The same question is worded differently on every
+-- board, so a per-site key would store one answer many times over and still miss the
+-- next variant; the key is the normalised question text and ChatGPT reconciles wording.
+-- last_site is context for the person reading the list, never part of identity.
+--
+-- An empty `answer` is a question that was met and left unanswered — that is what puts
+-- it in front of the user on the Answers tab. `approved_at` is what separates an answer
+-- the person stands behind from one ChatGPT proposed and nobody has read yet; both are
+-- used while filling, because approving the automatic flow is the decision to trust them.
+CREATE TABLE ds_form_answers (
+    id           TEXT        PRIMARY KEY,
+    user_id      BIGINT      NOT NULL REFERENCES ds_users(user_id) ON DELETE CASCADE,
+    profile_id   TEXT        NOT NULL DEFAULT '',
+    field_key    TEXT        NOT NULL,              -- normalised question; the match key
+    field_name   TEXT        NOT NULL DEFAULT '',   -- control id, e.g. question_7295875009
+    question     TEXT        NOT NULL DEFAULT '',   -- verbatim, as the form words it
+    answer       TEXT        NOT NULL DEFAULT '',   -- '' = outstanding
+    kind         TEXT        NOT NULL DEFAULT 'text',  -- text | choice | boolean
+    source       TEXT        NOT NULL DEFAULT 'gpt',   -- gpt | user
+    approved_at  TIMESTAMPTZ,
+    last_site    TEXT        NOT NULL DEFAULT '',
+    last_seen_at TIMESTAMPTZ NOT NULL,
+    seen_count   INT         NOT NULL DEFAULT 1,
+    created_at   TIMESTAMPTZ NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    CONSTRAINT ds_form_answers_key UNIQUE (user_id, profile_id, field_key)
+);
+
+CREATE INDEX ix_ds_answers_profile ON ds_form_answers (user_id, profile_id);
+
+
 -- ── 5. Verify ───────────────────────────────────────────────────────────────────────
--- Four rows, with these column counts. Anything else means part of this file didn't run:
+-- Five rows, with these column counts. Anything else means part of this file didn't run:
 --     ds_bids           18
 --     ds_interviews     27
 --     ds_profiles       14
 --     ds_users           4
+--     ds_form_answers   15
 --
 -- Four and not eight: ds_education, ds_certifications, ds_experiences and ds_achievements
 -- were dropped in 8.1.0. If they still show up here, the DROP section at the top did not
@@ -243,7 +279,7 @@ CREATE INDEX ix_ds_ivs_user_upd ON ds_interviews (user_id, updated_at DESC);
 SELECT table_name, count(*) AS columns
 FROM information_schema.columns
 WHERE table_schema = 'public'
-  AND table_name IN ('ds_users', 'ds_profiles', 'ds_bids', 'ds_interviews')
+  AND table_name IN ('ds_users', 'ds_profiles', 'ds_bids', 'ds_interviews', 'ds_form_answers')
 GROUP BY table_name
 ORDER BY table_name;
 

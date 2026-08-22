@@ -233,6 +233,12 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
             var split = FastFeed.SplitTrailing(resumeReply);
             if (string.IsNullOrWhiteSpace(split.ResumePart))
                 throw new InvalidOperationException("ChatGPT returned no resume content.");
+            // Guards the clipboard-recovery path as well as the automatic one. Without this the
+            // macro spends 90s hunting labels that were never in the reply and reports a Word fault.
+            if (!FastFeed.HasSectionLabels(split.ResumePart))
+                throw new InvalidOperationException(
+                    "ChatGPT's reply carries none of the [Section]: labels the Word macro fills in, " +
+                    "so it was not sent to Word. Check the reply in Resume Studio and retry.");
 
             var bidId = "";
             _activeAnswersJson = NormalizeAnswersJson(answersJson);
@@ -387,25 +393,66 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         _activeBidId = "";
     }
 
+    /// <summary>
+    /// Finds the file the macro just wrote, given only the parent folder from Settings.
+    ///
+    /// <para>
+    /// The macro owns the file name — the shipped template saves <c>Fernando.pdf</c>, named for the
+    /// person the profile is for, because that is what a recruiter sees on the attachment. This used
+    /// to demand <c>{ResumeOutputFileBase}.pdf</c>, defaulting to <c>Resume.pdf</c>, so it never
+    /// found anything and every application reported no generated resume. The folder holds exactly
+    /// the .docx and the .pdf, so searching by extension is both simpler and correct, and the file
+    /// name setting is now only a tie-break.
+    /// </para>
+    /// </summary>
     private async Task<string> ResolveGeneratedResumePathAsync(string folderName)
     {
-        if (string.IsNullOrWhiteSpace(folderName)) return "";
         var settings = await _settings.GetAsync();
-        if (string.IsNullOrWhiteSpace(settings.ResumeOutputRoot)) return "";
+        var root = (settings.ResumeOutputRoot ?? "").Trim();
+        if (root.Length == 0 || !Directory.Exists(root)) return "";
 
-        var safeFolder = string.Join("-", folderName.Split(Path.GetInvalidFileNameChars(),
-            StringSplitOptions.RemoveEmptyEntries));
-        safeFolder = new string(safeFolder.Where(c => c is >= ' ' and <= '~').ToArray()).Trim();
-        var fileBase = string.IsNullOrWhiteSpace(settings.ResumeOutputFileBase)
-            ? "Resume"
-            : settings.ResumeOutputFileBase.Trim();
-        var folder = Path.Combine(settings.ResumeOutputRoot, safeFolder);
-        foreach (var extension in new[] { ".pdf", ".docx", ".doc" })
+        var folder = "";
+        var safeFolder = SafeFolderName(folderName);
+        if (safeFolder.Length > 0)
         {
-            var candidate = Path.Combine(folder, fileBase + extension);
-            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            var direct = Path.Combine(root, safeFolder);
+            if (Directory.Exists(direct)) folder = direct;
+        }
+        // The macro decides the folder name from its own copy of the fast-feed line, so a stray
+        // space or comma is enough to miss it. Whatever it just wrote is the newest folder here.
+        if (folder.Length == 0) folder = NewestFolderSince(root, DateTime.Now.AddMinutes(-10));
+        if (folder.Length == 0) return "";
+
+        var preferred = (settings.ResumeOutputFileBase ?? "").Trim();
+        foreach (var pattern in new[] { "*.pdf", "*.docx", "*.doc" })
+        {
+            var files = Directory.EnumerateFiles(folder, pattern).ToList();
+            if (files.Count == 0) continue;
+            var named = preferred.Length == 0 ? null : files.FirstOrDefault(file =>
+                Path.GetFileNameWithoutExtension(file).Equals(preferred, StringComparison.OrdinalIgnoreCase));
+            return Path.GetFullPath(named ?? files.OrderByDescending(File.GetLastWriteTimeUtc).First());
         }
         return "";
+    }
+
+    private static string SafeFolderName(string folderName)
+    {
+        var joined = string.Join("-", (folderName ?? "").Split(Path.GetInvalidFileNameChars(),
+            StringSplitOptions.RemoveEmptyEntries));
+        return new string(joined.Where(c => c is >= ' ' and <= '~').ToArray()).Trim();
+    }
+
+    private static string NewestFolderSince(string root, DateTime cutoff)
+    {
+        try
+        {
+            return new DirectoryInfo(root).EnumerateDirectories()
+                .Where(directory => directory.LastWriteTime >= cutoff || directory.CreationTime >= cutoff)
+                .OrderByDescending(directory => directory.LastWriteTime)
+                .Select(directory => directory.FullName)
+                .FirstOrDefault() ?? "";
+        }
+        catch { return ""; }
     }
 
     private async Task LoadSettingsAsync()

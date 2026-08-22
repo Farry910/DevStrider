@@ -46,8 +46,6 @@ public class AboutViewModel : ViewModelBase
 
     public AboutViewModel()
     {
-        Add("DEVSTRIDER_MONGO_URI",          "AppSettings.MongoUri",          "Legacy local MongoDB, read once by the one-time import and never written to. Default mongodb://127.0.0.1:27017.");
-        Add("DEVSTRIDER_DATABASE_NAME",      "AppSettings.DatabaseName",      "Legacy local MongoDB database name. Default 'devstrider'.");
         Add("DEVSTRIDER_SHARED_DB_URI",      "AppSettings.SharedDbUri",       "Shared PostgreSQL service URI, e.g. postgresql://user:pass@host:5432/devstrider?sslmode=require. Seeding it selects URI mode.", isSecret: true);
         Add("DEVSTRIDER_SHARED_DB_HOST",     "AppSettings.SharedDbHost",      "Shared PostgreSQL host. Seeding it selects host/port mode.");
         Add("DEVSTRIDER_SHARED_DB_PORT",     "AppSettings.SharedDbPort",      "Shared PostgreSQL port. Default 5432.");

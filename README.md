@@ -1,4 +1,4 @@
-# DevStrider 9.1
+# DevStrider 9.3
 
 A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
 company portal's PostgreSQL database.
@@ -67,8 +67,7 @@ always one-to-one, and a posting with nothing bid on it is exactly what `status 
 - **Microsoft Word** with a macro-enabled template per profile (see *Word template* below)
 - Access to the portal's **PostgreSQL** database
 - **Chrome**, for the extension
-- MongoDB is *not* required. It is read once, if present, to carry an old install's settings
-  across — see *Upgrading from 7.x*.
+- MongoDB is not used at all. The driver went in 9.3.0 along with the last thing that read it.
 
 ## Build and run
 
@@ -201,10 +200,10 @@ There is no username variable: the account name comes from `app_user`.
 Before you start, back up the machine's local MongoDB — after the migration the shared database is
 the only copy of that person's bids and interviews.
 
-**Settings carry across automatically.** On first launch with no `settings.json`, the app reads
-the old MongoDB once and copies the saved values over — database credentials, R2 keys, listener
-port, Word path — so nothing has to be retyped. It never writes to MongoDB. After that the service
-can be stopped and uninstalled.
+**Settings do not carry across any more.** Earlier versions read the old MongoDB once on first
+launch to copy saved values over; that import went in 9.3.0 with the rest of the MongoDB support,
+so database credentials, R2 keys, the listener port and the Word path are entered once in Settings.
+The MongoDB service can be stopped and uninstalled.
 
 **Old bids do not carry across, by design.** There is no data migration in the app. A one-time
 importer was built and then removed: it existed to solve a problem the folder back door already
@@ -225,5 +224,5 @@ so every machine holding this file can wipe the bucket. Treat the file according
 
 ## Version
 
-**9.1.2** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**9.3.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

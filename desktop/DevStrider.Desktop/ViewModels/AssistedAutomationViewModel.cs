@@ -6,7 +6,6 @@ using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.ViewModels;
 
@@ -29,13 +28,17 @@ public sealed partial class AssistedAutomationViewModel : ViewModelBase
 
     public ObservableCollection<AssistedActionRow> Actions { get; } = new();
 
+    /// <summary>The Answers tab. Its own view-model so the answer bank is independent of proposals.</summary>
+    public FormAnswersViewModel FormAnswers { get; }
+
     public AssistedAutomationViewModel(
         IBidRepository bidRepository,
         IInterviewRepository interviewRepository,
         BidBoardService bids,
         InterviewService interviews,
         ProfileContext profiles,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        FormAnswersViewModel formAnswers)
     {
         _bidRepository = bidRepository;
         _interviewRepository = interviewRepository;
@@ -43,6 +46,7 @@ public sealed partial class AssistedAutomationViewModel : ViewModelBase
         _interviews = interviews;
         _profiles = profiles;
         _activity = activity;
+        FormAnswers = formAnswers;
         _profiles.ProfileChanged += () => Actions.Clear();
     }
 

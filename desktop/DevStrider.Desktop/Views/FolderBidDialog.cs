@@ -2,7 +2,6 @@ using System.Windows;
 using System.Windows.Controls;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
-using MongoDB.Bson;
 using Brushes = System.Windows.Media.Brushes;
 using FontFamily = System.Windows.Media.FontFamily;
 

@@ -17,6 +17,13 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private readonly ProfileContext _profiles;
     private readonly ActivityLogService _activity;
     private readonly BidBoardService _bids;
+    private readonly FormAnswerService _answers;
+
+    /// <summary>
+    /// The answer bank, keyed on the normalised question. Cached per profile because the fill
+    /// script needs it synchronously, and refreshed whenever the profile or the bank changes.
+    /// </summary>
+    private Dictionary<string, string> _answerBank = new(StringComparer.OrdinalIgnoreCase);
 
     private string _address = "";
     public string Address { get => _address; set => SetProperty(ref _address, value); }
@@ -105,12 +112,14 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     public event Action<JobResumePreparation>? ResumeGenerationRequested;
     public event Action<ResumeAutomationResult>? ApplicationFillRequested;
 
-    public JobBrowserViewModel(SettingsService settings, ProfileContext profiles, ActivityLogService activity, BidBoardService bids)
+    public JobBrowserViewModel(SettingsService settings, ProfileContext profiles, ActivityLogService activity,
+        BidBoardService bids, FormAnswerService answers)
     {
         _settings = settings;
         _profiles = profiles;
         _activity = activity;
         _bids = bids;
+        _answers = answers;
         _profiles.ProfileChanged += () =>
         {
             IsAutomaticQueueRunning = false;
@@ -225,7 +234,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
         SetStatus(item, JobLinkQueueStatuses.Submitted);
-        if (MongoDB.Bson.ObjectId.TryParse(item.BidId, out var bidId))
+        if (ObjectId.TryParse(item.BidId, out var bidId))
             await _bids.UpdateAsync(bidId, bid => bid.Status = BidStatuses.Applied);
         _activity.Success("Job Browser", "Application submitted", item.Url);
         // The bid row and the Activity entry are the durable record by this point, so the queue
@@ -373,6 +382,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         item.BidId = result.BidId;
         CurrentAnswersJson = result.AnswersJson;
         SelectedResumePath = result.ResumeFilePath;
+        await BankGeneratedAnswersAsync(item, result.AnswersJson);
         SetStatus(item, JobLinkQueueStatuses.FillingApplication);
         await SaveQueueAsync();
         StatusMessage = "Resume ready. Filling the application and uploading the resume...";
@@ -385,11 +395,15 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         int skipped,
         IReadOnlyCollection<string> touched,
         bool resumeUploaded,
-        string note = "")
+        string note = "",
+        IReadOnlyCollection<string>? unfilled = null)
     {
         var item = CurrentQueueItem;
         if (item == null) return;
         item.AdapterName = adapter;
+        // Whatever the page still wants becomes a question in Job Operations, so the next
+        // application of the same kind fills it instead of asking again.
+        await BankOutstandingAsync(item, unfilled);
         SetStatus(item, JobLinkQueueStatuses.ReadyForReview);
         _consecutiveFailures = 0;
         IsAutomaticQueueRunning = false;
@@ -460,10 +474,10 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             var profile = _profiles.Current;
             if (profile == null) { StatusMessage = "No active profile."; return; }
             var answers = ParseAnswers(SavedAnswersJson);
-            var settings = await _settings.GetForEditAsync();
-            settings.JobFormAnswers[profile.Id.ToString()] = answers;
-            await _settings.SaveAsync(settings);
-            StatusMessage = $"Saved {answers.Count} reusable answer(s).";
+            foreach (var pair in answers)
+                await _answers.SaveUserAnswerAsync(profile.Id, pair.Key, pair.Value);
+            await LoadSavedAnswersAsync();
+            StatusMessage = $"Saved {answers.Count} reusable answer(s) to the shared database.";
         }
         catch (JsonException ex) { StatusMessage = "Saved answers must be valid JSON: " + ex.Message; }
     }
@@ -474,6 +488,42 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         foreach (var pair in ParseAnswers(CurrentAnswersJson)) values[pair.Key] = pair.Value;
         return values.Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Saves what ChatGPT answered so the same question fills itself next time. They land
+    /// unapproved: the Answers tab is where they are reviewed and promoted.
+    /// </summary>
+    private async Task BankGeneratedAnswersAsync(JobLinkQueueItem item, string answersJson)
+    {
+        var profile = _profiles.Current;
+        if (profile == null) return;
+        var site = Uri.TryCreate(item.Url, UriKind.Absolute, out var uri) ? uri.Host : "";
+        try
+        {
+            foreach (var pair in ParseAnswers(answersJson))
+            {
+                if (string.IsNullOrWhiteSpace(pair.Value)) continue;
+                await _answers.RecordGeneratedAsync(profile.Id, pair.Key, pair.Value, site);
+            }
+        }
+        catch (JsonException) { /* a malformed reply is already reported by Resume Studio */ }
+        await LoadSavedAnswersAsync();
+    }
+
+    private async Task BankOutstandingAsync(JobLinkQueueItem item, IReadOnlyCollection<string>? unfilled)
+    {
+        var profile = _profiles.Current;
+        if (profile == null || unfilled == null || unfilled.Count == 0) return;
+        var site = Uri.TryCreate(item.Url, UriKind.Absolute, out var uri) ? uri.Host : "";
+        foreach (var question in unfilled)
+        {
+            // The fill script tags dropdowns for the review line; the question itself is the key.
+            var text = question.EndsWith(" (dropdown)", StringComparison.OrdinalIgnoreCase)
+                ? question[..^11] : question;
+            await _answers.RecordOutstandingAsync(profile.Id, text, site);
+        }
+        await LoadSavedAnswersAsync();
     }
 
     private Dictionary<string, string> BuildKnownValues()
@@ -492,18 +542,23 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             values["linkedin"] = profile.LinkedinUrl;
             values["headline"] = profile.Headline;
         }
-        foreach (var pair in ParseAnswers(SavedAnswersJson)) values[pair.Key] = pair.Value;
+        // The bank last: a question answered explicitly beats a profile field that merely
+        // resembles it, and it is the only source for anything the profile has no column for.
+        foreach (var pair in _answerBank) values[pair.Key] = pair.Value;
         return values;
     }
 
-    private async Task LoadSavedAnswersAsync()
+    /// <summary>
+    /// Loads the answer bank for the active profile. Unapproved ChatGPT answers are included:
+    /// approving the automatic flow is the decision to trust them, and the Answers tab is where
+    /// they are reviewed afterwards.
+    /// </summary>
+    public async Task LoadSavedAnswersAsync()
     {
         var profile = _profiles.Current;
         if (profile == null) return;
-        var settings = await _settings.GetAsync();
-        var answers = settings.JobFormAnswers.TryGetValue(profile.Id.ToString(), out var saved)
-            ? saved : new Dictionary<string, string>();
-        SavedAnswersJson = JsonSerializer.Serialize(answers, new JsonSerializerOptions { WriteIndented = true });
+        _answerBank = await _answers.BuildLookupAsync(profile.Id, approvedOnly: false);
+        SavedAnswersJson = JsonSerializer.Serialize(_answerBank, new JsonSerializerOptions { WriteIndented = true });
     }
 
     private async Task LoadQueueAsync()

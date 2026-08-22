@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
 using Microsoft.Web.WebView2.Core;
 
@@ -116,11 +117,10 @@ public partial class ResumeStudioView : UserControl
             }
 
             vm.StatusMessage = "ChatGPT is generating the resume...";
-            var resumeReply = await WaitForNewAssistantReplyAsync(before.Count, token);
-            if (string.IsNullOrWhiteSpace(resumeReply))
+            var resumeReply = await WaitForNewAssistantReplyAsync(before.Count, token, FastFeed.HasSectionLabels);
+            if (!FastFeed.HasSectionLabels(resumeReply))
             {
-                vm.ReportAutomatedResumeFailure(request.WorkItemId,
-                    "ChatGPT did not return a completed resume before the 3-minute timeout. Use Manual recovery.");
+                vm.ReportAutomatedResumeFailure(request.WorkItemId, DescribeUnusableReply(resumeReply));
                 return;
             }
 
@@ -243,9 +243,17 @@ public partial class ResumeStudioView : UserControl
             root.TryGetProperty("generating", out var generating) && generating.GetBoolean());
     }
 
-    private async Task<string> WaitForNewAssistantReplyAsync(int previousCount, CancellationToken token)
+    /// <summary>
+    /// Waits for the reply to stop changing. <paramref name="accept"/> lets the caller insist on a
+    /// shape: a message can sit perfectly stable and still be a refusal or a rate-limit notice, and
+    /// settling for one of those is what sends junk to Word. The last stable text is returned on
+    /// timeout regardless, so the caller can report what ChatGPT actually said.
+    /// </summary>
+    private async Task<string> WaitForNewAssistantReplyAsync(int previousCount, CancellationToken token,
+        Func<string, bool>? accept = null)
     {
         var priorText = "";
+        var lastStable = "";
         var stableChecks = 0;
         for (var attempt = 0; attempt < 180; attempt++)
         {
@@ -262,9 +270,21 @@ public partial class ResumeStudioView : UserControl
                 priorText = snapshot.Text;
                 stableChecks = 0;
             }
-            if (stableChecks >= 2) return snapshot.Text;
+            if (stableChecks < 2) continue;
+            lastStable = snapshot.Text;
+            if (accept == null || accept(snapshot.Text)) return snapshot.Text;
         }
-        return "";
+        return lastStable;
+    }
+
+    /// <summary>Reports what ChatGPT sent, so its answer is never filed as a Word fault.</summary>
+    private static string DescribeUnusableReply(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply))
+            return "ChatGPT did not reply within 3 minutes. Open Resume Studio to see the conversation, then use Manual recovery.";
+        var snippet = reply.Length <= 200 ? reply : reply[..200] + "...";
+        return "ChatGPT replied without the [Section]: labels the Word macro needs, so nothing was sent to Word. It said: "
+               + snippet.Replace('\r', ' ').Replace('\n', ' ');
     }
 
     private async Task<string> WaitForConversationUrlAsync(CancellationToken token)
@@ -292,12 +312,18 @@ public partial class ResumeStudioView : UserControl
     }
 
     private static string BuildQuestionPrompt(ChatGptResumeRequest request, string generatedResume) =>
-        "Answer the following job-application questions using only the supplied known facts, generated resume, and job description. " +
-        "Do not answer demographic, disability, veteran, legal-consent, signature, salary, work-authorization, " +
-        "or sponsorship questions unless an exact saved answer is supplied. Leave unknown values empty. " +
+        "Answer the following job-application questions from the reference data below and nothing else. " +
+        "The reference data is everything this person has told the app about themselves: their profile, " +
+        "every answer they have already approved, and the resume just generated for this role. " +
+        "Derive answers from it — years of experience, for instance, follow from the dated roles in the resume. " +
+        "Never invent a fact that is not supported there; return an empty string for anything you cannot " +
+        "ground in the reference data, and be consistent with previously approved answers. " +
+        "Never answer a question asking for a government ID, social-security or national-insurance number, " +
+        "passport, driver's licence, or bank or card details: return an empty string for those. " +
+        "For a multiple-choice question return the chosen options as a comma-separated list. " +
         "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question\":\"answer\"}}.\n\n" +
-        "Known facts and saved answers:\n" + request.KnownAnswersJson + "\n\n" +
-        "Generated resume:\n" + generatedResume + "\n\n" +
+        "Reference data (profile and approved answers):\n" + request.KnownAnswersJson + "\n\n" +
+        "Generated resume for this role:\n" + generatedResume + "\n\n" +
         "Questions:\n" + request.QuestionsJson + "\n\n" +
         "Job description:\n" + request.JobDescription;
 

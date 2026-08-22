@@ -1,6 +1,5 @@
 using System.Windows;
 using DevStrider.Desktop.Data;
-using DevStrider.Desktop.Data.Import;
 using DevStrider.Desktop.Data.Postgres;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
@@ -110,12 +109,6 @@ public partial class App : Application
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<SettingsService>();
 
-        // The machine's old local MongoDB, read-only, for the one-time import. Constructed from
-        // env vars rather than from settings because SettingsService is what it seeds.
-        services.AddSingleton(_ => new LegacyStore(
-            SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017",
-            SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider"));
-
         // ── the shared database ─────────────────────────────────────────────
         services.AddSingleton<SharedDbCredentials>();
         services.AddSingleton<SharedDbContext>();
@@ -129,6 +122,7 @@ public partial class App : Application
         services.AddSingleton<IBidRepository, PgBidRepository>();
         services.AddSingleton<IInterviewRepository, PgInterviewRepository>();
         services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
+        services.AddSingleton<IFormAnswerRepository, PgFormAnswerRepository>();
 
         // ── services ────────────────────────────────────────────────────────
         services.AddSingleton<ProfileService>();      // the ds_users row: the account name
@@ -139,6 +133,7 @@ public partial class App : Application
         services.AddSingleton<FolderBidImport>();
         services.AddSingleton<InterviewService>();
         services.AddSingleton<StatsService>();
+        services.AddSingleton<FormAnswerService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
         services.AddSingleton<LocalApiServer>();
@@ -156,6 +151,7 @@ public partial class App : Application
         services.AddSingleton<ProfilesViewModel>();
         services.AddSingleton<PeersViewModel>();
         services.AddSingleton<ResumeStudioViewModel>();
+        services.AddSingleton<FormAnswersViewModel>();
         services.AddSingleton<AssistedAutomationViewModel>();
         services.AddSingleton<JobBrowserViewModel>();
         services.AddSingleton<MainWindowViewModel>();

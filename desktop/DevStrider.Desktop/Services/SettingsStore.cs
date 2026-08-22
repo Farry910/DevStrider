@@ -2,7 +2,6 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DevStrider.Desktop.Models;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.Services;
 
@@ -25,8 +24,8 @@ namespace DevStrider.Desktop.Services;
 public sealed class SettingsStore
 {
     /// <summary>
-    /// Per-user, per-machine, and deliberately not roaming: this file names a local MongoDB and a
-    /// listener port, neither of which means anything on another machine.
+    /// Per-user, per-machine, and deliberately not roaming: this file names database credentials
+    /// and a listener port, neither of which means anything on another machine.
     /// </summary>
     public static string DirectoryPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevStrider");

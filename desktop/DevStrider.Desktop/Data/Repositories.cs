@@ -1,5 +1,4 @@
 using DevStrider.Desktop.Models;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.Data;
 
@@ -15,9 +14,9 @@ namespace DevStrider.Desktop.Data;
 /// </para>
 ///
 /// <para>
-/// <see cref="ObjectId"/> is still the identity type, stored as its 24-character hex string. It
-/// came from the local MongoDB these tables replace, and keeping it is what makes the one-time
-/// import an idempotent upsert that can be re-run without creating duplicates.
+/// <see cref="ObjectId"/> is the identity type, stored as its 24-character hex string. The shape
+/// came from the local MongoDB these tables replace; keeping it meant every existing row stayed
+/// valid when the driver was dropped and the type moved into this project.
 /// </para>
 ///
 /// <para>
@@ -170,4 +169,29 @@ public interface IPeerDirectory
     /// </summary>
     Task<List<Interview>> ListInterviewsScheduledBetweenAsync(
         DateTime fromUtc, DateTime toUtc, bool includeUndated);
+}
+
+/// <summary>
+/// The reusable answer bank — <c>ds_form_answers</c>, one row per question per profile.
+///
+/// <para>
+/// Answers are not scoped by job site on purpose: the same question is worded differently on every
+/// board, so a per-site key would store the same answer many times and still miss. The key is the
+/// normalised question, and ChatGPT reconciles the wording.
+/// </para>
+/// </summary>
+public interface IFormAnswerRepository
+{
+    /// <summary>Every answer for the profile, outstanding ones included.</summary>
+    Task<List<FormAnswer>> ListByProfileAsync(ObjectId profileId);
+
+    /// <summary>
+    /// Insert, or merge into the existing row for the same question. A stored user answer is never
+    /// overwritten by a later ChatGPT one — approval is the whole point of the bank.
+    /// </summary>
+    Task RecordAsync(FormAnswer answer);
+
+    Task UpsertAsync(FormAnswer answer);
+
+    Task DeleteAsync(ObjectId id);
 }

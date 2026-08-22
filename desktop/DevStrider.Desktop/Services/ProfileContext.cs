@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
 using DevStrider.Desktop.Models;
-using MongoDB.Bson;
 
 namespace DevStrider.Desktop.Services;
 

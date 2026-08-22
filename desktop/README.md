@@ -3,7 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 9.1.2
+- **Desktop app version:** 9.3.0
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 The repo root's [README](../README.md) is the project overview and setup guide. This file is the
@@ -46,8 +46,7 @@ for sign-in. It issues no DDL.
 - **Google Chrome** + the Bid Assistant extension (in `../extension`)
 - A **ChatGPT** account (free tier is fine) for resume generation
 
-MongoDB is *not* required. If a machine still has the old local one, it is read once to carry that
-install's saved settings across — see [Upgrading from 7.x](../README.md#upgrading-from-7x).
+MongoDB is not used at all — the driver and the last import that read it went in 9.3.0.
 
 ---
 
@@ -72,7 +71,7 @@ repository scopes its queries to the signed-in `app_user.id`, and a query issued
 throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
 DevStrider creates its `ds_users` row and seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v9.1.2`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v9.3.0`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -239,9 +238,6 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
   reads or renders the rest.
 
 ### Settings (Account)
-- **Legacy MongoDB (import only)** — the old local database, read and never written to. Carries this
-  machine's saved settings across automatically on first launch. It holds no bid history the app
-  wants: there is no data migration, and none is planned — see [Recording a day from resume folders](#recording-a-day-from-resume-folders).
 - **Identity** — read-only: the portal account you are signed in as
 - **Shared database (PostgreSQL)** — service URI or host / port / database / user / password, with
   **Test connection** and **Clear password**. See [Credentials](#credentials).
@@ -311,7 +307,7 @@ with the web client and never got another one. Nothing of the CV survives in the
 `highest_education` column was added in 8.1.0 and dropped again in 8.2.0, on the
 grounds that nothing read it either. Re-running `shared-db-schema.sql` drops all four tables.
 
-Row ids are 24-character MongoDB ObjectId hex strings, carried over from the local databases these
+Row ids are 24-character hex strings in the MongoDB ObjectId format, carried over from the local databases these
 tables replaced — keeping the original identity is what made the one-time import an idempotent
 upsert. `user_id` is `app_user.id`, a BIGINT, and every query DevStrider issues filters on it.
 

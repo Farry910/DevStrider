@@ -1,4 +1,3 @@
-using MongoDB.Bson;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace DevStrider.Desktop.Models;
@@ -17,13 +16,6 @@ namespace DevStrider.Desktop.Models;
 /// </summary>
 public class AppSettings
 {
-    /// <summary>
-    /// Connection to a legacy local MongoDB, read only by the one-time import that lifts a
-    /// machine's old data into the shared database. Nothing else touches Mongo.
-    /// </summary>
-    public string MongoUri { get; set; } = "mongodb://127.0.0.1:27017";
-    public string DatabaseName { get; set; } = "devstrider";
-
     // ── Shared PostgreSQL — the store ───────────────────────────────────────
     // Two ways to say the same thing. Providers hand out a service URI; a self-hosted box is
     // easier to describe in parts. SharedDbMode decides which set is authoritative — the other
@@ -88,7 +80,12 @@ public class AppSettings
     /// <summary>Must match the Word macro's FILE_BASE constant.</summary>
     public string ResumeOutputFileBase { get; set; } = "Resume";
 
-    /// <summary>Per-profile reusable job-form answers. These are user-provided answers, never secrets.</summary>
+    /// <summary>
+    /// Legacy answer bank, kept only so <see cref="Services.FormAnswerService"/> can move it into
+    /// <c>ds_form_answers</c> once and then empty it. Answers live in the shared database now, so
+    /// they follow the account between machines instead of sitting in one settings.json. Nothing
+    /// writes here any more; do not add to it.
+    /// </summary>
     public Dictionary<string, Dictionary<string, string>> JobFormAnswers { get; set; } = new();
 
     /// <summary>Per-profile, local job links to process one application at a time.</summary>

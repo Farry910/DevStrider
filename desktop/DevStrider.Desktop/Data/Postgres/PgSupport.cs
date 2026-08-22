@@ -1,5 +1,5 @@
 using DevStrider.Desktop.Services;
-using MongoDB.Bson;
+using DevStrider.Desktop.Models;
 using Npgsql;
 using NpgsqlTypes;
 

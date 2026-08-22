@@ -7,8 +7,6 @@ namespace DevStrider.Desktop.Services;
 /// mattering — clear them once you've launched at least once.
 ///
 /// Supported variables:
-///   DEVSTRIDER_MONGO_URI          → MongoUri            (when default "mongodb://127.0.0.1:27017")
-///   DEVSTRIDER_DATABASE_NAME      → DatabaseName        (when default "devstrider")
 ///   DEVSTRIDER_SHARED_DB_URI      → SharedDbUri         (when empty)
 ///   DEVSTRIDER_SHARED_DB_HOST     → SharedDbHost        (when empty)
 ///   DEVSTRIDER_SHARED_DB_PORT     → SharedDbPort        (when default 5432)
@@ -37,8 +35,6 @@ public static class SettingsBootstrap
         var settings = await settingsService.GetForEditAsync();
         var dirty = false;
 
-        dirty |= SeedIfMatch(settings.MongoUri,     "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",     v => settings.MongoUri = v);
-        dirty |= SeedIfMatch(settings.DatabaseName, "devstrider",                "DEVSTRIDER_DATABASE_NAME", v => settings.DatabaseName = v);
 
         // Shared PostgreSQL. Seeding the URI flips the mode to "uri" so the seeded value is the
         // one actually used; seeding a host flips it to "parts" for the same reason.
