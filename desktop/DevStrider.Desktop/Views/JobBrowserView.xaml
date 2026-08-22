@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
   <Grid>
-    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="400"/></Grid.ColumnDefinitions>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="420"/></Grid.ColumnDefinitions>
     <Grid Grid.Column="0" Margin="0,0,12,0">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
       <DockPanel Margin="0,0,0,8">
@@ -13,60 +13,127 @@
       <wv2:WebView2 x:Name="JobSiteBrowser" Grid.Row="1"/>
     </Grid>
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-    <StackPanel>
-      <TextBlock Text="Job Browser" Style="{StaticResource H1}"/>
-      <TextBlock Text="Paste job links into the queue, then process one signed-in application at a time. Extracted text is reviewable before it is copied to ChatGPT." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
-      <Border Style="{StaticResource Card}" Margin="0,0,0,12">
-        <StackPanel>
-          <TextBlock Text="Application queue" FontWeight="SemiBold"/>
-          <TextBlock Text="Paste job URLs from your other app, one per line. The queue is local to the active profile." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
-          <TextBox Text="{Binding QueueLinksInput, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="NoWrap" Height="74" VerticalScrollBarVisibility="Auto" Tag="https://company.example/jobs/123&#x0A;https://boards.greenhouse.io/..."/>
-          <Button Command="{Binding AddLinksToQueueCommand}" Content="Add job links" HorizontalAlignment="Left" Margin="0,8,0,0"/>
-          <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" Margin="0,8,0,4"/>
-          <StackPanel Orientation="Horizontal">
-            <Button Command="{Binding OpenNextQueuedLinkCommand}" Content="Open next" Margin="0,0,8,0"/>
-            <Button Command="{Binding CompleteCurrentQueuedLinkCommand}" Content="Mark completed" Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
-            <Button Command="{Binding SkipCurrentQueuedLinkCommand}" Content="Skip" Style="{StaticResource GhostButton}"/>
+      <StackPanel>
+        <TextBlock Text="Application Queue" Style="{StaticResource H1}"/>
+        <TextBlock Text="Paste links once. After approval, DevStrider processes them in order and pauses before every final submission."
+                   Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+          <StackPanel>
+            <TextBlock Text="Job links" FontWeight="SemiBold"/>
+            <TextBox Text="{Binding QueueLinksInput, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding QueueInputReadOnly}"
+                     AcceptsReturn="True" Height="78" VerticalScrollBarVisibility="Auto" Margin="0,6,0,8" Tag="Paste one or many job URLs"/>
+            <WrapPanel>
+              <Button Command="{Binding AddLinksToQueueCommand}" Content="Add links" Margin="0,0,8,8"
+                      Visibility="{Binding IsAutomaticQueueIdle, Converter={StaticResource BooleanToVisibilityConverter}}"
+                      IsEnabled="{Binding QueueInputReadOnly, Converter={StaticResource InverseBoolean}}"/>
+              <Button Command="{Binding StartAutomaticQueueCommand}" Content="Approve &amp; start automatic flow" Margin="0,0,8,8"
+                      Visibility="{Binding IsAutomaticQueueIdle, Converter={StaticResource BooleanToVisibilityConverter}}"
+                      IsEnabled="{Binding IsAutomaticQueueRunning, Converter={StaticResource InverseBoolean}}"/>
+              <Button Command="{Binding StopAutomaticQueueCommand}" Content="Stop automation" Margin="0,0,8,8" Style="{StaticResource GhostButton}"
+                      Visibility="{Binding IsAutomaticQueueRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </WrapPanel>
+            <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
+            <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,8,0,0">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="125"/>
+                <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
+                <DataGridTextColumn Header="Tries" Binding="{Binding Attempts}" Width="48"/>
+                <DataGridTextColumn Header="Last error" Binding="{Binding Error}" Width="220"/>
+              </DataGrid.Columns>
+            </DataGrid>
           </StackPanel>
-          <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="140" Margin="0,8,0,0">
-            <DataGrid.Columns>
-              <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="95"/>
-              <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
-            </DataGrid.Columns>
-          </DataGrid>
-        </StackPanel>
-      </Border>
-      <TextBlock Text="{Binding AdapterName}" FontWeight="SemiBold" Margin="0,0,0,8"/>
-      <StackPanel Orientation="Horizontal">
-        <Button Click="OnStartBid" Content="Start bid" Margin="0,0,8,0"/>
-        <Button Click="OnExtract" Content="Extract visible page text" Style="{StaticResource GhostButton}"/>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+                Visibility="{Binding HasFailedLinks, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <StackPanel>
+            <TextBlock Text="Failed links" FontWeight="SemiBold"/>
+            <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8">
+              <Run Text="{Binding FailedCount, Mode=OneWay}"/>
+              <Run Text="link(s) failed and were collected here. Requeue them once the cause is cleared, copy them out, or drop them from the queue."/>
+            </TextBlock>
+            <DataGrid ItemsSource="{Binding FailedLinks}" AutoGenerateColumns="False" CanUserAddRows="False"
+                      IsReadOnly="True" MaxHeight="140" Margin="0,0,0,8">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
+                <DataGridTextColumn Header="Tries" Binding="{Binding Attempts}" Width="48"/>
+                <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="260"/>
+              </DataGrid.Columns>
+            </DataGrid>
+            <WrapPanel>
+              <Button Command="{Binding RequeueFailedLinksCommand}" Content="Requeue failed links" Margin="0,0,8,8"
+                      IsEnabled="{Binding QueueInputReadOnly, Converter={StaticResource InverseBoolean}}"/>
+              <Button Command="{Binding CopyFailedLinksCommand}" Content="Copy failed links" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Command="{Binding ClearFailedLinksCommand}" Content="Remove from queue" Style="{StaticResource GhostButton}" Margin="0,0,8,8"
+                      IsEnabled="{Binding QueueInputReadOnly, Converter={StaticResource InverseBoolean}}"/>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+          <StackPanel>
+            <TextBlock Text="Current application" FontWeight="SemiBold"/>
+            <TextBlock Text="{Binding CurrentStep}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,2"/>
+            <TextBlock Text="{Binding AdapterName}" Style="{StaticResource MutedText}"/>
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+                Visibility="{Binding NeedsJobDescription, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <StackPanel>
+            <TextBlock Text="Job description needed" FontWeight="SemiBold"/>
+            <TextBlock Text="This page did not expose a usable JD. Paste it here; the same automatic flow will continue."
+                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+            <TextBox Text="{Binding FallbackJobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+                     Height="180" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+            <Button Command="{Binding ContinueWithPastedJdCommand}" Content="Continue automatic flow" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+                Visibility="{Binding IsReadyForReview, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <StackPanel>
+            <TextBlock Text="Human review required" FontWeight="SemiBold"/>
+            <TextBlock Text="Review every field and the uploaded resume. Submit on the job site yourself; DevStrider never clicks the final Submit button."
+                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+            <WrapPanel>
+              <Button Command="{Binding MarkSubmittedAndContinueCommand}" Content="Mark submitted &amp; next" Margin="0,0,8,8"/>
+              <Button Command="{Binding SkipCurrentQueuedLinkCommand}" Content="Skip &amp; next" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+        <Expander Header="Manual and recovery tools" IsExpanded="False"
+                  Visibility="{Binding ShowManualTools, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <StackPanel Margin="0,8,0,0">
+            <WrapPanel>
+              <Button Click="OnStartBid" Content="Run current page flow" Margin="0,0,8,8"/>
+              <Button Click="OnExtract" Content="Extract visible text" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Command="{Binding OpenNextQueuedLinkCommand}" Content="Open next manually" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Command="{Binding RetryCurrentCommand}" Content="Retry current" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+            </WrapPanel>
+            <TextBlock Text="Extracted JD" FontWeight="SemiBold"/>
+            <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                     Height="180" VerticalScrollBarVisibility="Auto" Margin="0,4,0,6"/>
+            <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD" HorizontalAlignment="Left" Style="{StaticResource GhostButton}"/>
+            <TextBlock Text="Application answers" FontWeight="SemiBold" Margin="0,14,0,2"/>
+            <WrapPanel>
+              <Button Click="OnExtractQuestions" Content="Extract questions" Margin="0,0,8,8"/>
+              <Button Command="{Binding CopyQuestionsForChatGptCommand}" Content="Copy question prompt" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Click="OnFill" Content="Fill fields" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+            </WrapPanel>
+            <TextBox Text="{Binding CurrentAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+                     Height="100" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
+            <TextBlock Text="Resume file" FontWeight="SemiBold" Margin="0,14,0,2"/>
+            <TextBox Text="{Binding SelectedResumePath}" IsReadOnly="True"/>
+            <WrapPanel Margin="0,8,0,0">
+              <Button Click="OnChooseResume" Content="Choose resume..." Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Click="OnUploadResume" Content="Upload resume" Margin="0,0,8,8"/>
+            </WrapPanel>
+            <TextBlock Text="Reusable answers (JSON)" FontWeight="SemiBold" Margin="0,10,0,2"/>
+            <TextBox Text="{Binding SavedAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+                     Height="100" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
+            <Button Command="{Binding SaveAnswersCommand}" Content="Save reusable answers" HorizontalAlignment="Left"
+                    Style="{StaticResource GhostButton}" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Expander>
       </StackPanel>
-      <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="300" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8"/>
-      <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD for ChatGPT" HorizontalAlignment="Left"/>
-      <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-        <StackPanel>
-          <TextBlock Text="Application fields" FontWeight="SemiBold"/>
-          <TextBlock Text="Fill uses profile values, saved answers, and reviewed ChatGPT answers. It never submits the form or accepts legal declarations." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
-          <StackPanel Orientation="Horizontal">
-            <Button Click="OnExtractQuestions" Content="Extract questions" Margin="0,0,8,0"/>
-            <Button Command="{Binding CopyQuestionsForChatGptCommand}" Content="Copy for ChatGPT" Style="{StaticResource GhostButton}"/>
-          </StackPanel>
-          <TextBox Text="{Binding CurrentAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="110" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" Margin="0,8,0,0" Tag="Paste ChatGPT JSON answers here"/>
-          <Button Click="OnFill" Content="Fill reviewed fields" Margin="0,8,0,0" HorizontalAlignment="Left"/>
-          <TextBlock Text="Resume file" FontWeight="SemiBold" Margin="0,14,0,2"/>
-          <TextBlock Text="Choose the exact PDF or Word file, then explicitly upload it to the page's resume input. DevStrider does not choose a file or submit the application automatically." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"/>
-          <TextBox Text="{Binding SelectedResumePath}" IsReadOnly="True" TextWrapping="NoWrap"/>
-          <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-            <Button Click="OnChooseResume" Content="Choose resume..." Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
-            <Button Click="OnUploadResume" Content="Upload selected resume"/>
-          </StackPanel>
-          <TextBlock Text="Saved reusable answers (JSON object)" Margin="0,12,0,2"/>
-          <TextBox Text="{Binding SavedAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="100" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
-          <Button Command="{Binding SaveAnswersCommand}" Content="Save reusable answers" Margin="0,8,0,0" HorizontalAlignment="Left" Style="{StaticResource GhostButton}"/>
-        </StackPanel>
-      </Border>
-      <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-    </StackPanel>
     </ScrollViewer>
   </Grid>
 </UserControl>

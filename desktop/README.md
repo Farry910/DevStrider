@@ -3,8 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 8.3.0
-- **Chrome extension version:** 3.5.1 (the "Bid Assistant")
+- **Desktop app version:** 9.1.2
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 The repo root's [README](../README.md) is the project overview and setup guide. This file is the
@@ -73,7 +72,7 @@ repository scopes its queries to the signed-in `app_user.id`, and a query issued
 throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
 DevStrider creates its `ds_users` row and seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v8.3.0`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v9.1.2`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -408,8 +407,7 @@ service URI carries the password inline.
 | Every screen empty after signing in | No active profile — create one in the **Profiles** tab. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
 | Resume generates but no file | The Word macro must fill the bookmarks from the `[Section]:` labels and finish with `Application.Quit`. |
-| Bid hangs after the resume is written | The reply finished but the extension never sent it. Reload the ChatGPT tab (a tab opened before the extension was loaded has no content script), then check `isStreaming()` in `extension/content.js` against the live composer. |
-| ChatGPT automation stalls | ChatGPT changed its DOM — the injection/completion selectors in `extension/content.js` need updating. |
+| ChatGPT automation stalls | ChatGPT changed its DOM — the send-button and stop-button selectors in `Views/ResumeStudioView.xaml.cs` need updating against the live composer. |
 
 ---
 

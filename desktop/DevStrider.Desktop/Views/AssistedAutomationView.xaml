@@ -4,13 +4,15 @@
   <DockPanel>
     <StackPanel DockPanel.Dock="Top">
       <TextBlock Text="Job Operations" Style="{StaticResource H1}"/>
-      <TextBlock Text="Assisted automation: ChatGPT reviews the Gmail/Calendar connections you authorized; you paste its structured proposals here and explicitly choose what DevStrider applies." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,12"/>
+      <TextBlock Text="Ask signed-in ChatGPT to review the Gmail/Calendar connections you authorized. DevStrider validates the returned proposals; every local change still requires your selection." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,12"/>
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Command="{Binding CopyReviewPromptCommand}" Content="Copy ChatGPT review prompt" Margin="0,0,8,0"/>
+          <WrapPanel Margin="0,0,0,8">
+            <Button Command="{Binding CopyInboxPromptCommand}" Content="Check inbox" Margin="0,0,8,8"/>
+            <Button Command="{Binding CopyCalendarPromptCommand}" Content="Check calendar" Margin="0,0,8,8"/>
+            <Button Command="{Binding CopyFullReviewPromptCommand}" Content="Review both" Margin="0,0,8,8"/>
             <Button Command="{Binding ReviewCommand}" Content="Review pasted proposals" Style="{StaticResource GhostButton}"/>
-          </StackPanel>
+          </WrapPanel>
           <TextBox Text="{Binding ProposalJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="150" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" Tag="Paste the JSON answer from ChatGPT here"/>
           <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
         </StackPanel>
@@ -28,8 +30,10 @@
         <DataGridTextColumn Header="Action" Binding="{Binding Type}" Width="150"/>
         <DataGridTextColumn Header="Company" Binding="{Binding Company}" Width="*"/>
         <DataGridTextColumn Header="Role" Binding="{Binding Role}" Width="*"/>
+        <DataGridTextColumn Header="New status" Binding="{Binding DesiredStatus}" Width="105"/>
         <DataGridTextColumn Header="Match" Binding="{Binding MatchMessage}" Width="190"/>
         <DataGridTextColumn Header="Evidence" Binding="{Binding Evidence}" Width="2*"/>
+        <DataGridTextColumn Header="Suggestion" Binding="{Binding Suggestion}" Width="2*"/>
       </DataGrid.Columns>
     </DataGrid>
     <Button DockPanel.Dock="Bottom" Command="{Binding ApplySelectedCommand}" Content="Apply selected actions" HorizontalAlignment="Left"/>

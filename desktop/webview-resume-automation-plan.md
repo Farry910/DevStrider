@@ -1,255 +1,213 @@
-# DevStrider WebView and Assisted Automation
+# DevStrider ChatGPT UI Automation
 
 Updated: 2026-08-21
 
-## Decision
+## Product decision
 
-This release uses the signed-in ChatGPT website inside WebView2. It does not call an
-OpenAI model endpoint and does not require an OpenAI API key. A user signs in to ChatGPT
-in the embedded browser and uses the features available to that account.
+DevStrider uses two persistent WebView2 workspaces: one for signed-in ChatGPT and one for signed-in
+job sites. It does not call an OpenAI API and does not request an API key. Model and reasoning-effort
+selection remain in the ChatGPT UI because those controls belong to the user's ChatGPT plan.
 
-DevStrider does not automate or scrape ChatGPT's private page structure. Prompt and result
-transfer is intentionally user-driven through copy and paste. This is called **assisted
-automation**: the app prepares context, validates structured results, and performs explicit
-local actions after user review.
+This is intentionally **assisted automation**. DevStrider can navigate, extract, prompt, generate,
+fill, and upload after the user approves the queue. It always stops before a job site's final Submit
+action. Missing JDs, sign-in/MFA/bot interstitials, protected questions, uncertain selectors, and
+changed site markup are visible recovery points rather than reasons to guess.
 
-Model and reasoning-effort selection remain in ChatGPT's own UI. DevStrider cannot reliably
-select or guarantee those options without a supported application interface.
+## Implemented user experience
 
-## Current implementation status
+### One unified application queue
 
-| Area | Status | Current behavior |
-|---|---|---|
-| Embedded ChatGPT | Implemented | Persistent WebView2 profile with the user's signed-in ChatGPT session. |
-| Reusable resume sessions | Implemented | One profile prompt is copied once, followed by several JDs in the same conversation. Default limit is 5; per-profile range is 1-10. |
-| One-click bid handoff | Implemented, assisted | Start bid extracts the current JD, prepares the ChatGPT prompt, switches to Resume Studio, and focuses ChatGPT. |
-| Automatic ChatGPT bid flow | Implemented, opt-in | The embedded ChatGPT page receives the prompt, sends it, waits for a new reply, saves the draft, and runs Word; job-site submission remains manual. |
-| Resume result handling | Implemented, assisted | User pastes ChatGPT's complete response into Resume Studio; DevStrider saves a draft and parses existing fast-feed metadata when present. |
-| Word resume generation | Implemented | User can run the Word macro explicitly, or enable the per-profile automatic macro toggle after a draft is saved. |
-| Job browser | Implemented | Separate persistent WebView2 profile for signed-in job sites, visible-text extraction, and URL-based adapter selection. |
-| Application-link queue | Implemented | Per-profile local queue accepts pasted job URLs and opens one active application at a time. |
-| Default form adapter | Initial implementation | Best-effort matching by labels, accessible names, names, IDs, and placeholders. It intentionally skips uncertain and protected fields. |
-| Greenhouse adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
-| Ashby adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
-| Lever adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
-| ApplyToJob adapter | Initial implementation | Host detection and selectors for core candidate fields, with generic matching for reviewed custom answers. |
-| Resume file upload | Implemented, explicit | User chooses a local PDF/Word file and clicks Upload. DevStrider targets the most likely resume file input through WebView2's browser protocol. |
-| Gmail/Calendar workflow | Implemented, assisted | ChatGPT reviews the connections authorized in its UI; the user pastes structured proposals into DevStrider. |
-| Proposal application | Implemented | Required evidence and exact company + role matching; selected actions can reject a bid or create an interview. |
-| Application submission | Not implemented | DevStrider never clicks Submit or advances the application. |
-| Live-site adapter certification | Not completed | The code compiles, but every supported site still needs fixture and signed-in live-form verification. |
-| Durable automation audit | Not completed | Relevant actions appear in the in-memory Activity feed; there is no immutable database audit table yet. |
-| Dependency hygiene | Requires follow-up | The build reports known vulnerabilities in transitive `SharpCompress` and `Snappier` packages, plus older graphics-package compatibility warnings. |
+1. Paste one or many HTTP(S) job URLs in Application Queue.
+2. DevStrider parses, normalizes, de-duplicates, and persists them for the active profile.
+3. Choose **Approve & start automatic flow** once.
+4. For each URL, DevStrider:
+   - opens the job page;
+   - detects Generic, Greenhouse, Ashby, Lever, ApplyToJob, or Teamtailor (including custom-domain career sites);
+   - extracts visible JD text and unanswered, non-protected form questions;
+   - opens an unambiguous Apply/Apply now/Start application control when the form is not already visible;
+   - sends the JD to the persistent ChatGPT resume conversation;
+   - asks ChatGPT for safe unanswered fields in a separate conversation when needed;
+   - captures the resume as a local draft and runs the configured Word macro;
+   - fills deterministic profile values, reusable answers, and ChatGPT answers;
+   - uploads the generated PDF/DOC/DOCX when the configured output path resolves; and
+   - pauses at **Ready for review**.
+5. The user reviews every field and the resume, clicks Submit on the actual job site, then chooses
+   **Mark submitted & next**. Only then does the local bid move from `draft` to `applied` and the
+   next queued URL starts.
 
-“Initial implementation” is deliberate wording. Job sites change markup and frequently use
-custom controls, frames, and multi-step forms. The adapters are useful starting points, not a
-claim that every form variant is covered.
+The URL input and ordinary action controls are unavailable while the automatic portion is active.
+Manual and recovery tools remain available when automation is stopped or reaches a checkpoint.
 
-## Implemented workflow
+### JD fallback uses the same pipeline
+
+Some sites render the description in inaccessible frames or do not keep it on the application page.
+When no usable JD is extracted, the work item enters `Needs JD` and a contextual paste box appears.
+Pasting the JD and choosing **Continue automatic flow** resumes at resume generation; there is no
+second workflow or duplicate permanent JD input.
+
+### Recruiter-provided JD
+
+Resume Studio contains only the recruiter case: an optional company/role label and a pasted JD.
+Choosing **Generate resume** uses the same ChatGPT and Word engine but does not navigate a job page,
+fill a form, upload a file, or create an application bid. The result path is reported when the Word
+output convention is configured.
+
+There is no permanent Job URL, duplicate generated-reply box, or Open ChatGPT button in Resume
+Studio. ChatGPT is always loaded on the right. Raw prompt/reply controls appear only in Manual
+recovery because the conversation itself is the canonical visible transcript.
+
+## ChatGPT conversation rotation
+
+A “resume session” means one fresh ChatGPT conversation, not one desktop session or one resume.
 
 ```text
-Profile prompt ──copy once──> signed-in ChatGPT conversation
-     JD 1..N ─────copy───────> same conversation
-ChatGPT reply ───paste───────> basic check/save draft ──> optional Word macro
-
-Job page ──extract──> reviewed questions ──copy──> ChatGPT
-ChatGPT JSON ──paste──> current answers ──review──> site adapter fills fields
-Chosen resume file ──explicit upload──────────────> detected resume input
-
-Job links from another app ──paste──> per-profile queue ──open next──> Job Browser
-
-Gmail/Calendar in ChatGPT ──JSON proposals──> exact bid match ──user selection──> update
+fresh conversation: whole profile resume prompt + JD 1
+same conversation:  JD 2
+same conversation:  JD 3
+...
+same conversation:  JD N
+rotate automatically: whole profile resume prompt + next JD
 ```
 
-The ChatGPT and job-site WebViews use separate local WebView2 data folders. This keeps each
-browser session persistent without placing ChatGPT credentials in DevStrider settings.
+The default is 10 successful resumes per conversation. **Settings > Resume automation > Maximum
+resumes per ChatGPT conversation** accepts 1–50. The count increments only after ChatGPT returns a
+resume and Word succeeds. Profile changes reset the in-memory conversation counter. The app starts
+a fresh conversation automatically at the limit; Manual recovery also offers an explicit reset.
 
-## Resume Studio
+This reduces repeated profile-prompt input while bounding the risk that a long conversation drifts
+or damages the requested format. DevStrider does not claim exact token savings because the ChatGPT
+website does not expose reliable request-token accounting to this workflow.
 
-### One-click bid handoff
+## Form adapters
 
-1. In Job Browser, **Start bid** extracts the visible JD and opens Resume Studio.
-2. For the first job, DevStrider copies the profile prompt plus JD together; later jobs copy
-   only the new JD into the same ChatGPT conversation.
-3. The user pastes that clipboard content into ChatGPT and copies ChatGPT's completed reply.
-4. **Finish from clipboard** saves the draft directly from that copied reply and runs Word
-   automatically when the macro toggle is enabled.
+`JobSiteFormAdapters` contains host-specific core selectors for:
 
-This removes the extra manual transfer between Job Browser and Resume Studio. The ChatGPT paste
-and copy actions can be automated by enabling **Automate ChatGPT bid flow and finish Word
-resume**. This mode uses visible-page selectors and reports a clear failure if ChatGPT is signed
-out or its page layout changes. Job-site submission remains manual.
+- Greenhouse
+- Ashby
+- Lever
+- ApplyToJob
+- Teamtailor, including career sites hosted on a custom company domain
+- Default/generic fallback for every other host
 
-1. The active profile supplies the whole resume prompt.
-2. **Start session** copies that prompt and resets the saved-resume counter.
-3. The user pastes it into one ChatGPT conversation.
-4. For each job, **Copy JD for ChatGPT** copies the new description.
-5. The user pastes the response into Resume Studio and reviews it.
-6. **Save draft** records the content with bid status `Draft`.
-7. The Word macro runs only when the user clicks it or enables **Automatically generate
-   Word resume after validation**. At present, that validation is limited to non-empty resume
-   content; structural validation is listed below as remaining work.
+All adapters then use the guarded generic matcher for remaining fields. Matching considers visible
+labels, accessible names, names, IDs, placeholders, and nearby legends. The value priority is:
 
-The session limit counts saved drafts, not messages sent to ChatGPT. When the limit is
-reached, Resume Studio blocks another JD/save until the user starts a new session. A profile
-change also resets the session. The app does not calculate token use because the ChatGPT UI
-does not expose reliable request token accounting to this workflow.
+1. active profile identity;
+2. saved reusable answers;
+3. answers generated for the current form.
 
-## Job Browser and adapters
+Adapters dispatch `input`, `change`, and `blur` so controlled forms see changes. They skip hidden,
+disabled, read-only, pre-filled, and file inputs during normal fill. They do not answer or change
+legal/consent/signature, demographic, disability, veteran, salary/compensation, work-authorization,
+sponsorship, or visa fields. Radio and checkbox changes require an explicit matching answer.
 
-### Application-link queue
+File upload uses WebView2's browser protocol because page JavaScript cannot assign a local file.
+It inspects flattened DOM nodes, prefers resume/CV inputs, rejects likely cover-letter/photo inputs,
+assigns only PDF/DOC/DOCX, and dispatches file-input notifications. If no suitable input or generated
+file exists, the review checkpoint asks for manual attention. No adapter clicks Submit, Next,
+Continue, CAPTCHA, MFA, or legal declarations. A narrowly matched Apply/Apply now/Start application
+control may be opened so the form itself becomes available.
 
-DevStrider does not need to search job boards. Paste one or more HTTP(S) job links from the
-separate job-gathering app, one per line, and save them to the active profile's local queue.
-**Open next** starts or returns to the one in-progress link; after the user has finished their
-manual application review, **Mark completed** or **Skip** records the result and unlocks the
-next queued link. Queue items survive restart and do not mark a bid as submitted by themselves.
+Live job sites change frequently. “Implemented” means the engine and current selector contracts are
+present; it is not a guarantee that every provider variant or iframe works forever. Failures keep
+the item recoverable and are recorded in Activity.
 
-### Value priority
+## Persistent state and recovery
 
-The fill payload is assembled in this order, with later values overriding earlier ones:
+Each queued item persists:
 
-1. Active profile: full/first/last name, personal email, phone, location, LinkedIn URL,
-   and headline.
-2. Per-profile saved answers for repetitive questions.
-3. Current application answers pasted from ChatGPT as JSON.
+- URL, intent, timestamps, and detailed pipeline status;
+- extracted JD and form questions;
+- current answers and generated resume path;
+- adapter, local bid ID, last error, and attempt count.
 
-The accepted answer format is either a direct JSON object or:
+Statuses distinguish loading, extraction, missing JD, ChatGPT generation, document creation, form
+fill, human review, submitted, failed, and skipped. Old `In progress`/`Completed` queue values migrate
+to `Queued`/`Submitted` when loaded.
 
-```json
-{
-  "answers": {
-    "exact question text": "reviewed answer"
-  }
-}
-```
+The two WebView controls are created once by the main window and hidden rather than recreated when
+tabs change. ChatGPT and job sites use separate WebView2 data folders, preserving their own signed-in
+state and avoiding the “initialized with a different CoreWebView2Environment” failure caused by
+initializing the same control twice with conflicting environments.
 
-### Fill behavior
+Manual recovery includes fresh ChatGPT conversation, prepared-prompt copy, reply-from-clipboard,
+Word retry, visible page/JD extraction, question extraction, field fill, resume selection/upload,
+and queue retry/skip.
 
-- Detect the adapter from the current URL.
-- Try site-specific selectors for core candidate fields first.
-- Use normalized visible labels and accessible attributes for remaining reviewed answers.
-- Dispatch `input`, `change`, and `blur` events so controlled form code sees updates.
-- Skip hidden, disabled, read-only, pre-filled, and file controls during normal field fill.
-- Skip declarations involving agreements, attestation, certification, consent, privacy,
-  signatures, terms, or truthfulness.
-- Do not click Submit, Continue, Next, or CAPTCHA controls.
-- Record successful fills and failures in Activity.
+A failure no longer ends the batch. The failing link is recorded with its error and attempt count,
+and the automatic flow continues to the next link, so one bad page cannot strand the rest of the run.
+Three failures in a row still stop the queue, because a streak usually means the network, the machine,
+or the profile is at fault rather than any single link. Collected failures appear in a Failed links
+card offering three actions: requeue them all (attempt counts are kept, so a link that keeps failing
+stays identifiable), copy them out with their errors, or remove them from the queue.
 
-Checkboxes and radio buttons are changed only when the reviewed answer has an explicit
-boolean or matching option value. Users must review every populated form before submission.
+## Resume output settings
 
-### Resume upload
+Automatic upload needs the same output convention as the Word macro:
 
-File upload is a separate explicit action because browsers do not allow normal page
-JavaScript to assign a local path. The user chooses the exact file in a native file picker,
-then clicks **Upload selected resume**. DevStrider uses the WebView2 browser protocol to:
+- `ResumeOutputRoot`: parent directory containing the generated fast-feed folder;
+- `ResumeOutputFileBase`: filename without extension, default `Resume`.
 
-1. inspect file inputs, including flattened frame/shadow-DOM nodes where available;
-2. prefer controls described as `resume` or `CV` and avoid likely cover-letter controls;
-3. assign only the file the user selected; and
-4. dispatch input/change notifications for the page.
+DevStrider looks for `<root>\<fast-feed folder>\<base>.pdf`, then `.docx`, then `.doc`. If no path
+is configured or no file exists, Word generation can still succeed; upload becomes a manual review
+item.
 
-If no likely input is found, the app fails closed and asks for manual upload. Custom upload
-widgets and cross-origin frame variations still require live-site testing.
+## Job Operations assisted automation
 
-## Gmail and Calendar assisted automation
+Job Operations provides scoped prompts for **Check inbox**, **Check calendar**, or **Review both**.
+The user runs the copied prompt in signed-in ChatGPT, where Gmail/Calendar access depends on the
+connections and capabilities the user enabled. ChatGPT returns structured proposals; DevStrider
+does not receive Gmail or Calendar credentials.
 
-1. The user authorizes Gmail and Calendar in their ChatGPT account.
-2. DevStrider copies a constrained review prompt.
-3. The user runs it in ChatGPT and pastes the returned JSON into Job Operations.
-4. DevStrider requires source evidence, accepts only supported actions and interview types,
-   and exact-matches one bid by company + role.
-5. Unmatched or ambiguous items cannot be applied.
-6. The user selects proposals and applies them explicitly.
+DevStrider requires concise source evidence and exact company + role matching. The user reviews and
+selects every local data change. Supported local actions are:
 
-Currently supported actions:
+- `update_bid_status`: screening, phone screening, interview, offer, or rejected;
+- `mark_bid_rejected`: compatibility shortcut;
+- `create_interview`: validated interview type, schedule, link, and evidence;
+- `update_interview_status`: scheduled, completed, passed, failed, or cancelled.
 
-- `mark_bid_rejected`
-- `create_interview`
+`draft_reply` and `calendar_conflict` are displayed as review-only suggestions. This build does not
+send email, create/change external calendar events, poll in the background, or silently apply a
+proposal. Official OpenAI examples describe ChatGPT using connected Gmail to search/triage mail and
+prepare drafts; actual availability remains account/workspace dependent:
+https://learn.chatgpt.com/use-cases/manage-your-inbox
 
-An interview stores the supplied evidence in its user comment. Outbound email, automatic
-calendar booking, background inbox polling, and automatic proposal application are not
-implemented in the UI-only workflow.
+## Safety and correctness boundaries
 
-## Safety boundaries
-
-- No OpenAI API key is requested or stored.
-- ChatGPT login state remains in WebView2's local browser profile.
-- Generated and ChatGPT-assisted content is untrusted until reviewed.
-- Legal declarations and final submission always remain manual.
-- Resume upload requires a file chosen by the user and a separate upload click.
-- Current-answer JSON affects only the current form unless the user explicitly saves it.
-- Site markup failure must skip fields rather than guess.
+- No OpenAI API key or ChatGPT password is stored by DevStrider.
+- ChatGPT UI automation is best-effort and can break when the website DOM changes.
+- Generated content and proposed operational changes are untrusted until reviewed.
+- Exact bid/interview matching and explicit selection are required for local Job Operations writes.
+- Final job submission is always a direct human action on the job site.
+- CAPTCHA, MFA, login, protected fields, and ambiguous controls always remain human work.
+- Only a *rendered* challenge counts as a CAPTCHA. Greenhouse and Ashby load score-based reCAPTCHA on
+  every application, which renders a hidden `grecaptcha-badge` and an invisible anchor frame that no
+  human ever touches; treating those as a challenge would gate every application on both providers.
+  A real challenge is an advisory on the review checkpoint, not a blocker: the engine never submits,
+  so the challenge is the user's to solve at submit time and filling can finish first.
+- Existing saved form values are never overwritten by one-time ChatGPT answers unless the user
+  explicitly saves them as reusable answers.
 
 ## Implementation map
 
-| Concern | Main code |
+| Concern | Code |
 |---|---|
-| Resume session and macro toggle | `ViewModels/ResumeStudioViewModel.cs`, `Views/ResumeStudioView.xaml` |
-| ChatGPT WebView | `Views/ResumeStudioView.xaml.cs` |
-| Assisted proposals | `ViewModels/AssistedAutomationViewModel.cs`, `Views/AssistedAutomationView.xaml` |
-| Job form values | `ViewModels/JobBrowserViewModel.cs` |
-| Adapter scripts | `Services/JobSiteFormAdapters.cs` |
-| Job WebView, fill, and upload | `Views/JobBrowserView.xaml.cs`, `Views/JobBrowserView.xaml` |
-| Per-profile preferences | `Models/AppSettings.cs` |
-| Word output | `Services/WordMacroService.cs` |
+| Unified queue and state machine | `Models/AppSettings.cs`, `ViewModels/JobBrowserViewModel.cs` |
+| Job WebView orchestration and upload | `Views/JobBrowserView.xaml`, `Views/JobBrowserView.xaml.cs` |
+| Site-aware field mapping | `Services/JobSiteFormAdapters.cs` |
+| Resume conversation rotation and Word handoff | `ViewModels/ResumeStudioViewModel.cs` |
+| Persistent ChatGPT automation | `Views/ResumeStudioView.xaml`, `Views/ResumeStudioView.xaml.cs` |
+| Cross-workspace coordination | `ViewModels/MainWindowViewModel.cs`, `Views/MainWindow.xaml` |
+| Job Operations proposals | `ViewModels/AssistedAutomationViewModel.cs`, `Views/AssistedAutomationView.xaml` |
+| Limits and Word output convention | `Models/AppSettings.cs`, `ViewModels/SettingsViewModel.cs`, `Views/SettingsView.xaml` |
 
-## Remaining implementation plan
+## Verification status
 
-### P0: dependency security
-
-1. Identify the direct packages that introduce `SharpCompress` and `Snappier`.
-2. Upgrade through supported direct-package versions and run database/import regression tests.
-3. Re-run the vulnerable-package report and do not suppress the warnings without remediation.
-
-### P0: verify adapters before calling them production-ready
-
-1. Save sanitized HTML fixtures for each supported provider and major form variant.
-2. Add tests for URL detection, selector fallback, protected-field skipping, select/radio/
-   checkbox handling, and missing controls.
-3. Test core fill and resume upload on signed-in live forms without submitting them.
-4. Record the tested host, form variant, date, and observed limitations.
-
-### P1: improve form coverage
-
-1. Move each provider into a separate adapter class with a version and selector contract.
-2. Handle provider-specific React select/autocomplete components and multi-step forms.
-3. Show a pre-fill preview mapping each answer to its target field and confidence.
-4. Let the user deselect individual fields before fill.
-5. Detect page changes and warn when a previously healthy selector contract stops matching.
-
-### P1: strengthen result validation
-
-1. Replace trailing free-text metadata with a versioned structured resume envelope.
-2. Validate required resume sections before saving or running Word.
-3. Show field-level validation errors and retain the pasted draft on failure.
-4. Distinguish generated, validated, Word-created, and submitted states explicitly.
-
-### P1: durable audit and recovery
-
-1. Add an append-only database audit table for assisted proposals, matching decisions,
-   field-fill summaries, uploads, macro runs, and applied actions.
-2. Store source evidence metadata without storing full email bodies by default.
-3. Add idempotency keys so retrying an action cannot duplicate an interview.
-4. Add undo where the underlying operation is safely reversible.
-
-### P2: broader communication actions
-
-Add more reviewed actions only after schemas and confirmation UI exist, for example bid
-stage changes, interview rescheduling, and reply drafts. Keep sending messages and booking
-or changing external events behind explicit user confirmation in this architecture.
-
-## Acceptance criteria for the current release
-
-- The desktop project builds successfully.
-- A ChatGPT sign-in persists across Resume Studio navigation and app restarts.
-- A job-site sign-in persists in the Job Browser profile.
-- Session limit and automatic Word-macro preference persist per profile.
-- Saving a resume creates/updates a draft and never marks it submitted.
-- Current ChatGPT answers override saved answers without overwriting them.
-- Protected/legal fields and submit controls remain unchanged.
-- Upload uses only the explicitly selected file and reports when no suitable input exists.
-- Assisted actions cannot apply without one exact bid match and explicit selection.
-- Greenhouse, Ashby, Lever, ApplyToJob, and generic fixtures pass before a production-ready
-  adapter claim is made.
+- Desktop project: builds successfully on .NET 10 Windows.
+- Static adapter contracts: implemented for the five requested adapter choices plus Teamtailor custom-domain detection.
+- Signed-in live forms and current ChatGPT DOM: require end-to-end verification by the user because
+  they depend on private accounts, provider-specific forms, and changing third-party markup.
+- Build warnings still identify vulnerable transitive `SharpCompress` and `Snappier` versions plus
+  older graphics-package compatibility warnings; dependency remediation is separate from this
+  workflow implementation.

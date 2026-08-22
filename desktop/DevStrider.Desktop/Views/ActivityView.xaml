@@ -30,7 +30,7 @@
       </Grid.ColumnDefinitions>
       <TextBlock Grid.Column="0" Text="Activity" Style="{StaticResource H1}" VerticalAlignment="Center"/>
       <TextBlock Grid.Column="1"
-                 Text="Every extension request, sign-in, and listener event the app handles."
+                 Text="Application automation, sign-in, Word, adapter, and data events."
                  Foreground="{StaticResource Muted}"
                  VerticalAlignment="Center"
                  Margin="16,0,0,0"/>

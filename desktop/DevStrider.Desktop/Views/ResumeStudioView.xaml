@@ -4,7 +4,7 @@
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf">
   <Grid>
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="430"/>
+      <ColumnDefinition Width="390"/>
       <ColumnDefinition Width="12"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
@@ -12,44 +12,49 @@
     <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
       <StackPanel>
         <TextBlock Text="Resume Studio" Style="{StaticResource H1}"/>
-        <TextBlock Text="Use one signed-in ChatGPT conversation: paste the profile prompt once, then paste each job description into that same conversation." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,12"/>
+        <TextBlock Text="Generate a resume directly from a recruiter-provided job description. Queued job applications use this same engine automatically."
+                   Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,12"/>
+
         <Border Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Text="{Binding ActiveProfileName}" FontWeight="SemiBold"/>
-            <TextBlock Text="{Binding SessionProgress}" Style="{StaticResource MutedText}" Margin="0,4,0,8"/>
-            <StackPanel Orientation="Horizontal">
-              <Button Command="{Binding StartSessionCommand}" Content="Start session" Margin="0,0,8,0"/>
-              <Button Command="{Binding EndSessionCommand}" Content="End session" Style="{StaticResource GhostButton}"/>
-            </StackPanel>
-            <TextBlock Text="Resumes per session" Margin="0,12,0,2"/>
-            <TextBox Text="{Binding GenerationLimit, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
-            <CheckBox Content="Automate ChatGPT bid flow and finish Word resume" IsChecked="{Binding AutomaticallySubmitChatGptPrompt, Mode=TwoWay}" Margin="0,10,0,0"/>
-            <CheckBox Content="Automatically generate Word resume after validation" IsChecked="{Binding AutomaticallyRunWordMacro, Mode=TwoWay}" Margin="0,10,0,0"/>
-            <TextBlock Text="This sends ChatGPT prompts and finishes the Word resume. It never submits a job application." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="22,2,0,0"/>
+            <TextBlock Text="{Binding ResumeChatProgress}" Style="{StaticResource MutedText}" Margin="0,4,0,0"/>
           </StackPanel>
         </Border>
+
         <Border Style="{StaticResource Card}">
           <StackPanel>
-            <TextBlock Text="Job" FontWeight="SemiBold"/>
-            <TextBlock Text="Job URL (optional)" Margin="0,8,0,2"/>
-            <TextBox Text="{Binding JobUrl, UpdateSourceTrigger=PropertyChanged}" Tag="https://…"/>
+            <TextBlock Text="Recruiter resume request" FontWeight="SemiBold"/>
+            <TextBlock Text="Optional label" Margin="0,8,0,2"/>
+            <TextBox Text="{Binding RecruiterLabel, UpdateSourceTrigger=PropertyChanged}"
+                     IsReadOnly="{Binding InputsReadOnly}" Tag="Company or role"/>
             <TextBlock Text="Job description" Margin="0,10,0,2"/>
-            <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="150" VerticalScrollBarVisibility="Auto"/>
-            <Button Command="{Binding CopyJobDescriptionCommand}" Content="Copy JD for ChatGPT" Margin="0,8,0,0"/>
+            <TextBox Text="{Binding RecruiterJobDescription, UpdateSourceTrigger=PropertyChanged}"
+                     IsReadOnly="{Binding InputsReadOnly}"
+                     AcceptsReturn="True" TextWrapping="Wrap" Height="260"
+                     VerticalScrollBarVisibility="Auto"/>
+            <Button Command="{Binding GenerateRecruiterResumeCommand}"
+                    Content="Generate resume"
+                    IsEnabled="{Binding IsAutomationRunning, Converter={StaticResource InverseBoolean}}"
+                    HorizontalAlignment="Left" Margin="0,10,0,0"/>
           </StackPanel>
         </Border>
-        <Border Style="{StaticResource Card}">
-          <StackPanel>
-            <TextBlock Text="ChatGPT reply" FontWeight="SemiBold"/>
-            <TextBlock Text="Copy the complete answer from ChatGPT, then use Finish from clipboard. The trailing fast-feed metadata remains supported." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
-            <TextBox Text="{Binding GeneratedResume, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" Height="220" VerticalScrollBarVisibility="Auto" FontFamily="Consolas"/>
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-              <Button Command="{Binding SaveDraftCommand}" Content="Save draft" Margin="0,0,8,0"/>
-              <Button Command="{Binding FinishFromClipboardCommand}" Content="Finish from clipboard" Margin="0,0,8,0" Style="{StaticResource GhostButton}"/>
-              <Button Command="{Binding RunWordMacroCommand}" Content="Generate Word resume" Style="{StaticResource GhostButton}"/>
+
+        <Expander Header="Manual recovery" IsExpanded="{Binding ShowManualRecovery}" Margin="0,0,0,10">
+          <Border Style="{StaticResource Card}" Margin="0,8,0,0">
+            <StackPanel>
+              <TextBlock Text="Use these controls if ChatGPT UI automation or Word generation needs manual help."
+                         Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+              <WrapPanel>
+                <Button Command="{Binding StartFreshChatCommand}" Content="Start fresh chat" Margin="0,0,8,8" Style="{StaticResource GhostButton}"/>
+                <Button Command="{Binding CopyPreparedPromptCommand}" Content="Copy prepared prompt" Margin="0,0,8,8" Style="{StaticResource GhostButton}"/>
+                <Button Command="{Binding FinishFromClipboardCommand}" Content="Use reply from clipboard" Margin="0,0,8,8" Style="{StaticResource GhostButton}"/>
+                <Button Command="{Binding RetryWordMacroCommand}" Content="Retry Word" Margin="0,0,8,8" Style="{StaticResource GhostButton}"/>
+              </WrapPanel>
             </StackPanel>
-          </StackPanel>
-        </Border>
+          </Border>
+        </Expander>
+
         <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
       </StackPanel>
     </ScrollViewer>
@@ -59,8 +64,7 @@
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <DockPanel Margin="12,10">
-          <Button DockPanel.Dock="Right" Click="OnOpenChatGpt" Content="Open ChatGPT" Style="{StaticResource GhostButton}"/>
-          <TextBlock Text="ChatGPT" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <TextBlock Text="ChatGPT - always loaded" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </DockPanel>
         <wv2:WebView2 x:Name="ChatGptBrowser" Grid.Row="1"/>
       </Grid>

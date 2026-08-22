@@ -26,10 +26,9 @@ public class AboutViewModel : ViewModelBase
         "v" + (typeof(AboutViewModel).Assembly.GetName().Version?.ToString(3) ?? "?");
 
     public string Summary =>
-        "Job-bid tracker for the team. The Chrome extension records bids to the local HTTP " +
-        "listener, which writes them straight to the company portal's PostgreSQL database — " +
-        "the same one you sign in against. There is no local copy and no sync: a teammate's " +
-        "bid is visible the moment they save it.";
+        "Job-application workspace for the team. Persistent ChatGPT and job-site browsers " +
+        "generate tailored resumes, fill reviewed application values, and write directly to " +
+        "the company portal's PostgreSQL database. There is no local data copy or sync.";
 
     public string DataLocation =>
         "PostgreSQL (shared with the company portal) · configured in Settings";

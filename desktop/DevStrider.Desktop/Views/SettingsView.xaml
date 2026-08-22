@@ -42,6 +42,25 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
+          <TextBlock Text="Resume automation" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="A resume chat is one fresh ChatGPT conversation. DevStrider starts another conversation after this many successful resume generations to protect formatting quality."/>
+          <TextBlock Text="Resumes per ChatGPT conversation"/>
+          <TextBox Text="{Binding Model.ResumeGenerationsPerChat, UpdateSourceTrigger=PropertyChanged}"
+                   Width="80" HorizontalAlignment="Left" Margin="0,2,0,8" Tag="10"/>
+          <TextBlock Text="Word macro output root"/>
+          <TextBox Text="{Binding Model.ResumeOutputRoot, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8" Tag="Must match OUTPUT_ROOT in the Word macro"/>
+          <TextBlock Text="Generated resume file base"/>
+          <TextBox Text="{Binding Model.ResumeOutputFileBase, UpdateSourceTrigger=PropertyChanged}"
+                   Width="220" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="Resume"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="Automatic upload looks for &lt;output root&gt;\&lt;FolderName&gt;\&lt;file base&gt;.pdf, then .docx. Leave the output root empty to select the generated file manually at review time."/>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
           <TextBlock Text="Shared database (PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
                      Text="The company portal's database — where your account is read from and where every bid and interview is stored. There is no local copy. DevStrider creates no tables: run desktop/shared-db-schema.sql against it once, by hand. Everything in these tables is visible to everyone on the team, job URLs, job descriptions, resume text and comments included."/>
@@ -186,9 +205,9 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Bid-Assistant integration (local HTTP listener)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="Optional local HTTP integration" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
-                     Text="DevStrider listens on http://127.0.0.1:&lt;port&gt; for POSTs from the Bid-Assistant Chrome extension. Loopback-only — no authentication. Point the extension at this URL and bids you record from ChatGPT land directly in the local Mongo."/>
+                     Text="DevStrider can accept compatible local-tool POSTs on http://127.0.0.1:&lt;port&gt;. It binds only to loopback and is not used by the embedded Application Queue workflow."/>
 
           <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
             <Border Width="10" Height="10" CornerRadius="5" VerticalAlignment="Center" Margin="0,0,8,0">
@@ -221,7 +240,7 @@
           </StackPanel>
 
           <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" TextWrapping="Wrap"
-                     Text="Extension contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …' — same as the resume-filename convention."/>
+                     Text="Local contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …'."/>
         </StackPanel>
       </Border>
 

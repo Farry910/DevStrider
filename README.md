@@ -1,4 +1,4 @@
-# DevStrider 8.3
+# DevStrider 9.1
 
 A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
 company portal's PostgreSQL database.
@@ -13,12 +13,11 @@ Chrome extension  ──http://127.0.0.1:8765──▶  DevStrider.exe (WPF)  �
    (Bid Assistant)         loopback only          Word via COM             (the portal's)
 ```
 
-Three moving parts and no server of DevStrider's own:
+Two moving parts and no server of DevStrider's own:
 
 | | |
 |---|---|
 | `desktop/` | The app. WPF on .NET 10. Owns every database write and the Word automation. |
-| `extension/` | Manifest V3 Chrome extension. Talks only to the desktop app over loopback. |
 | `desktop/shared-db-schema.sql` | The four `ds_*` tables. Run by hand, once, for the whole team. |
 
 **There is no web app, no API server, and no local database.** Every machine reads and writes the
@@ -99,8 +98,8 @@ The built executable is `desktop\DevStrider.Desktop\bin\Debug\net10.0-windows\De
 5. **Set up the profile.** Profiles tab: point it at that person's `.docm`, leave the macro name
    blank to use `UpdateResumeAndSwitchOriginal`, and press *Insert default* for a resume prompt
    that emits every marker the macro expects.
-6. **Load the extension.** `chrome://extensions` → Developer mode → Load unpacked → pick
-   `extension/`. Keep one logged-in ChatGPT tab open in the background.
+6. **Sign in to ChatGPT** once in the app's own Resume Studio browser. It keeps its own WebView2
+   profile, so that session persists across restarts.
 
 ### Sign-in
 
@@ -226,5 +225,5 @@ so every machine holding this file can wipe the bucket. Treat the file according
 
 ## Version
 
-**8.3.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**9.1.2** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

@@ -1,3 +1,5 @@
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
@@ -6,9 +8,8 @@ using DevStrider.Desktop.Services;
 namespace DevStrider.Desktop.ViewModels;
 
 /// <summary>
-/// User-driven ChatGPT workflow. The app keeps one embedded ChatGPT conversation available so
-/// the user can paste the profile prompt once, then paste several JDs into that same conversation.
-/// It intentionally does not scrape or drive ChatGPT's private DOM.
+/// One persistent ChatGPT resume engine. A resume chat is one ChatGPT conversation and is
+/// automatically rotated after the configured number of successful resume generations.
 /// </summary>
 public sealed partial class ResumeStudioViewModel : ViewModelBase
 {
@@ -18,71 +19,89 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private readonly WordMacroService _word;
     private readonly ActivityLogService _activity;
 
-    private string _jobUrl = "";
-    public string JobUrl { get => _jobUrl; set => SetProperty(ref _jobUrl, value); }
+    private string _recruiterJobDescription = "";
+    public string RecruiterJobDescription
+    {
+        get => _recruiterJobDescription;
+        set => SetProperty(ref _recruiterJobDescription, value);
+    }
 
-    private string _jobDescription = "";
-    public string JobDescription { get => _jobDescription; set => SetProperty(ref _jobDescription, value); }
+    private string _recruiterLabel = "";
+    public string RecruiterLabel { get => _recruiterLabel; set => SetProperty(ref _recruiterLabel, value); }
 
     private string _generatedResume = "";
     public string GeneratedResume { get => _generatedResume; set => SetProperty(ref _generatedResume, value); }
 
-    private int _generationLimit = 5;
+    private string _preparedPrompt = "";
+    public string PreparedPrompt { get => _preparedPrompt; private set => SetProperty(ref _preparedPrompt, value); }
+
+    private int _generationLimit = 10;
     public int GenerationLimit
     {
         get => _generationLimit;
-        set
+        private set
         {
-            var normalized = Math.Clamp(value, 1, 10);
-            if (!SetProperty(ref _generationLimit, normalized)) return;
-            _ = SavePreferencesAsync();
-            OnPropertyChanged(nameof(SessionProgress));
+            if (!SetProperty(ref _generationLimit, value)) return;
+            OnPropertyChanged(nameof(ResumeChatProgress));
         }
     }
 
-    private int _completedInSession;
-    public int CompletedInSession { get => _completedInSession; private set { if (SetProperty(ref _completedInSession, value)) OnPropertyChanged(nameof(SessionProgress)); } }
-
-    private bool _sessionStarted;
-    public bool SessionStarted { get => _sessionStarted; private set => SetProperty(ref _sessionStarted, value); }
-
-    private bool _automaticallyRunWordMacro;
-    public bool AutomaticallyRunWordMacro
+    private int _completedInChat;
+    public int CompletedInChat
     {
-        get => _automaticallyRunWordMacro;
-        set
+        get => _completedInChat;
+        private set
         {
-            if (!SetProperty(ref _automaticallyRunWordMacro, value)) return;
-            _ = SavePreferencesAsync();
+            if (!SetProperty(ref _completedInChat, value)) return;
+            OnPropertyChanged(nameof(ResumeChatProgress));
         }
     }
 
-    private bool _automaticallySubmitChatGptPrompt;
-    public bool AutomaticallySubmitChatGptPrompt
+    private bool _resumeChatStarted;
+    public bool ResumeChatStarted
     {
-        get => _automaticallySubmitChatGptPrompt;
-        set
+        get => _resumeChatStarted;
+        private set
         {
-            if (!SetProperty(ref _automaticallySubmitChatGptPrompt, value)) return;
-            if (value && !AutomaticallyRunWordMacro)
-            {
-                _automaticallyRunWordMacro = true;
-                OnPropertyChanged(nameof(AutomaticallyRunWordMacro));
-            }
-            _ = SavePreferencesAsync();
+            if (!SetProperty(ref _resumeChatStarted, value)) return;
+            OnPropertyChanged(nameof(ResumeChatProgress));
         }
     }
 
-    public string SessionProgress => SessionStarted
-        ? $"{CompletedInSession} of {GenerationLimit} resumes saved in this session"
-        : $"Start a session to generate up to {GenerationLimit} resumes with this profile prompt.";
+    private bool _isAutomationRunning;
+    public bool IsAutomationRunning
+    {
+        get => _isAutomationRunning;
+        private set
+        {
+            if (!SetProperty(ref _isAutomationRunning, value)) return;
+            OnPropertyChanged(nameof(InputsReadOnly));
+        }
+    }
 
+    private bool _showManualRecovery;
+    public bool ShowManualRecovery
+    {
+        get => _showManualRecovery;
+        set => SetProperty(ref _showManualRecovery, value);
+    }
+
+    public bool InputsReadOnly => IsAutomationRunning;
     public string ActiveProfileName => _profiles.Current?.Name ?? "No active profile";
+    public string ResumeChatProgress => ResumeChatStarted
+        ? $"Resume chat: {CompletedInChat} / {GenerationLimit}"
+        : $"A fresh resume chat will start automatically (limit {GenerationLimit}).";
 
-    /// <summary>Lets the view focus the already initialized ChatGPT WebView after bid handoff.</summary>
-    public event Action? ChatGptFocusRequested;
-    public event Action<ChatGptBidRequest>? AutoBidRequested;
-    private ChatGptBidRequest? _pendingAutoBid;
+    public event Action<ChatGptResumeRequest>? AutoResumeRequested;
+    public event Action? AutoBidCancellationRequested;
+    public event Action? NewChatRequested;
+    public event Action<ResumeAutomationResult>? ResumeAutomationCompleted;
+    public event Action<Guid, string>? ResumeAutomationFailed;
+
+    private ChatGptResumeRequest? _pendingRequest;
+    private ChatGptResumeRequest? _activeRequest;
+    private string _activeAnswersJson = "{}";
+    private string _activeBidId = "";
     private bool _chatGptBrowserReady;
 
     public ResumeStudioViewModel(
@@ -99,291 +118,342 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         _activity = activity;
         _profiles.ProfileChanged += () =>
         {
-            _ = LoadPreferencesAsync();
+            CancelAutomation();
+            ResumeChatStarted = false;
+            CompletedInChat = 0;
+            _ = LoadSettingsAsync();
             OnPropertyChanged(nameof(ActiveProfileName));
         };
-        _ = LoadPreferencesAsync();
+        _ = LoadSettingsAsync();
     }
 
     [RelayCommand]
-    private void StartSession()
+    private void GenerateRecruiterResume()
     {
-        var profile = _profiles.Current;
-        if (profile == null || string.IsNullOrWhiteSpace(profile.ResumePrompt))
+        if (string.IsNullOrWhiteSpace(RecruiterJobDescription))
         {
-            StatusMessage = "The active profile needs a resume prompt first.";
+            StatusMessage = "Paste the recruiter job description first.";
             return;
         }
 
-        Clipboard.SetText(profile.ResumePrompt);
-        SessionStarted = true;
-        CompletedInSession = 0;
-        StatusMessage = "Profile prompt copied. Paste it into the ChatGPT conversation once, then use Copy JD for each job.";
-        _activity.Info("Resume Studio", "ChatGPT session started", profile.Name);
+        QueueResumeRequest(Guid.NewGuid(), "", RecruiterJobDescription, "[]", "{}",
+            resumeOnly: true, RecruiterLabel);
     }
 
-    /// <summary>
-    /// Starts the shortest supported handoff from a job-site page: the first job in a session
-    /// copies profile prompt + JD together; later jobs copy only the JD into the same chat.
-    /// </summary>
-    public void PrepareBidFromJob(string jobUrl, string jobDescription)
+    public void PrepareAutomaticApplication(
+        Guid workItemId,
+        string jobUrl,
+        string jobDescription,
+        string questionsJson,
+        string knownAnswersJson) =>
+        QueueResumeRequest(workItemId, jobUrl, jobDescription, questionsJson, knownAnswersJson,
+            resumeOnly: false, "");
+
+    private void QueueResumeRequest(
+        Guid workItemId,
+        string jobUrl,
+        string jobDescription,
+        string questionsJson,
+        string knownAnswersJson,
+        bool resumeOnly,
+        string label)
     {
         var profile = _profiles.Current;
         if (profile == null || string.IsNullOrWhiteSpace(profile.ResumePrompt))
         {
-            StatusMessage = "The active profile needs a resume prompt first.";
+            Fail(workItemId, "The active profile needs a resume prompt first.");
             return;
         }
         if (string.IsNullOrWhiteSpace(jobDescription))
         {
-            StatusMessage = "No visible job description was found.";
-            return;
-        }
-        if (SessionStarted && CompletedInSession >= GenerationLimit)
-        {
-            StatusMessage = $"This session reached its {GenerationLimit}-resume limit. Start a new session first.";
+            Fail(workItemId, "A job description is required.");
             return;
         }
 
-        JobUrl = jobUrl;
-        JobDescription = jobDescription.Trim();
+        var startFreshChat = !ResumeChatStarted || CompletedInChat >= GenerationLimit;
+        if (startFreshChat)
+        {
+            ResumeChatStarted = true;
+            CompletedInChat = 0;
+        }
+
+        var jd = jobDescription.Trim();
+        var prompt = startFreshChat
+            ? profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + jd
+            : "Job description:\n\n" + jd;
+
+        var request = new ChatGptResumeRequest(
+            workItemId, prompt, jobUrl, jd, questionsJson, knownAnswersJson,
+            startFreshChat, resumeOnly, label);
+
+        _activeRequest = request;
+        _activeAnswersJson = "{}";
+        _activeBidId = "";
+        _pendingRequest = request;
+        PreparedPrompt = prompt;
         GeneratedResume = "";
+        ShowManualRecovery = false;
+        IsAutomationRunning = true;
+        StatusMessage = startFreshChat
+            ? "Starting a fresh ChatGPT resume chat..."
+            : "Sending the next JD to the current resume chat...";
 
-        var isNewSession = !SessionStarted;
-        var prompt = isNewSession
-            ? profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + JobDescription
-            : "Job description:\n\n" + JobDescription;
-
-        if (isNewSession)
-        {
-            SessionStarted = true;
-            CompletedInSession = 0;
-            _activity.Info("Resume Studio", "Bid generation started", jobUrl);
-        }
-        else
-        {
-            _activity.Info("Resume Studio", "Next bid generation started", jobUrl);
-        }
-
-        if (AutomaticallySubmitChatGptPrompt)
-        {
-            _pendingAutoBid = new ChatGptBidRequest(prompt, jobUrl);
-            StatusMessage = "Sending the job prompt to ChatGPT and waiting for its resume reply…";
-            DispatchPendingAutoBid();
-        }
-        else
-        {
-            Clipboard.SetText(prompt);
-            StatusMessage = isNewSession
-                ? "Profile prompt and job description are ready. Paste once into ChatGPT, then copy its completed reply."
-                : "Job description is ready. Paste it into the active ChatGPT conversation, then copy its completed reply.";
-        }
-        ChatGptFocusRequested?.Invoke();
+        _ = _word.PrewarmAsync(profile.WordDocPath);
+        DispatchPendingRequest();
+        _activity.Info("Resume Studio", resumeOnly ? "Recruiter resume started" : "Application resume started",
+            string.IsNullOrWhiteSpace(jobUrl) ? label : jobUrl);
     }
 
     public void MarkChatGptBrowserReady()
     {
         _chatGptBrowserReady = true;
-        DispatchPendingAutoBid();
+        DispatchPendingRequest();
     }
 
-    public async Task CompleteAutomatedBidAsync(string reply)
+    public void MarkChatGptBrowserUnavailable() => _chatGptBrowserReady = false;
+
+    private void DispatchPendingRequest()
     {
-        GeneratedResume = reply;
-        await SaveDraftAsync();
+        if (!_chatGptBrowserReady || _pendingRequest == null) return;
+        var request = _pendingRequest;
+        _pendingRequest = null;
+        AutoResumeRequested?.Invoke(request);
     }
 
-    public void ReportAutomatedBidFailure(string message)
+    public async Task CompleteAutomatedResumeAsync(
+        ChatGptResumeRequest request,
+        string resumeReply,
+        string answersJson)
     {
-        StatusMessage = message;
-        _activity.Error("Resume Studio", "ChatGPT automation failed", message);
-    }
+        if (_activeRequest?.WorkItemId != request.WorkItemId) return;
+        GeneratedResume = resumeReply;
 
-    private void DispatchPendingAutoBid()
-    {
-        if (!_chatGptBrowserReady || _pendingAutoBid == null) return;
-        var request = _pendingAutoBid;
-        _pendingAutoBid = null;
-        AutoBidRequested?.Invoke(request);
-    }
-
-    [RelayCommand]
-    private void EndSession()
-    {
-        SessionStarted = false;
-        CompletedInSession = 0;
-        StatusMessage = "ChatGPT generation session ended.";
-    }
-
-    [RelayCommand]
-    private void CopyJobDescription()
-    {
-        if (!SessionStarted)
-        {
-            StatusMessage = "Start a session first so ChatGPT receives the profile prompt.";
-            return;
-        }
-        if (CompletedInSession >= GenerationLimit)
-        {
-            StatusMessage = $"This session reached its {GenerationLimit}-resume limit. Start a new session.";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(JobDescription))
-        {
-            StatusMessage = "Paste a job description first.";
-            return;
-        }
-
-        Clipboard.SetText("Job description:\n\n" + JobDescription.Trim());
-        StatusMessage = "Job description copied. Paste it into the same ChatGPT conversation, then paste its reply below.";
-    }
-
-    [RelayCommand]
-    private async Task SaveDraftAsync()
-    {
-        if (!SessionStarted)
-        {
-            StatusMessage = "Start a ChatGPT session first so this draft belongs to a bounded generation session.";
-            return;
-        }
-        if (CompletedInSession >= GenerationLimit)
-        {
-            StatusMessage = $"This session reached its {GenerationLimit}-resume limit. Start a new session before saving another draft.";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(GeneratedResume))
-        {
-            StatusMessage = "Paste ChatGPT's complete resume reply first.";
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(JobDescription))
-        {
-            StatusMessage = "A job description is required to save a resume draft.";
-            return;
-        }
-
-        IsBusy = true;
         try
         {
-            var split = FastFeed.SplitTrailing(GeneratedResume);
-            var body = split.ResumePart;
-            if (string.IsNullOrWhiteSpace(body))
+            var split = FastFeed.SplitTrailing(resumeReply);
+            if (string.IsNullOrWhiteSpace(split.ResumePart))
+                throw new InvalidOperationException("ChatGPT returned no resume content.");
+
+            var bidId = "";
+            _activeAnswersJson = NormalizeAnswersJson(answersJson);
+            if (!request.ResumeOnly)
             {
-                StatusMessage = "The pasted reply has no resume content.";
-                return;
+                var captured = await _bids.CaptureAsync(request.JobUrl, request.JobDescription, bid =>
+                {
+                    bid.JobDescription = request.JobDescription;
+                    bid.GptResumeContent = split.ResumePart;
+                    bid.Origin = "ChatGPT UI";
+                    bid.Status = BidStatuses.Draft;
+                    if (split.Parsed == null) return;
+                    bid.ResumeId = split.Parsed.ResumeId;
+                    bid.Company = split.Parsed.Company;
+                    bid.Role = split.Parsed.Role;
+                    bid.PrimaryStacks = split.Parsed.PrimaryStacks.ToList();
+                });
+                bidId = captured.bid.Id.ToString();
+                _activeBidId = bidId;
             }
 
-            var (bid, joined) = await _bids.CaptureAsync(JobUrl, JobDescription, b =>
-            {
-                b.JobDescription = JobDescription.Trim();
-                b.GptResumeContent = body;
-                b.Origin = "ChatGPT UI";
-                // A generated document is a draft, not proof that the application was submitted.
-                b.Status = BidStatuses.Draft;
-                if (split.Parsed == null) return;
-                b.ResumeId = split.Parsed.ResumeId;
-                b.Company = split.Parsed.Company;
-                b.Role = split.Parsed.Role;
-                b.PrimaryStacks = split.Parsed.PrimaryStacks.ToList();
-            });
+            StatusMessage = "ChatGPT reply received. Generating the Word resume...";
+            var profile = _profiles.Current ?? throw new InvalidOperationException("No active profile.");
+            var macro = await _word.RunAsync(split.ResumePart, profile.WordDocPath, profile.MacroName, profile.Name);
+            if (!macro.Success) throw new InvalidOperationException("Word macro failed: " + macro.Message);
 
-            CompletedInSession++;
-            var macroMessage = "Draft saved.";
-            if (AutomaticallyRunWordMacro)
-                macroMessage = await RunMacroCoreAsync(body);
-
-            StatusMessage = joined ? $"Existing draft updated. {macroMessage}" : macroMessage;
-            _activity.Success("Resume Studio", "Resume draft saved", bid.Company.Length > 0 ? bid.Company : "ChatGPT UI");
+            await FinishSuccessfulRequestAsync(request, split.ResumePart, split.FastFeedLine, split.Parsed, bidId);
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't save draft: {SharedDbCredentials.Redact(ex.Message)}";
-            _activity.Error("Resume Studio", "Draft save failed", SharedDbCredentials.Redact(ex.Message));
+            Fail(request.WorkItemId, SharedDbCredentials.Redact(ex.Message));
         }
-        finally { IsBusy = false; }
+    }
+
+    public void ReportAutomatedResumeFailure(Guid workItemId, string message) => Fail(workItemId, message);
+
+    private void Fail(Guid workItemId, string message)
+    {
+        _pendingRequest = null;
+        if (_activeRequest is { StartFreshChat: true }) ResumeChatStarted = false;
+        IsAutomationRunning = false;
+        ShowManualRecovery = true;
+        StatusMessage = message;
+        _activity.Error("Resume Studio", "Resume automation failed", message);
+        ResumeAutomationFailed?.Invoke(workItemId, message);
+    }
+
+    [RelayCommand]
+    private void StartFreshChat()
+    {
+        CancelAutomation();
+        ResumeChatStarted = false;
+        CompletedInChat = 0;
+        NewChatRequested?.Invoke();
+        StatusMessage = "Fresh ChatGPT resume chat opened. The full profile prompt will be sent with the next JD.";
+    }
+
+    [RelayCommand]
+    private void CopyPreparedPrompt()
+    {
+        if (string.IsNullOrWhiteSpace(PreparedPrompt))
+        {
+            StatusMessage = "Start a resume request first.";
+            return;
+        }
+        Clipboard.SetText(PreparedPrompt);
+        ShowManualRecovery = true;
+        StatusMessage = "Prepared prompt copied for manual recovery.";
     }
 
     [RelayCommand]
     private async Task FinishFromClipboardAsync()
     {
-        string reply;
-        try { reply = Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
-        catch (Exception ex)
+        if (_activeRequest == null)
         {
-            StatusMessage = "Couldn't read the clipboard: " + ex.Message;
+            StatusMessage = "There is no resume request waiting for a manual reply.";
             return;
         }
+        var reply = Clipboard.ContainsText() ? Clipboard.GetText() : "";
         if (string.IsNullOrWhiteSpace(reply))
         {
             StatusMessage = "Copy ChatGPT's completed resume reply first.";
             return;
         }
-        GeneratedResume = reply;
-        await SaveDraftAsync();
+        await CompleteAutomatedResumeAsync(_activeRequest, reply, "{}");
     }
 
     [RelayCommand]
-    private async Task RunWordMacroAsync()
+    private async Task RetryWordMacroAsync()
     {
-        var split = FastFeed.SplitTrailing(GeneratedResume);
-        IsBusy = true;
-        try { StatusMessage = await RunMacroCoreAsync(split.ResumePart); }
-        finally { IsBusy = false; }
-    }
-
-    private async Task<string> RunMacroCoreAsync(string resumeBody)
-    {
-        var profile = _profiles.Current;
-        if (profile == null) return "No active profile.";
-        var result = await _word.RunAsync(resumeBody, profile.WordDocPath, profile.MacroName, profile.Name);
-        if (result.Success)
+        if (string.IsNullOrWhiteSpace(GeneratedResume))
         {
-            _activity.Success("Resume Studio", "Word resume generated", profile.Name);
-            return "Word resume generated.";
+            StatusMessage = "No generated resume is available.";
+            return;
         }
-        _activity.Error("Resume Studio", "Word macro failed", result.Message);
-        return "Word macro failed: " + result.Message;
-    }
-
-    private async Task LoadPreferencesAsync()
-    {
         var profile = _profiles.Current;
         if (profile == null) return;
+        IsAutomationRunning = true;
+        try
+        {
+            var body = FastFeed.SplitTrailing(GeneratedResume).ResumePart;
+            var result = await _word.RunAsync(body, profile.WordDocPath, profile.MacroName, profile.Name);
+            if (!result.Success)
+            {
+                StatusMessage = "Word macro failed: " + result.Message;
+                return;
+            }
+            if (_activeRequest == null)
+            {
+                StatusMessage = "Word resume generated.";
+                return;
+            }
+            var split = FastFeed.SplitTrailing(GeneratedResume);
+            await FinishSuccessfulRequestAsync(_activeRequest, split.ResumePart, split.FastFeedLine, split.Parsed, _activeBidId);
+        }
+        finally { IsAutomationRunning = false; }
+    }
+
+    private void CancelAutomation()
+    {
+        _pendingRequest = null;
+        _activeRequest = null;
+        _activeAnswersJson = "{}";
+        _activeBidId = "";
+        IsAutomationRunning = false;
+        AutoBidCancellationRequested?.Invoke();
+    }
+
+    private async Task FinishSuccessfulRequestAsync(
+        ChatGptResumeRequest request,
+        string resumeContent,
+        string fastFeedLine,
+        FastFeed.Parsed? parsed,
+        string bidId)
+    {
+        CompletedInChat++;
+        var filePath = await ResolveGeneratedResumePathAsync(fastFeedLine);
+        IsAutomationRunning = false;
+        _activeRequest = null;
+        StatusMessage = request.ResumeOnly
+            ? (string.IsNullOrWhiteSpace(filePath)
+                ? "Resume generated and ready to share. Configure the output root in Settings to show its file path."
+                : $"Resume ready to share: {filePath}")
+            : "Resume generated. Returning to the application form...";
+
+        _activity.Success("Resume Studio", "Resume generated",
+            parsed == null ? request.Label : $"{parsed.Company} - {parsed.Role}");
+        ResumeAutomationCompleted?.Invoke(new ResumeAutomationResult(
+            request.WorkItemId, request.JobUrl, resumeContent,
+            _activeAnswersJson, filePath, bidId, request.ResumeOnly));
+        _activeAnswersJson = "{}";
+        _activeBidId = "";
+    }
+
+    private async Task<string> ResolveGeneratedResumePathAsync(string folderName)
+    {
+        if (string.IsNullOrWhiteSpace(folderName)) return "";
         var settings = await _settings.GetAsync();
-        if (settings.ChatGptResumeSessions.TryGetValue(profile.Id.ToString(), out var saved))
+        if (string.IsNullOrWhiteSpace(settings.ResumeOutputRoot)) return "";
+
+        var safeFolder = string.Join("-", folderName.Split(Path.GetInvalidFileNameChars(),
+            StringSplitOptions.RemoveEmptyEntries));
+        safeFolder = new string(safeFolder.Where(c => c is >= ' ' and <= '~').ToArray()).Trim();
+        var fileBase = string.IsNullOrWhiteSpace(settings.ResumeOutputFileBase)
+            ? "Resume"
+            : settings.ResumeOutputFileBase.Trim();
+        var folder = Path.Combine(settings.ResumeOutputRoot, safeFolder);
+        foreach (var extension in new[] { ".pdf", ".docx", ".doc" })
         {
-            _generationLimit = Math.Clamp(saved.GenerationLimit, 1, 10);
-            _automaticallyRunWordMacro = saved.AutomaticallyRunWordMacro;
-            _automaticallySubmitChatGptPrompt = saved.AutomaticallySubmitChatGptPrompt;
-            if (_automaticallySubmitChatGptPrompt) _automaticallyRunWordMacro = true;
+            var candidate = Path.Combine(folder, fileBase + extension);
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
         }
-        else
-        {
-            _generationLimit = 5;
-            _automaticallyRunWordMacro = false;
-            _automaticallySubmitChatGptPrompt = false;
-        }
-        CompletedInSession = 0;
-        SessionStarted = false;
-        OnPropertyChanged(nameof(GenerationLimit));
-        OnPropertyChanged(nameof(AutomaticallyRunWordMacro));
-        OnPropertyChanged(nameof(AutomaticallySubmitChatGptPrompt));
-        OnPropertyChanged(nameof(SessionProgress));
+        return "";
     }
 
-    private async Task SavePreferencesAsync()
+    private async Task LoadSettingsAsync()
     {
-        var profile = _profiles.Current;
-        if (profile == null) return;
-        var settings = await _settings.GetForEditAsync();
-        settings.ChatGptResumeSessions[profile.Id.ToString()] = new ChatGptResumeSessionSettings
+        var settings = await _settings.GetAsync();
+        GenerationLimit = Math.Clamp(settings.ResumeGenerationsPerChat, 1, 50);
+    }
+
+    private static string NormalizeAnswersJson(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "{}";
+        raw = raw.Trim();
+        if (raw.StartsWith("```", StringComparison.Ordinal))
         {
-            GenerationLimit = Math.Clamp(GenerationLimit, 1, 10),
-            AutomaticallyRunWordMacro = AutomaticallyRunWordMacro,
-            AutomaticallySubmitChatGptPrompt = AutomaticallySubmitChatGptPrompt,
-        };
-        await _settings.SaveAsync(settings);
+            var firstLine = raw.IndexOf('\n');
+            var lastFence = raw.LastIndexOf("```", StringComparison.Ordinal);
+            if (firstLine >= 0 && lastFence > firstLine) raw = raw[(firstLine + 1)..lastFence].Trim();
+        }
+        var objectStart = raw.IndexOf('{');
+        var objectEnd = raw.LastIndexOf('}');
+        if (objectStart >= 0 && objectEnd > objectStart) raw = raw[objectStart..(objectEnd + 1)];
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? document.RootElement.GetRawText()
+                : "{}";
+        }
+        catch (JsonException) { return "{}"; }
     }
 }
 
-public sealed record ChatGptBidRequest(string Prompt, string JobUrl);
+public sealed record ChatGptResumeRequest(
+    Guid WorkItemId,
+    string Prompt,
+    string JobUrl,
+    string JobDescription,
+    string QuestionsJson,
+    string KnownAnswersJson,
+    bool StartFreshChat,
+    bool ResumeOnly,
+    string Label);
+
+public sealed record ResumeAutomationResult(
+    Guid WorkItemId,
+    string JobUrl,
+    string ResumeContent,
+    string AnswersJson,
+    string ResumeFilePath,
+    string BidId,
+    bool ResumeOnly);

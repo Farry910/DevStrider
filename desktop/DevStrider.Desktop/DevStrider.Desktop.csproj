@@ -53,7 +53,29 @@
       bids from the resume folders the macro already wrote to disk, each timed by its own folder's
       creation time — a record that does not depend on anyone's old database still being installed.
     -->
-    <Version>8.3.0</Version>
+    <!-- 9.0.0 replaces the separate manual resume/application handoffs with persistent embedded
+         ChatGPT + job-site workspaces, a durable automatic queue, reviewed form fill/upload,
+         conversation rotation, JD fallback, and Gmail/Calendar-assisted Job Operations.
+         9.1.0 deletes the Bid Assistant Chrome extension, now that the embedded workspaces do
+         its job, and makes a failed queue link recoverable: failures no longer end the batch,
+         they collect with their error and attempt count for requeue, copy, or removal. A minor
+         rather than a patch because it removes a component and adds queue state, and rather
+         than a major because settings, storage and startup keep their shape. It also fixes the
+         CAPTCHA gate that stopped every Greenhouse and Ashby application: both load score-based
+         reCAPTCHA whose hidden badge and invisible anchor frame are not a challenge.
+         9.1.1 makes Resume Studio show ChatGPT again. A new CoreWebView2 reports about:blank
+         rather than an empty source, so the emptiness check guarding the first navigation was
+         never true and the pane stayed blank for good. The retry the same rework intended on a
+         failed start was also unreachable, because the workspace is built once and hidden, so
+         Loaded fires only at startup; it now retries when the tab is next shown.
+         9.1.2 stops the hidden workspace from going blind. A collapsed element is arranged at zero
+         size and the WebView2 control forwards that straight to the browser as its viewport, so
+         every element on the page measured as an empty box: the filler skipped every field and
+         still asked for a review, and the ChatGPT driver never found its send button unless that
+         tab was on screen. The workspaces bind to Hidden instead, which keeps the arranged size,
+         and each handoff now brings its own workspace forward. Submitted links also leave the
+         queue, since the bid row and the Activity entry are the durable record by then. -->
+    <Version>9.1.2</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

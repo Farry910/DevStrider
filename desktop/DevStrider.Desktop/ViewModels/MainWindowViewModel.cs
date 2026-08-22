@@ -52,8 +52,20 @@ public partial class MainWindowViewModel : ViewModelBase
     public ViewModelBase Current
     {
         get => _current;
-        set => SetProperty(ref _current, value);
+        set
+        {
+            if (!SetProperty(ref _current, value)) return;
+            OnPropertyChanged(nameof(IsJobBrowserVisible));
+            OnPropertyChanged(nameof(IsResumeStudioVisible));
+            OnPropertyChanged(nameof(IsRegularViewVisible));
+            OnPropertyChanged(nameof(RegularCurrent));
+        }
     }
+
+    public bool IsJobBrowserVisible => ReferenceEquals(Current, JobBrowser);
+    public bool IsResumeStudioVisible => ReferenceEquals(Current, ResumeStudio);
+    public bool IsRegularViewVisible => !IsJobBrowserVisible && !IsResumeStudioVisible;
+    public ViewModelBase? RegularCurrent => IsRegularViewVisible ? Current : null;
 
     public MainWindowViewModel(
         BidBoardViewModel bids,
@@ -86,11 +98,32 @@ public partial class MainWindowViewModel : ViewModelBase
         JobBrowser = jobBrowser;
         ProfileContext = profileContext;
         Current = bids;
-        JobBrowser.BidPreparationRequested += (jobUrl, jobDescription) =>
+        // Each handoff brings its workspace to the front. Hidden keeps a WebView usable, but the
+        // stage that is actually driving a page belongs on screen: it runs unthrottled, and the
+        // user watches the resume being written and then sees the filled form they have to review.
+        JobBrowser.ResumeGenerationRequested += request =>
         {
-            ResumeStudio.PrepareBidFromJob(jobUrl, jobDescription);
             Current = ResumeStudio;
+            ResumeStudio.PrepareAutomaticApplication(
+                request.WorkItemId,
+                request.JobUrl,
+                request.JobDescription,
+                request.QuestionsJson,
+                request.KnownAnswersJson);
         };
+        JobBrowser.ApplicationFillRequested += _ => Current = JobBrowser;
+        JobBrowser.QueueNavigationRequested += () => Current = JobBrowser;
+        ResumeStudio.ResumeAutomationCompleted += result =>
+        {
+            if (result.ResumeOnly)
+            {
+                Current = ResumeStudio;
+                return;
+            }
+            _ = JobBrowser.AcceptResumeResultAsync(result);
+        };
+        ResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
+            _ = JobBrowser.MarkAutomationFailureAsync(workItemId, message);
 
         // Forward profile-context changes so the title-bar ComboBox + nav bindings refresh.
         ProfileContext.ProfileChanged += () => OnPropertyChanged(nameof(ActiveProfile));

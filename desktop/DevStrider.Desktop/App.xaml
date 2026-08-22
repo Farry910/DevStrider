@@ -14,6 +14,7 @@
       <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
       <views:NonEmptyToVisibleConverter x:Key="NonEmptyToVisible"/>
       <views:InverseBooleanConverter x:Key="InverseBoolean"/>
+      <views:BooleanToHiddenConverter x:Key="BooleanToHidden"/>
 
       <!-- DataTemplates wire the right View to each ViewModel as Content of the shell ContentControl. -->
       <DataTemplate DataType="{x:Type vm:BidBoardViewModel}">

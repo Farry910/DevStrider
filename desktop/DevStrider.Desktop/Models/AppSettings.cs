@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace DevStrider.Desktop.Models;
 
@@ -78,6 +79,15 @@ public class AppSettings
     /// </summary>
     public Dictionary<string, ChatGptResumeSessionSettings> ChatGptResumeSessions { get; set; } = new();
 
+    /// <summary>Maximum successful resume generations kept in one ChatGPT conversation.</summary>
+    public int ResumeGenerationsPerChat { get; set; } = 10;
+
+    /// <summary>Must match the Word macro's OUTPUT_ROOT when automatic upload is desired.</summary>
+    public string ResumeOutputRoot { get; set; } = "";
+
+    /// <summary>Must match the Word macro's FILE_BASE constant.</summary>
+    public string ResumeOutputFileBase { get; set; } = "Resume";
+
     /// <summary>Per-profile reusable job-form answers. These are user-provided answers, never secrets.</summary>
     public Dictionary<string, Dictionary<string, string>> JobFormAnswers { get; set; } = new();
 
@@ -139,7 +149,8 @@ public class AppSettings
 /// <summary>Non-secret local preferences for one profile's ChatGPT UI generation session.</summary>
 public sealed class ChatGptResumeSessionSettings
 {
-    public int GenerationLimit { get; set; } = 5;
+    // Kept for settings-file compatibility. New code reads AppSettings.ResumeGenerationsPerChat.
+    public int GenerationLimit { get; set; } = 10;
     public bool AutomaticallyRunWordMacro { get; set; }
     public bool AutomaticallySubmitChatGptPrompt { get; set; }
 
@@ -151,27 +162,69 @@ public sealed class ChatGptResumeSessionSettings
     };
 }
 
-/// <summary>A user-supplied job link awaiting manual processing in the Job Browser.</summary>
-public sealed class JobLinkQueueItem
+/// <summary>A persisted application work item moving through the automatic/recovery pipeline.</summary>
+public sealed partial class JobLinkQueueItem : ObservableObject
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Url { get; set; } = "";
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
-    public string Status { get; set; } = JobLinkQueueStatuses.Queued;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public string Intent { get; set; } = JobWorkItemIntents.Apply;
+    public string JobDescription { get; set; } = "";
+    public string FormQuestionsJson { get; set; } = "[]";
+    public string AnswersJson { get; set; } = "{}";
+    public string ResumeFilePath { get; set; } = "";
+    public string BidId { get; set; } = "";
+    public string AdapterName { get; set; } = "";
+    public string Error { get; set; } = "";
+
+    /// <summary>Survives requeues so a link that keeps failing is visible as such rather than looping silently.</summary>
+    public int Attempts { get; set; }
+
+    [ObservableProperty]
+    private string _status = JobLinkQueueStatuses.Queued;
 
     public JobLinkQueueItem Clone() => new()
     {
         Id = Id,
         Url = Url,
         AddedAt = AddedAt,
+        UpdatedAt = UpdatedAt,
+        Intent = Intent,
+        JobDescription = JobDescription,
+        FormQuestionsJson = FormQuestionsJson,
+        AnswersJson = AnswersJson,
+        ResumeFilePath = ResumeFilePath,
+        BidId = BidId,
+        AdapterName = AdapterName,
+        Error = Error,
+        Attempts = Attempts,
         Status = Status,
     };
+}
+
+public static class JobWorkItemIntents
+{
+    public const string Apply = "Apply";
+    public const string ResumeOnly = "Resume only";
 }
 
 public static class JobLinkQueueStatuses
 {
     public const string Queued = "Queued";
+    public const string Loading = "Loading job";
+    public const string ExtractingJobDescription = "Extracting JD";
+    public const string NeedsJobDescription = "Needs JD";
+    public const string GeneratingResume = "Generating resume";
+    public const string CreatingDocument = "Creating document";
+    public const string FillingApplication = "Filling application";
+    public const string ReadyForReview = "Ready for review";
+    public const string Submitted = "Submitted";
+    public const string ResumeReady = "Resume ready";
+    public const string Failed = "Failed";
+    public const string Skipped = "Skipped";
+
+    // Compatibility with queues persisted by earlier builds.
     public const string InProgress = "In progress";
     public const string Completed = "Completed";
-    public const string Skipped = "Skipped";
 }
