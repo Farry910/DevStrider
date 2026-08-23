@@ -1,0 +1,44 @@
+<UserControl x:Class="DevStrider.Desktop.Views.QuickAnswersView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <DockPanel Margin="0,12,0,0">
+    <StackPanel DockPanel.Dock="Top">
+      <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                 Text="What the current application could not answer — from your profile, your personal info, or ChatGPT. These appear the moment a form is filled, while it is still open in the job browser. An answer saved here joins the profile's personal info, so the same question fills itself from then on."/>
+      <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+        <StackPanel>
+          <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          <Button Command="{Binding ClearAllCommand}" Content="Clear list" Style="{StaticResource GhostButton}"
+                  HorizontalAlignment="Left" Margin="0,8,0,0" IsEnabled="{Binding HasPending}"/>
+          <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding Pending}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+              <StackPanel>
+                <TextBlock Text="{Binding Question}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding Site}" Style="{StaticResource MutedText}" Margin="0,2,0,6"/>
+                <TextBox Text="{Binding Answer, UpdateSourceTrigger=PropertyChanged}"
+                         AcceptsReturn="True" TextWrapping="Wrap" MinHeight="30" MaxHeight="120"
+                         VerticalScrollBarVisibility="Auto" Tag="Your answer"/>
+                <WrapPanel Margin="0,8,0,0">
+                  <Button Content="Save to personal info" Margin="0,0,8,0"
+                          Command="{Binding DataContext.SaveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          CommandParameter="{Binding}"/>
+                  <Button Content="Not needed" Style="{StaticResource GhostButton}"
+                          Command="{Binding DataContext.DismissCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          CommandParameter="{Binding}"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

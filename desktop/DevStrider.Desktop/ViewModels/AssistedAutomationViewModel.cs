@@ -28,8 +28,8 @@ public sealed partial class AssistedAutomationViewModel : ViewModelBase
 
     public ObservableCollection<AssistedActionRow> Actions { get; } = new();
 
-    /// <summary>The Answers tab. Its own view-model so the answer bank is independent of proposals.</summary>
-    public FormAnswersViewModel FormAnswers { get; }
+    /// <summary>The Quick answers tab. Its own view-model — it is fed by the job browser, not by this one.</summary>
+    public QuickAnswersViewModel QuickAnswers { get; }
 
     public AssistedAutomationViewModel(
         IBidRepository bidRepository,
@@ -38,7 +38,7 @@ public sealed partial class AssistedAutomationViewModel : ViewModelBase
         InterviewService interviews,
         ProfileContext profiles,
         ActivityLogService activity,
-        FormAnswersViewModel formAnswers)
+        QuickAnswersViewModel quickAnswers)
     {
         _bidRepository = bidRepository;
         _interviewRepository = interviewRepository;
@@ -46,7 +46,7 @@ public sealed partial class AssistedAutomationViewModel : ViewModelBase
         _interviews = interviews;
         _profiles = profiles;
         _activity = activity;
-        FormAnswers = formAnswers;
+        QuickAnswers = quickAnswers;
         _profiles.ProfileChanged += () => Actions.Clear();
     }
 

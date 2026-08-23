@@ -105,8 +105,14 @@ public partial class ResumeStudioView : UserControl
         try
         {
             var token = cancellation.Token;
+            // Go to the conversation this request belongs to before typing into it. Continuing a
+            // chat used to mean "submit wherever the pane happens to be pointing", so one click in
+            // ChatGPT's sidebar sent the next job description to a chat that had never seen the
+            // profile prompt — and the reply came back with none of the resume's structure.
             if (request.StartFreshChat)
                 await NavigateAsync("https://chatgpt.com/", token);
+            else if (!string.IsNullOrWhiteSpace(request.ConversationUrl))
+                await NavigateAsync(request.ConversationUrl, token);
 
             var before = await GetAssistantSnapshotAsync();
             var submitted = await SubmitPromptAsync(request.Prompt, token);
@@ -125,6 +131,10 @@ public partial class ResumeStudioView : UserControl
             }
 
             var resumeConversationUrl = await WaitForConversationUrlAsync(token);
+            if (string.IsNullOrWhiteSpace(resumeConversationUrl)) resumeConversationUrl = request.ConversationUrl;
+            // Persist it before the questions step navigates away, so a crash mid-run still leaves
+            // the resume chat findable next time.
+            await vm.NoteConversationAsync(resumeConversationUrl);
             var answersJson = "{}";
             if (HasQuestions(request.QuestionsJson) && !string.IsNullOrWhiteSpace(resumeConversationUrl))
             {
@@ -133,8 +143,15 @@ public partial class ResumeStudioView : UserControl
                 var questionBefore = await GetAssistantSnapshotAsync();
                 var questionSubmit = await SubmitPromptAsync(BuildQuestionPrompt(request, resumeReply), token);
                 if (!questionSubmit.Ok) throw new InvalidOperationException(questionSubmit.Error);
-                answersJson = await WaitForNewAssistantReplyAsync(questionBefore.Count, token);
-                if (string.IsNullOrWhiteSpace(answersJson)) answersJson = "{}";
+                // Hold out for something that actually parses. Without a shape to wait for, the first
+                // text that stopped changing for two seconds was accepted — a pause mid-stream was
+                // enough to capture half an object, which then silently became no answers at all.
+                answersJson = await WaitForNewAssistantReplyAsync(questionBefore.Count, token, LooksLikeAnswerJson);
+                if (!LooksLikeAnswerJson(answersJson))
+                {
+                    vm.ReportUnusableAnswers(answersJson);
+                    answersJson = "{}";
+                }
 
                 if (!string.IsNullOrWhiteSpace(resumeConversationUrl))
                     await NavigateAsync(resumeConversationUrl, token);
@@ -277,6 +294,28 @@ public partial class ResumeStudioView : UserControl
         return lastStable;
     }
 
+    /// <summary>
+    /// Whether a reply carries an answer object that will survive parsing. The whole answer set used
+    /// to be thrown away by a silent <c>catch (JsonException) { return "{}"; }</c>, so a form filled
+    /// from the profile alone and nothing said why.
+    /// </summary>
+    private static bool LooksLikeAnswerJson(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply)) return false;
+        var start = reply.IndexOf('{');
+        var end = reply.LastIndexOf('}');
+        if (start < 0 || end <= start) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(reply[start..(end + 1)]);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+            var root = document.RootElement.TryGetProperty("answers", out var wrapped)
+                ? wrapped : document.RootElement;
+            return root.ValueKind == JsonValueKind.Object && root.EnumerateObject().Any();
+        }
+        catch (JsonException) { return false; }
+    }
+
     /// <summary>Reports what ChatGPT sent, so its answer is never filed as a Word fault.</summary>
     private static string DescribeUnusableReply(string reply)
     {
@@ -320,8 +359,13 @@ public partial class ResumeStudioView : UserControl
         "ground in the reference data, and be consistent with previously approved answers. " +
         "Never answer a question asking for a government ID, social-security or national-insurance number, " +
         "passport, driver's licence, or bank or card details: return an empty string for those. " +
-        "For a multiple-choice question return the chosen options as a comma-separated list. " +
-        "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question\":\"answer\"}}.\n\n" +
+        "Questions arrive as JSON objects. When one carries \"options\", the answer must be exactly one " +
+        "of them, copied character for character — the control only accepts its own wording, so anything " +
+        "close but not identical is discarded. When it also carries \"multiple\": true, answer with a " +
+        "comma-separated subset of those options. When it is marked \"type\": \"dropdown\" with no options, " +
+        "the list could not be read, so answer with the short plain value most likely to appear in it. " +
+        "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question text\":\"answer\"}}, " +
+        "keyed on the question text exactly as given and never on the options.\n\n" +
         "Reference data (profile and approved answers):\n" + request.KnownAnswersJson + "\n\n" +
         "Generated resume for this role:\n" + generatedResume + "\n\n" +
         "Questions:\n" + request.QuestionsJson + "\n\n" +

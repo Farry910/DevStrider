@@ -126,11 +126,11 @@
               <Button Click="OnChooseResume" Content="Choose resume..." Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
               <Button Click="OnUploadResume" Content="Upload resume" Margin="0,0,8,8"/>
             </WrapPanel>
-            <TextBlock Text="Reusable answers (JSON)" FontWeight="SemiBold" Margin="0,10,0,2"/>
-            <TextBox Text="{Binding SavedAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+            <TextBlock Text="Personal reference data sent to ChatGPT (read-only)" FontWeight="SemiBold" Margin="0,10,0,2"/>
+            <TextBlock Text="Edit these in Profiles → Personal info. Shown here so you can see exactly what ChatGPT was given when an answer looks wrong."
+                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding SavedAnswersJson}" IsReadOnly="True" AcceptsReturn="True"
                      Height="100" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
-            <Button Command="{Binding SaveAnswersCommand}" Content="Save reusable answers" HorizontalAlignment="Left"
-                    Style="{StaticResource GhostButton}" Margin="0,8,0,0"/>
           </StackPanel>
         </Expander>
       </StackPanel>

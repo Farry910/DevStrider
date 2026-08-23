@@ -11,6 +11,7 @@ public partial class ProfilesViewModel : ViewModelBase
     private readonly ProfilesService _service;
     private readonly ProfileContext _context;
     private readonly ActivityLogService _activity;
+    private readonly PersonFactsService _person;
 
     public ObservableCollection<Profile> Profiles => _context.All;
 
@@ -18,8 +19,23 @@ public partial class ProfilesViewModel : ViewModelBase
     public Profile? Selected
     {
         get => _selected;
-        set => SetProperty(ref _selected, value);
+        set
+        {
+            if (!SetProperty(ref _selected, value)) return;
+            _ = LoadPersonalDataAsync();
+        }
     }
+
+    /// <summary>
+    /// The profile's education, career history and custom fields — everything ChatGPT needs about
+    /// the person that <c>ds_profiles</c> has no column for. Contact details are not duplicated
+    /// here: that row is the company portal's copy too, so it stays the one source of truth.
+    /// </summary>
+    public ObservableCollection<EducationEntry> Education { get; } = new();
+    public ObservableCollection<CareerEntry> Careers { get; } = new();
+    public ObservableCollection<PersonFact> CustomFields { get; } = new();
+
+    public bool CanAddEducation => Education.Count < PersonFactFields.MaxEducation;
 
     private string _newProfileName = "";
     public string NewProfileName { get => _newProfileName; set => SetProperty(ref _newProfileName, value); }
@@ -27,11 +43,13 @@ public partial class ProfilesViewModel : ViewModelBase
     public ProfilesViewModel(
         ProfilesService service,
         ProfileContext context,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        PersonFactsService person)
     {
         _service = service;
         _context = context;
         _activity = activity;
+        _person = person;
         Selected = _context.Current;
         _context.ProfileListChanged += () => OnPropertyChanged(nameof(Profiles));
         _context.ProfileChanged += () =>
@@ -97,6 +115,8 @@ public partial class ProfilesViewModel : ViewModelBase
         try
         {
             await _service.UpdateAsync(saved);
+            await _person.SaveAsync(savedId, new PersonFactsService.PersonalData(
+                Education.ToList(), Careers.ToList(), CustomFields.ToList()));
         }
         catch (Exception ex)
         {
@@ -114,6 +134,77 @@ public partial class ProfilesViewModel : ViewModelBase
         StatusMessage = $"Saved profile '{savedName}'.";
         _activity.Success("Profiles", "Profile saved", savedName);
     }
+
+    /// <summary>Reloads the editor rows when the selected profile changes.</summary>
+    private async Task LoadPersonalDataAsync()
+    {
+        Education.Clear();
+        Careers.Clear();
+        CustomFields.Clear();
+        var profile = Selected;
+        if (profile == null) { NotifyPersonalData(); return; }
+        try
+        {
+            var data = await _person.LoadAsync(profile.Id);
+            foreach (var entry in data.Education) Education.Add(entry);
+            foreach (var entry in data.Careers) Careers.Add(entry);
+            foreach (var fact in data.Custom) CustomFields.Add(fact);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Couldn't load personal info: " + SharedDbCredentials.Redact(ex.Message);
+        }
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void AddEducation()
+    {
+        if (!CanAddEducation)
+        {
+            StatusMessage = $"Up to {PersonFactFields.MaxEducation} education entries — BS through PhD.";
+            return;
+        }
+        Education.Add(new EducationEntry { Slot = Education.Count + 1 });
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void RemoveEducation(EducationEntry? entry)
+    {
+        if (entry != null) Education.Remove(entry);
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void AddCareer()
+    {
+        Careers.Add(new CareerEntry { Slot = Careers.Count + 1 });
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void RemoveCareer(CareerEntry? entry)
+    {
+        if (entry != null) Careers.Remove(entry);
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void AddCustomField()
+    {
+        CustomFields.Add(new PersonFact { Kind = PersonFactKinds.Custom });
+        NotifyPersonalData();
+    }
+
+    [RelayCommand]
+    private void RemoveCustomField(PersonFact? fact)
+    {
+        if (fact != null) CustomFields.Remove(fact);
+        NotifyPersonalData();
+    }
+
+    private void NotifyPersonalData() => OnPropertyChanged(nameof(CanAddEducation));
 
     [RelayCommand]
     public async Task BrowseWordPathAsync()

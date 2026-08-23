@@ -59,34 +59,87 @@ public static class JobSiteFormAdapters
  // neighbouring field's label, and because the old version concatenated every candidate into a
  // single haystack, the wrong one won. That is how a Country dropdown ends up holding a phone
  // number and "how many years of experience" ends up holding a LinkedIn URL.
- const textFor = e => {
-   const forLabel = e.id ? document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText : '';
-   const own = e.labels && e.labels.length ? Array.from(e.labels).map(x => x.innerText).join(' ') : '';
-   return norm(labelledBy(e) || attr(e, 'description') || forLabel || own
-     || attr(e, 'aria-label') || e.placeholder || attr(e, 'name') || e.id);
+ // A radio or checkbox's own label is the option, not the question — "Brainstorming, idea finding,
+ // customer validation" is an answer to "What stage are you at in building?". The question lives on
+ // the group, and only there: widening to any ancestor is what used to pick up a neighbour's label.
+ const groupQuestion = e => {
+   if (e.type !== 'radio' && e.type !== 'checkbox') return '';
+   const group = e.closest('fieldset,[role="radiogroup"],[role="group"]');
+   if (!group) return '';
+   return String(labelledBy(group) || group.querySelector('legend,[data-question-label]')?.innerText
+     || attr(group, 'aria-label') || '').trim();
  };
+ // Two controls are the same field when they are the same element, or two options of one radio or
+ // checkbox group. Group membership is the name attribute, which is what makes them one answer.
+ const sameField = (a, b) => a === b ||
+   (!!a.name && a.name === b.name && (a.type === 'radio' || a.type === 'checkbox'));
+ // The wrapper holding this field and nothing else fillable. The walk stops at the first ancestor
+ // that also contains a *different* control, so a neighbour's label can never be reached — that is
+ // the precise version of the "first label in some ancestor div" rule that 9.1.5 had to delete for
+ // putting a phone number in a Country dropdown. Markup-agnostic: no fieldset or label[for] needed,
+ // which is what the previous fix wrongly assumed every board provides.
+ const fieldBlock = e => {
+   let best = null;
+   for (let node = e.parentElement; node && node !== document.body; node = node.parentElement) {
+     const controls = Array.from(node.querySelectorAll(
+       'input:not([type="hidden"]):not([type="submit"]):not([type="button"]),textarea,select,[role="combobox"]'));
+     if (!controls.every(control => sameField(control, e))) break;
+     best = node;
+   }
+   return best;
+ };
+ // The question text inside that wrapper: any label-ish element that is not an option's own label.
+ const blockLabel = e => {
+   const block = fieldBlock(e);
+   if (!block) return '';
+   const optionLabels = new Set(Array.from(block.querySelectorAll('input,textarea,select'))
+     .flatMap(control => Array.from(control.labels || [])));
+   const node = Array.from(block.querySelectorAll('label,legend,[class*="label" i],[class*="title" i],[class*="question" i]'))
+     .find(candidate => !optionLabels.has(candidate) && !candidate.querySelector('input,textarea,select')
+       && String(candidate.innerText || '').trim().length > 1);
+   return node ? String(node.innerText).replace(/\s+/g, ' ').trim() : '';
+ };
+ const association = e => {
+   const forLabel = e.id ? document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText : '';
+   const grouped = e.type === 'radio' || e.type === 'checkbox';
+   // An option's own label is the answer, never the question, so a grouped control skips straight
+   // past label[for] and its own <label> to whatever names the group.
+   const own = !grouped && e.labels && e.labels.length
+     ? Array.from(e.labels).map(x => x.innerText).join(' ') : '';
+   return groupQuestion(e) || attr(e, 'description')
+     || (grouped ? '' : labelledBy(e) || forLabel || own || attr(e, 'aria-label'))
+     || blockLabel(e)
+     || (grouped ? '' : e.placeholder) || attr(e, 'name') || e.id || '';
+ };
+ const textFor = e => norm(association(e));
  // react-select and friends render a real <input> as their search box. Typing into it looks like a
  // successful fill and selects nothing, so it belongs to the combobox pass, not the text pass.
  const comboInput = e => e.getAttribute('role') === 'combobox'
    || e.getAttribute('aria-autocomplete') === 'list'
    || /(^|\s)select__input(\s|$)/.test(String(e.className || ''));
- const aliases = { 'full name':['full name','candidate name'], 'first name':['first name','given name'], 'last name':['last name','family name','surname'], email:['email','email address'], phone:['phone','phone number','mobile'], linkedin:['linkedin','linkedin url'], location:['location','city'] };
+ const aliases = { 'full name':['full name','candidate name','your name','name'], 'first name':['first name','given name'], 'last name':['last name','family name','surname'], email:['email','email address'], phone:['phone','phone number','mobile'], linkedin:['linkedin','linkedin url','linkedin profile'], location:['location','city'] };
+ // Best match wins, not first, and containment works both ways. A field labelled just "Name" has
+ // to take "full name": the old rule only tried key-inside-label, so the shorter label matched
+ // nothing at all and Ashby filled zero fields. Scoring keeps "first name" from being answered by
+ // the "name" alias — an exact hit always outranks a containment, and a longer one a shorter.
  const valueFor = e => {
    const hay = textFor(e); if (!hay || protectedField(hay)) return null;
+   let best = null, bestScore = 0;
    for (const [raw, value] of Object.entries(payload.values || {})) {
-     const key = norm(raw); if (!key || value === '') continue;
-     const keys = aliases[key] || [key];
-     if (keys.some(k => hay.includes(k))) return String(value);
+     const key = norm(raw); if (!key || String(value) === '') continue;
+     for (const alias of (aliases[key] || [key])) {
+       const k = norm(alias); if (!k) continue;
+       let score = 0;
+       if (hay === k) score = 300 + k.length;
+       else if (hay.includes(k) && k.length >= 3) score = 200 + k.length;
+       else if (k.includes(hay) && hay.length >= 4) score = 100 + hay.length;
+       if (score > bestScore) { bestScore = score; best = String(value); }
+     }
    }
-   return null;
+   return best;
  };
- // Same association order as textFor, kept unnormalised so a human reads the real question.
- const labelFor = e => {
-   const forLabel = e.id ? document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText : '';
-   const raw = labelledBy(e) || attr(e, 'description') || forLabel || (e.labels && e.labels[0]?.innerText)
-     || attr(e, 'aria-label') || e.placeholder || attr(e, 'name') || e.id || '';
-   return String(raw).replace(/\s+/g, ' ').trim().slice(0, 80);
- };
+ // The same association, kept unnormalised so a human — and ChatGPT — read the real question.
+ const labelFor = e => String(association(e)).replace(/\s+/g, ' ').trim().slice(0, 120);
 """;
 
     public static string BuildFillScript(Uri uri, IReadOnlyDictionary<string, string> values)
@@ -130,6 +183,11 @@ __PRELUDE__
  let filled=0, skipped=0; const touched=[];
  const write = (e,v) => { if (!e || !visible(e) || e.disabled || e.readOnly || e.type === 'file' || protectedField(textFor(e))) return false; if (e.tagName === 'SELECT') { if (!setSelect(e,v)) return false; } else if (e.type === 'checkbox') { const wanted=norm(v); const option=optionText(e); const yes=['true','yes','y','1'].includes(wanted); const no=['false','no','n','0'].includes(wanted); const matchesOption=option && (wanted===option || wanted.includes(option)); const shouldCheck=matchesOption || yes; if (!matchesOption && !yes && !no) return false; if (e.checked === shouldCheck) return false; e.click(); } else if (e.type === 'radio') { const option=optionText(e); const wanted=norm(v); if (!option || !(option===wanted || option.includes(wanted) || wanted.includes(option)) || e.checked) return false; e.click(); } else setText(e,v); return true; };
  const answered = e => e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.tagName === 'SELECT' ? e.selectedIndex > 0 && !!e.value : !!String(e.value || '').trim();
+ // A radio group is answered when ANY of its options is, not when this particular one is. Asked per
+ // element, a group we had just filled reported as still outstanding, once per unchosen option.
+ const groupAnswered = e => (e.type === 'radio' || e.type === 'checkbox') && e.name
+   ? Array.from(document.getElementsByName(e.name)).some(x => x.checked)
+   : answered(e);
  for (const [key, selectors] of Object.entries(core[adapter] || core['Default (generic)'])) { const v = payload.values[key]; if (!v) continue; for (const selector of selectors) { const e=document.querySelector(selector); if (write(e,v)) { filled++; touched.push(key); break; } } }
  for (const e of Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, select'))) { if (e.type === 'file' || comboInput(e) || !visible(e) || e.disabled || answered(e)) continue; const v=valueFor(e); if (v === null) { skipped++; continue; } if (write(e,v)) { filled++; touched.push(textFor(e)); } else skipped++; }
  // Report what a human still has to complete. Protected questions are in here by design — the
@@ -139,7 +197,7 @@ __PRELUDE__
  const custom = Array.from(document.querySelectorAll('[role="combobox"],[aria-haspopup="listbox"],[aria-autocomplete="list"]'))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !norm(e.value) && !chosen(e));
  const outstanding = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="file"]),textarea,select'))
-   .filter(e => visible(e) && !comboInput(e) && !e.disabled && !e.readOnly && !answered(e))
+   .filter(e => visible(e) && !comboInput(e) && !e.disabled && !e.readOnly && !groupAnswered(e))
    .map(e => { const l = labelFor(e); return l && e.tagName === 'SELECT' ? l + ' (dropdown)' : l; })
    .concat(custom.map(e => { const l = labelFor(e); return l ? l + ' (dropdown)' : ''; }))
    .filter(Boolean);
@@ -247,14 +305,66 @@ __PRELUDE__
 """.Replace("__PAYLOAD__", payload);
     }
 
-    public const string QuestionsScript = """
+    /// <summary>
+    /// The unanswered questions, worded exactly as the page words them.
+    ///
+    /// <para>
+    /// Built on the same prelude as the fill, and that is the whole point: these strings become the
+    /// keys of ChatGPT's answer object, and the fill then looks each field up by its own label. When
+    /// the two disagreed, nothing matched — this used to concatenate every label it could reach, so
+    /// an Ashby field came back as "Name Name Type here..." while the filler asked for "name", and
+    /// every answer ChatGPT returned was discarded.
+    /// </para>
+    /// </summary>
+    public static readonly string QuestionsScript = """
 (() => {
- const norm = s => String(s || '').replace(/\s+/g,' ').trim();
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
- const label = e => { const ls=e.labels ? Array.from(e.labels).map(x=>x.innerText).join(' ') : ''; const forLabel=e.id ? document.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.innerText : ''; const group=e.closest('fieldset,.field,.application-question,.question,.form-group,[class*="question" i]'); const question=group?.querySelector('legend,[data-question-label],label')?.innerText; return norm(question || [ls,forLabel,e.getAttribute('aria-label'),e.placeholder].filter(Boolean).join(' ')); };
- const protectedField = text => /\b(acknowledg|agree|agreement|attest|certif|consent|privacy|signature|terms|truthful|gender|race|ethnic|disabil|veteran|salary|compensation|work authori|sponsor|visa)\b/i.test(text);
- const answered = e => e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.tagName === 'SELECT' ? e.selectedIndex > 0 && !!e.value : !!String(e.value || '').trim();
- return Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="file"]),textarea,select')).filter(e=>visible(e)&&!e.disabled&&!answered(e)).map(label).filter((v,i,a)=>v&&!protectedField(v)&&a.indexOf(v)===i).slice(0,80);
+__PRELUDE__
+ const chosen = e => { const box = e.closest('[class*="select" i]:not(input)') || e.parentElement; return !!box?.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]'); };
+ const answered = e => e.type === 'checkbox' || e.type === 'radio' ? e.checked
+   : e.tagName === 'SELECT' ? e.selectedIndex > 0 && !!e.value
+   : !!String(e.value || '').trim();
+ // A radio group is answered when any of its options is — otherwise the same question is asked
+ // once per unchosen option, which is how three answer keys came back for one question.
+ const groupAnswered = e => (e.type === 'radio' || e.type === 'checkbox') && e.name
+   ? Array.from(document.getElementsByName(e.name)).some(x => x.checked)
+   : answered(e);
+ const fields = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="file"]),textarea,select'))
+   .filter(e => visible(e) && !e.disabled && !groupAnswered(e) && !comboInput(e));
+ const combos = Array.from(document.querySelectorAll('[role="combobox"],[aria-haspopup="listbox"],[aria-autocomplete="list"]'))
+   .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !norm(e.value) && !chosen(e));
+ // The candidate answers, so ChatGPT picks from the list instead of inventing wording the control
+ // will then reject. A react-select keeps its options out of the DOM until it is opened, so those
+ // come back empty and are flagged as a dropdown rather than pretended to be free text.
+ const optionsFor = e => {
+   if (e.tagName === 'SELECT')
+     return Array.from(e.options)
+       .filter(option => String(option.value || '').trim() !== '')
+       .map(option => String(option.text || '').replace(/\s+/g, ' ').trim())
+       .filter(Boolean);
+   if ((e.type === 'radio' || e.type === 'checkbox') && e.name)
+     return Array.from(document.getElementsByName(e.name))
+       .map(option => String((option.labels && option.labels[0]?.innerText) || option.value || '')
+         .replace(/\s+/g, ' ').trim())
+       .filter(Boolean);
+   return [];
+ };
+ const seen = new Set();
+ const asked = [];
+ for (const e of fields.concat(combos)) {
+   const question = labelFor(e);
+   if (!question || protectedField(norm(question))) continue;
+   const key = norm(question);
+   if (seen.has(key)) continue;
+   seen.add(key);
+   const options = optionsFor(e);
+   const item = { question };
+   if (options.length) item.options = options;
+   if (e.type === 'checkbox') item.multiple = true;
+   if (!options.length && (comboInput(e) || e.tagName === 'SELECT')) item.type = 'dropdown';
+   asked.push(item);
+   if (asked.length >= 80) break;
+ }
+ return asked;
 })()
-""";
+""".Replace("__PRELUDE__", MatchingPrelude).Replace("__PAYLOAD__", "{\"adapter\":\"\",\"values\":{}}");
 }

@@ -68,6 +68,9 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
     }
 
+    /// <summary>The /c/… conversation the resume chat lives in. Empty means no chat yet.</summary>
+    public string ResumeConversationUrl { get; private set; } = "";
+
     private bool _isAutomationRunning;
     public bool IsAutomationRunning
     {
@@ -184,7 +187,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
         var request = new ChatGptResumeRequest(
             workItemId, prompt, jobUrl, jd, questionsJson, knownAnswersJson,
-            startFreshChat, resumeOnly, label);
+            startFreshChat, resumeOnly, label, startFreshChat ? "" : ResumeConversationUrl);
 
         _activeRequest = request;
         _activeAnswersJson = "{}";
@@ -273,6 +276,25 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Called by the browser once it knows which conversation the resume landed in.</summary>
+    public Task NoteConversationAsync(string conversationUrl) => RememberConversationAsync(conversationUrl);
+
+    /// <summary>
+    /// ChatGPT answered the form questions with something that will not parse. The resume itself is
+    /// fine, so the run continues on reference data alone — but loudly, because the alternative was
+    /// an application quietly missing every written answer with nothing in the log to explain it.
+    /// </summary>
+    public void ReportUnusableAnswers(string reply)
+    {
+        var snippet = string.IsNullOrWhiteSpace(reply)
+            ? "(no reply captured)"
+            : reply.Length <= 200 ? reply.Trim() : reply.Trim()[..200] + "...";
+        var detail = "The form answers were not usable JSON, so only your saved personal data was " +
+                     "filled. ChatGPT said: " + snippet.Replace('\r', ' ').Replace('\n', ' ');
+        StatusMessage = detail;
+        _activity.Warning("Resume Studio", "Form answers discarded", detail);
+    }
+
     public void ReportAutomatedResumeFailure(Guid workItemId, string message) => Fail(workItemId, message);
 
     private void Fail(Guid workItemId, string message)
@@ -292,6 +314,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         CancelAutomation();
         ResumeChatStarted = false;
         CompletedInChat = 0;
+        _ = RememberConversationAsync("");
         NewChatRequested?.Invoke();
         StatusMessage = "Fresh ChatGPT resume chat opened. The full profile prompt will be sent with the next JD.";
     }
@@ -459,6 +482,40 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     {
         var settings = await _settings.GetAsync();
         GenerationLimit = Math.Clamp(settings.ResumeGenerationsPerChat, 1, 50);
+        ResumeConversationUrl = Session(settings)?.ResumeConversationUrl ?? "";
+        // A remembered conversation IS a started chat. Without this the first resume after a
+        // restart opened a new one and threw away a chat that still had generations left in it.
+        if (!string.IsNullOrWhiteSpace(ResumeConversationUrl)) ResumeChatStarted = true;
+    }
+
+    /// <summary>The active profile's ChatGPT session settings, or null when there is no profile.</summary>
+    private ChatGptResumeSessionSettings? Session(AppSettings settings)
+    {
+        var profile = _profiles.Current;
+        if (profile == null) return null;
+        return settings.ChatGptResumeSessions.TryGetValue(profile.Id.ToString(), out var session)
+            ? session : null;
+    }
+
+    /// <summary>
+    /// Remembers which conversation the resume chat is in, per profile. Every resume after the
+    /// first depends on the profile prompt sent at the top of that chat, so the URL is the only
+    /// thing that makes "continue the same chat" mean anything.
+    /// </summary>
+    private async Task RememberConversationAsync(string conversationUrl)
+    {
+        var profile = _profiles.Current;
+        if (profile == null) return;
+        var url = (conversationUrl ?? "").Trim();
+        if (string.Equals(url, ResumeConversationUrl, StringComparison.OrdinalIgnoreCase)) return;
+
+        ResumeConversationUrl = url;
+        var settings = await _settings.GetForEditAsync();
+        var key = profile.Id.ToString();
+        if (!settings.ChatGptResumeSessions.TryGetValue(key, out var session))
+            settings.ChatGptResumeSessions[key] = session = new ChatGptResumeSessionSettings();
+        session.ResumeConversationUrl = url;
+        await _settings.SaveAsync(settings);
     }
 
     private static string NormalizeAnswersJson(string raw)
@@ -494,7 +551,8 @@ public sealed record ChatGptResumeRequest(
     string KnownAnswersJson,
     bool StartFreshChat,
     bool ResumeOnly,
-    string Label);
+    string Label,
+    string ConversationUrl = "");
 
 public sealed record ResumeAutomationResult(
     Guid WorkItemId,

@@ -1,4 +1,4 @@
-# DevStrider 9.3
+# DevStrider 9.5
 
 A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
 company portal's PostgreSQL database.
@@ -224,5 +224,5 @@ so every machine holding this file can wipe the bucket. Treat the file according
 
 ## Version
 
-**9.3.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**9.5.3** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

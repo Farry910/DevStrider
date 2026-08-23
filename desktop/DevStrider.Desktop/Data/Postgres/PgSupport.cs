@@ -88,6 +88,12 @@ public abstract class PgRepository
     /// <summary>The signed-in <c>app_user.id</c>. Throws if there isn't one.</summary>
     protected long UserId => _session.Require();
 
+    /// <summary>
+    /// A connection of your own, for the rare write that spans statements — replacing a profile's
+    /// personal facts has to delete and re-insert as one unit, which the helpers below cannot do.
+    /// </summary>
+    protected Task<NpgsqlConnection> OpenAsync() => _db.OpenAsync();
+
     protected async Task<List<T>> ListAsync<T>(
         string sql, Action<NpgsqlCommand> bind, Func<NpgsqlDataReader, T> map)
     {

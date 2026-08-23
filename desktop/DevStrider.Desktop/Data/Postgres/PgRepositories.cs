@@ -605,19 +605,19 @@ public sealed class PgPeerDirectory : PgRepository, IPeerDirectory
     }
 }
 
-/// <summary>The reusable answer bank. Keyed on the normalised question, never on the job site.</summary>
-public sealed class PgFormAnswerRepository : PgRepository, IFormAnswerRepository
+
+/// <summary>Personal reference data. Holds only what ds_profiles does not.</summary>
+public sealed class PgPersonFactRepository : PgRepository, IPersonFactRepository
 {
     private const string Cols =
-        "id, user_id, profile_id, field_key, field_name, question, answer, kind, source, " +
-        "approved_at, last_site, last_seen_at, seen_count, created_at, updated_at";
+        "id, user_id, profile_id, field_name, field_data, slot, kind, sort_order, created_at, updated_at";
 
-    public PgFormAnswerRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
+    public PgPersonFactRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
 
-    public Task<List<FormAnswer>> ListByProfileAsync(ObjectId profileId) =>
+    public Task<List<PersonFact>> ListByProfileAsync(ObjectId profileId) =>
         ListAsync(
-            $"SELECT {Cols} FROM ds_form_answers WHERE user_id = @uid AND profile_id = @pid " +
-            "ORDER BY (answer = '') DESC, seen_count DESC, question",
+            $"SELECT {Cols} FROM ds_person_facts WHERE user_id = @uid AND profile_id = @pid " +
+            "ORDER BY kind, slot, sort_order, field_name",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("uid", UserId);
@@ -626,113 +626,62 @@ public sealed class PgFormAnswerRepository : PgRepository, IFormAnswerRepository
             Map);
 
     /// <summary>
-    /// The write the automation uses. Conflict resolution is deliberately asymmetric: seen_count
-    /// and last_site always move forward, but the answer only changes when the row has nothing yet
-    /// or the incoming answer is the user's. A ChatGPT answer must never quietly replace one the
-    /// user approved, which is the only thing that makes approval mean anything.
+    /// Delete-then-insert inside one transaction. The editor hands over the whole set, and a
+    /// removed education row has to actually disappear — an upsert-only write would leave it
+    /// behind and quietly keep feeding it to ChatGPT.
     /// </summary>
-    public Task RecordAsync(FormAnswer a)
+    public async Task ReplaceForProfileAsync(ObjectId profileId, IReadOnlyCollection<PersonFact> facts)
     {
-        Stamp(a);
-        return ExecuteAsync("""
-            INSERT INTO ds_form_answers (id, user_id, profile_id, field_key, field_name, question,
-                                         answer, kind, source, approved_at, last_site,
-                                         last_seen_at, seen_count, created_at, updated_at)
-            VALUES (@id, @uid, @pid, @fk, @fn, @q, @a, @k, @src, @ap, @site, @seen, 1, @ca, @ua)
-            ON CONFLICT (user_id, profile_id, field_key) DO UPDATE SET
-                field_name   = CASE WHEN EXCLUDED.field_name = '' THEN ds_form_answers.field_name
-                                    ELSE EXCLUDED.field_name END,
-                question     = CASE WHEN EXCLUDED.question = '' THEN ds_form_answers.question
-                                    ELSE EXCLUDED.question END,
-                answer       = CASE WHEN ds_form_answers.answer = '' OR EXCLUDED.source = 'user'
-                                    THEN EXCLUDED.answer ELSE ds_form_answers.answer END,
-                kind         = EXCLUDED.kind,
-                source       = CASE WHEN ds_form_answers.answer = '' OR EXCLUDED.source = 'user'
-                                    THEN EXCLUDED.source ELSE ds_form_answers.source END,
-                approved_at  = CASE WHEN EXCLUDED.source = 'user' THEN EXCLUDED.approved_at
-                                    ELSE ds_form_answers.approved_at END,
-                last_site    = CASE WHEN EXCLUDED.last_site = '' THEN ds_form_answers.last_site
-                                    ELSE EXCLUDED.last_site END,
-                last_seen_at = EXCLUDED.last_seen_at,
-                seen_count   = ds_form_answers.seen_count + 1,
-                updated_at   = EXCLUDED.updated_at
-            """,
-            cmd => Bind(cmd, a));
+        await using var connection = await OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        await using (var delete = new NpgsqlCommand(
+            "DELETE FROM ds_person_facts WHERE user_id = @uid AND profile_id = @pid", connection, transaction))
+        {
+            delete.Parameters.AddWithValue("uid", UserId);
+            delete.Parameters.AddWithValue("pid", Pg.Hex(profileId));
+            await delete.ExecuteNonQueryAsync();
+        }
+
+        foreach (var fact in facts)
+        {
+            if (string.IsNullOrWhiteSpace(fact.FieldName) || string.IsNullOrWhiteSpace(fact.FieldData)) continue;
+            fact.UserId = UserId;
+            fact.ProfileId = profileId;
+            fact.UpdatedAt = DateTime.UtcNow;
+
+            await using var insert = new NpgsqlCommand("""
+                INSERT INTO ds_person_facts (id, user_id, profile_id, field_name, field_data, slot,
+                                             kind, sort_order, created_at, updated_at)
+                VALUES (@id, @uid, @pid, @fn, @fd, @slot, @kind, @sort, @ca, @ua)
+                """, connection, transaction);
+            insert.Parameters.AddWithValue("id", Pg.Hex(fact.Id));
+            insert.Parameters.AddWithValue("uid", fact.UserId);
+            insert.Parameters.AddWithValue("pid", Pg.Hex(fact.ProfileId));
+            insert.Parameters.AddWithValue("fn", fact.FieldName.Trim());
+            insert.Parameters.AddWithValue("fd", fact.FieldData.Trim());
+            insert.Parameters.AddWithValue("slot", fact.Slot);
+            insert.Parameters.AddWithValue("kind", fact.Kind ?? PersonFactKinds.Text);
+            insert.Parameters.AddWithValue("sort", fact.SortOrder);
+            insert.Parameters.AddWithValue("ca", SharedDbContext.Utc(fact.CreatedAt));
+            insert.Parameters.AddWithValue("ua", SharedDbContext.Utc(fact.UpdatedAt));
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        await transaction.CommitAsync();
     }
 
-    /// <summary>The editor's write: what the user typed wins outright.</summary>
-    public Task UpsertAsync(FormAnswer a)
-    {
-        Stamp(a);
-        return ExecuteAsync("""
-            INSERT INTO ds_form_answers (id, user_id, profile_id, field_key, field_name, question,
-                                         answer, kind, source, approved_at, last_site,
-                                         last_seen_at, seen_count, created_at, updated_at)
-            VALUES (@id, @uid, @pid, @fk, @fn, @q, @a, @k, @src, @ap, @site, @seen, @count, @ca, @ua)
-            ON CONFLICT (user_id, profile_id, field_key) DO UPDATE SET
-                field_name   = EXCLUDED.field_name,
-                question     = EXCLUDED.question,
-                answer       = EXCLUDED.answer,
-                kind         = EXCLUDED.kind,
-                source       = EXCLUDED.source,
-                approved_at  = EXCLUDED.approved_at,
-                last_site    = EXCLUDED.last_site,
-                last_seen_at = EXCLUDED.last_seen_at,
-                updated_at   = EXCLUDED.updated_at
-            """,
-            cmd => Bind(cmd, a, includeCount: true));
-    }
-
-    public Task DeleteAsync(ObjectId id) =>
-        ExecuteAsync("DELETE FROM ds_form_answers WHERE id = @id AND user_id = @uid",
-            cmd =>
-            {
-                cmd.Parameters.AddWithValue("id", Pg.Hex(id));
-                cmd.Parameters.AddWithValue("uid", UserId);
-            });
-
-    private void Stamp(FormAnswer a)
-    {
-        a.UserId = UserId;
-        a.UpdatedAt = DateTime.UtcNow;
-        if (string.IsNullOrWhiteSpace(a.FieldKey)) a.FieldKey = FormAnswer.Normalise(a.Question);
-    }
-
-    private static void Bind(NpgsqlCommand cmd, FormAnswer a, bool includeCount = false)
-    {
-        cmd.Parameters.AddWithValue("id", Pg.Hex(a.Id));
-        cmd.Parameters.AddWithValue("uid", a.UserId);
-        cmd.Parameters.AddWithValue("pid", Pg.Hex(a.ProfileId));
-        cmd.Parameters.AddWithValue("fk", a.FieldKey ?? "");
-        cmd.Parameters.AddWithValue("fn", a.FieldName ?? "");
-        cmd.Parameters.AddWithValue("q", a.Question ?? "");
-        cmd.Parameters.AddWithValue("a", a.Answer ?? "");
-        cmd.Parameters.AddWithValue("k", a.Kind ?? FormAnswerKinds.Text);
-        cmd.Parameters.AddWithValue("src", a.Source ?? FormAnswerSources.Gpt);
-        cmd.Parameters.AddWithValue("ap", Pg.NullableUtc(a.ApprovedAt));
-        cmd.Parameters.AddWithValue("site", a.LastSite ?? "");
-        cmd.Parameters.AddWithValue("seen", SharedDbContext.Utc(a.LastSeenAt));
-        cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(a.CreatedAt));
-        cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(a.UpdatedAt));
-        if (includeCount) cmd.Parameters.AddWithValue("count", Math.Max(1, a.SeenCount));
-    }
-
-    private static FormAnswer Map(NpgsqlDataReader r) => new()
+    private static PersonFact Map(NpgsqlDataReader r) => new()
     {
         Id = Pg.OidAt(r, 0),
         UserId = r.GetInt64(1),
         ProfileId = Pg.OidAt(r, 2),
-        FieldKey = Pg.Text(r, 3),
-        FieldName = Pg.Text(r, 4),
-        Question = Pg.Text(r, 5),
-        Answer = Pg.Text(r, 6),
-        Kind = Pg.Text(r, 7),
-        Source = Pg.Text(r, 8),
-        ApprovedAt = Pg.NullableDateAt(r, 9),
-        LastSite = Pg.Text(r, 10),
-        LastSeenAt = r.GetDateTime(11),
-        SeenCount = r.GetInt32(12),
-        CreatedAt = r.GetDateTime(13),
-        UpdatedAt = r.GetDateTime(14),
+        FieldName = Pg.Text(r, 3),
+        FieldData = Pg.Text(r, 4),
+        Slot = r.GetInt32(5),
+        Kind = Pg.Text(r, 6),
+        SortOrder = r.GetInt32(7),
+        CreatedAt = r.GetDateTime(8),
+        UpdatedAt = r.GetDateTime(9),
     };
 }

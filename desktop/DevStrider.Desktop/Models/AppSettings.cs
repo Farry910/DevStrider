@@ -151,11 +151,24 @@ public sealed class ChatGptResumeSessionSettings
     public bool AutomaticallyRunWordMacro { get; set; }
     public bool AutomaticallySubmitChatGptPrompt { get; set; }
 
+    /// <summary>
+    /// The <c>/c/…</c> conversation the resume chat is running in.
+    ///
+    /// <para>
+    /// Persisted because the profile prompt is sent once, at the start of a chat, and every later
+    /// resume relies on that context. Without a note of which conversation it was, a follow-up went
+    /// to whatever the ChatGPT pane happened to be showing — so one click in its sidebar sent the
+    /// next job description into an unrelated chat that had never seen the resume instructions.
+    /// </para>
+    /// </summary>
+    public string ResumeConversationUrl { get; set; } = "";
+
     public ChatGptResumeSessionSettings Clone() => new()
     {
         GenerationLimit = GenerationLimit,
         AutomaticallyRunWordMacro = AutomaticallyRunWordMacro,
         AutomaticallySubmitChatGptPrompt = AutomaticallySubmitChatGptPrompt,
+        ResumeConversationUrl = ResumeConversationUrl,
     };
 }
 

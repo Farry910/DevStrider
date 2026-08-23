@@ -171,27 +171,20 @@ public interface IPeerDirectory
         DateTime fromUtc, DateTime toUtc, bool includeUndated);
 }
 
+
 /// <summary>
-/// The reusable answer bank — <c>ds_form_answers</c>, one row per question per profile.
+/// Personal reference data — <c>ds_person_facts</c>: education, career history and custom fields.
 ///
 /// <para>
-/// Answers are not scoped by job site on purpose: the same question is worded differently on every
-/// board, so a per-site key would store the same answer many times and still miss. The key is the
-/// normalised question, and ChatGPT reconciles the wording.
+/// Everything <c>ds_profiles</c> already holds is absent here on purpose. That row is shared with
+/// the company portal, which allocates profiles to people and reports on them, so name, location,
+/// phone, email and LinkedIn have exactly one home and it is not this table.
 /// </para>
 /// </summary>
-public interface IFormAnswerRepository
+public interface IPersonFactRepository
 {
-    /// <summary>Every answer for the profile, outstanding ones included.</summary>
-    Task<List<FormAnswer>> ListByProfileAsync(ObjectId profileId);
+    Task<List<PersonFact>> ListByProfileAsync(ObjectId profileId);
 
-    /// <summary>
-    /// Insert, or merge into the existing row for the same question. A stored user answer is never
-    /// overwritten by a later ChatGPT one — approval is the whole point of the bank.
-    /// </summary>
-    Task RecordAsync(FormAnswer answer);
-
-    Task UpsertAsync(FormAnswer answer);
-
-    Task DeleteAsync(ObjectId id);
+    /// <summary>Replaces the profile's facts wholesale — the editor saves a complete picture.</summary>
+    Task ReplaceForProfileAsync(ObjectId profileId, IReadOnlyCollection<PersonFact> facts);
 }

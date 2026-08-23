@@ -124,9 +124,8 @@
                 <RowDefinition Height="Auto"/>   <!-- 6  macro label -->
                 <RowDefinition Height="Auto"/>   <!-- 7  macro box -->
                 <RowDefinition Height="Auto"/>   <!-- 8  macro help -->
-                <RowDefinition Height="Auto"/>   <!-- 9  prompt label + insert default -->
-                <RowDefinition Height="*" MinHeight="120"/>  <!-- 10 prompt box, takes the slack -->
-                <RowDefinition Height="Auto"/>   <!-- 11 prompt help -->
+                <RowDefinition Height="Auto"/>   <!-- 9  personal info -->
+                <RowDefinition Height="*" MinHeight="60"/>   <!-- 10 resume prompt expander -->
               </Grid.RowDefinitions>
 
               <TextBlock Grid.Row="0" Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -165,32 +164,157 @@
               <TextBlock Grid.Row="8" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
                          Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
 
-              <Grid Grid.Row="9" Margin="0,0,0,2">
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*"/>
-                  <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Resume prompt (sent to ChatGPT before each job description)"
-                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <Button Grid.Column="1" Command="{Binding UseDefaultPromptCommand}" Style="{StaticResource GhostButton}" Padding="8,2"
-                        VerticalAlignment="Center">
-                  <TextBlock Text="Insert default" FontSize="11"/>
-                </Button>
-              </Grid>
-              <!-- Stretches into whatever height is spare. The prompt is the one field here
-                   people actually read and edit at length, so it gets the slack rather than a
-                   fixed 120px that was too small on a big screen and too big on a laptop. -->
-              <TextBox Grid.Row="10"
-                       Text="{Binding Selected.ResumePrompt, UpdateSourceTrigger=PropertyChanged}"
-                       AcceptsReturn="True"
-                       TextWrapping="Wrap"
-                       VerticalScrollBarVisibility="Auto"
-                       VerticalAlignment="Stretch"
-                       FontFamily="Consolas"
-                       Tag="Act as an expert resume writer. Tailor my resume to this job description…"
-                       Margin="0,2,0,4"/>
-              <TextBlock Grid.Row="11" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,0"
-                         Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
+              <!--
+                Personal info: the reference data ChatGPT is given when it writes the resume and
+                then answers the application's questions. Contact details are absent on purpose —
+                they are columns on ds_profiles above, which the company portal reads too, so there
+                is exactly one copy of them.
+              -->
+              <StackPanel Grid.Row="9" Margin="0,0,0,12">
+                <TextBlock Text="Personal info" FontWeight="SemiBold" Margin="0,0,0,2"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                           Text="Everything ChatGPT is told about this person beyond the fields above. It writes the rest of the resume from here, then answers each application's questions from the finished resume plus this data."/>
+
+                <!--
+                  Contact details are columns on ds_profiles, not facts — the company portal reads
+                  that row too. They are edited here because this is where a person's data belongs
+                  in the user's head, but they save to the profile row, which stays the one copy.
+                -->
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Email"/>
+                  <TextBox  Grid.Row="1" Grid.Column="0" Margin="0,2,4,8" Tag="you@example.com"
+                            Text="{Binding Selected.PersonalEmail, UpdateSourceTrigger=PropertyChanged}"/>
+                  <TextBlock Grid.Row="0" Grid.Column="1" Text="Phone"/>
+                  <TextBox  Grid.Row="1" Grid.Column="1" Margin="4,2,0,8" Tag="+1 555 0100"
+                            Text="{Binding Selected.Phone, UpdateSourceTrigger=PropertyChanged}"/>
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" Text="Location"/>
+                  <TextBox  Grid.Row="3" Grid.Column="0" Margin="0,2,4,8" Tag="City, Country"
+                            Text="{Binding Selected.Location, UpdateSourceTrigger=PropertyChanged}"/>
+                  <TextBlock Grid.Row="2" Grid.Column="1" Text="LinkedIn / personal website"/>
+                  <TextBox  Grid.Row="3" Grid.Column="1" Margin="4,2,0,8" Tag="https://linkedin.com/in/you"
+                            Text="{Binding Selected.LinkedinUrl, UpdateSourceTrigger=PropertyChanged}"/>
+
+                  <TextBlock Grid.Row="4" Grid.ColumnSpan="2" Text="Headline"/>
+                  <TextBox  Grid.Row="5" Grid.ColumnSpan="2" Margin="0,2,0,0" Tag="Senior Platform Engineer"
+                            Text="{Binding Selected.Headline, UpdateSourceTrigger=PropertyChanged}"/>
+                </Grid>
+
+                <TextBlock Text="Education (BS to PhD, up to 3)" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                <ItemsControl ItemsSource="{Binding Education}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="110"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,4,0" Tag="Degree, e.g. BSc Computer Science"
+                                 Text="{Binding Degree, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Grid.Column="1" Margin="0,0,4,0" Tag="School"
+                                 Text="{Binding School, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Grid.Column="2" Margin="0,0,4,0" Tag="2014-2018"
+                                 Text="{Binding Period, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Grid.Column="3" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                Style="{StaticResource GhostButton}" Padding="8,2" ToolTip="Remove"
+                                Command="{Binding DataContext.RemoveEducationCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                CommandParameter="{Binding}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Command="{Binding AddEducationCommand}" Content="Add education" HorizontalAlignment="Left"
+                        Style="{StaticResource GhostButton}" Padding="8,2" Margin="0,2,0,10"
+                        IsEnabled="{Binding CanAddEducation}"/>
+
+                <TextBlock Text="Career path (company and period)" FontWeight="SemiBold" Margin="0,4,0,4"/>
+                <ItemsControl ItemsSource="{Binding Careers}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="140"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,4,0" Tag="Company"
+                                 Text="{Binding Company, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Grid.Column="1" Margin="0,0,4,0" Tag="2020-2023"
+                                 Text="{Binding Period, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Grid.Column="2" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                Style="{StaticResource GhostButton}" Padding="8,2" ToolTip="Remove"
+                                Command="{Binding DataContext.RemoveCareerCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                CommandParameter="{Binding}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Command="{Binding AddCareerCommand}" Content="Add career" HorizontalAlignment="Left"
+                        Style="{StaticResource GhostButton}" Padding="8,2" Margin="0,2,0,10"/>
+
+                <TextBlock Text="Other fields" FontWeight="SemiBold" Margin="0,4,0,2"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,4"
+                           Text="Anything else an application asks for and this person is willing to answer — exact address, gender, work authorisation, notice period. Never government IDs or bank details; DevStrider refuses those."/>
+                <ItemsControl ItemsSource="{Binding CustomFields}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="220"/>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Margin="0,0,4,0" Tag="Field name"
+                                 Text="{Binding FieldName, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBox Grid.Column="1" Margin="0,0,4,0" Tag="Value"
+                                 Text="{Binding FieldData, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button Grid.Column="2" Content="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                Style="{StaticResource GhostButton}" Padding="8,2" ToolTip="Remove"
+                                Command="{Binding DataContext.RemoveCustomFieldCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                CommandParameter="{Binding}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Command="{Binding AddCustomFieldCommand}" Content="Add field" HorizontalAlignment="Left"
+                        Style="{StaticResource GhostButton}" Padding="8,2" Margin="0,2,0,0"/>
+              </StackPanel>
+
+              <!--
+                Collapsed by default. The prompt is long, rarely edited once it works, and used to
+                eat every spare pixel of the editor — which is the space Personal info now needs.
+              -->
+              <Expander Grid.Row="10" IsExpanded="False" VerticalAlignment="Top">
+                <Expander.Header>
+                  <TextBlock Text="Resume prompt (sent to ChatGPT before each job description)"
+                             FontWeight="SemiBold" TextWrapping="Wrap"/>
+                </Expander.Header>
+                <StackPanel Margin="0,6,0,0">
+                  <Button Command="{Binding UseDefaultPromptCommand}" Style="{StaticResource GhostButton}"
+                          Padding="8,2" HorizontalAlignment="Left" Margin="0,0,0,4">
+                    <TextBlock Text="Insert default" FontSize="11"/>
+                  </Button>
+                  <TextBox Text="{Binding Selected.ResumePrompt, UpdateSourceTrigger=PropertyChanged}"
+                           AcceptsReturn="True" TextWrapping="Wrap" Height="260"
+                           VerticalScrollBarVisibility="Auto" FontFamily="Consolas"
+                           Tag="Act as an expert resume writer. Tailor my resume to this job description…"
+                           Margin="0,2,0,4"/>
+                  <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                             Text="The prompt must make ChatGPT end its reply with two lines: a [FolderName]: line (your macro reads it for the output filename) and a final fast-feed line 'UID, Company, Role, Stack1, Stack2' (DevStrider parses it to auto-record the bid). Click 'Insert default' for a working template."/>
+                </StackPanel>
+              </Expander>
             </Grid>
           </ScrollViewer>
         </DockPanel>

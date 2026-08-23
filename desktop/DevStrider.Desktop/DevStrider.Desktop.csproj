@@ -116,8 +116,63 @@
          spent five seconds reaching for a database nobody has any more. LegacyStore, that import,
          MongoUri/DatabaseName and their env vars and Settings panel are gone. ObjectId stayed
          behind as the identity type for every ds_*.id, so it is defined here now — same 12 bytes,
-         same 24-character hex, same chronological ordering — and existing rows are untouched. -->
-    <Version>9.3.0</Version>
+         same 24-character hex, same chronological ordering — and existing rows are untouched.
+         9.3.1 makes Job Operations render. AssistedAutomationView was the one view in the project
+         with no code-behind, so the XAML compiler emitted its InitializeComponent and nothing ever
+         called it: the control instantiated with a null Content and the tab had been an empty white
+         panel since it was added.
+         9.4.0 replaces the answer bank with personal reference data. ds_form_answers, its service,
+         repository and the Job Operations Answers tab are gone: storing a question-and-answer per
+         field was the wrong unit, because every board words the same question differently. What
+         ChatGPT needs is the person, so ds_person_facts holds their education, career history and
+         any custom field, and the generated resume plus that reference block is what it answers
+         each application from. ds_profiles is untouched and stays the single source of truth for
+         name, location, phone, email and LinkedIn — the company portal reads that row too. The
+         Profiles editor gains a Personal info section, and the resume prompt becomes an expander
+         so it stops taking every spare pixel.
+         9.4.1 makes the two page scripts agree on what a field is called. QuestionsScript still
+         concatenated every label it could reach, so an Ashby field became the key "Name Name Type
+         here..." while the filler, fixed in 9.1.5, looked itself up as "name" — every answer
+         ChatGPT returned was discarded and Ashby filled 0 of 11. It now shares the fill prelude, so
+         one rule names a field for both. Matching also works in both directions: a field labelled
+         just "Name" could never match the key "full name", because only key-inside-label was tried.
+         Best match wins rather than first, so "first name" is still not answered by "name".
+         9.4.2 lets a person actually be entered. ds_profiles has held location, phone,
+         personal_email, linkedin_url and headline since 8.0.0 and the form filler reads all five,
+         but nothing in the app ever offered a box to type them into — so they were empty, and no
+         amount of reference data could fill an Email or LinkedIn field. They are now in Profiles
+         under Personal info, saving to the profile row the company portal shares. An empty answer
+         from ChatGPT no longer overwrites one either: the lookup is case-insensitive, so a blank
+         "Email" landed on the profile's own email and removed it from the fill. Radio and checkbox
+         options are also asked as their group's question rather than one question per option.
+         9.5.0 adds Job Operations -> Quick answers: the questions an application could not answer,
+         raised the moment the fill finishes so they are in front of the user while the form is
+         still open next door. An answer given there is written straight into the profile's personal
+         info as a custom fact, which is what makes the same question fill itself afterwards — there
+         is no separate answer store to keep in step. "How did you hear about..." now defaults to
+         LinkedIn, keyed on the shortest wording that still matches every board.
+         9.5.1 fixes two things that made the reference data and the resume chat unreliable. The
+         personal data cache was filled on construction — before sign-in, so with no profile and
+         nothing to read — and afterwards only on a profile switch, so editing Personal info never
+         reached ChatGPT; it is now read fresh before the prompt and before each fill. And the
+         resume conversation is remembered per profile: continuing a chat used to submit wherever
+         the pane was pointing, so one click in ChatGPT's sidebar sent the next job description to
+         a conversation that had never seen the profile prompt.
+         9.5.2 resolves a field's label without assuming the markup. 9.4.2 read a radio group's
+         question from its fieldset legend, which Ashby has no fieldset for, so its options came
+         back as three separate questions and its comboboxes as "Start typing...". The label is now
+         taken from the field's own wrapper — the nearest ancestor holding this control and nothing
+         else fillable, radio options of one group counting as one control. Walking up stops at the
+         first ancestor containing a different field, so a neighbour's label still cannot be reached,
+         which is what 9.1.5 had to delete the old ancestor scan for. Verified against the live
+         Ashby form in WebView2 rather than a fixture, which is how the previous attempt passed its
+         test and still failed: Ashby has no fieldset on any control.
+         9.5.3 sends the candidate answers with each choice question. A radio group or select now
+         arrives as {question, options[]} so ChatGPT picks one of the control's own strings instead
+         of inventing wording it will then reject; checkbox groups add "multiple": true, and a
+         react-select, whose list is not in the DOM until it is opened, is marked as a dropdown so
+         the model answers with a short likely value. Answer keys stay the plain question text. -->
+    <Version>9.5.3</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

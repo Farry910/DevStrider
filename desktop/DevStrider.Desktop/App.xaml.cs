@@ -122,7 +122,7 @@ public partial class App : Application
         services.AddSingleton<IBidRepository, PgBidRepository>();
         services.AddSingleton<IInterviewRepository, PgInterviewRepository>();
         services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
-        services.AddSingleton<IFormAnswerRepository, PgFormAnswerRepository>();
+        services.AddSingleton<IPersonFactRepository, PgPersonFactRepository>();
 
         // ── services ────────────────────────────────────────────────────────
         services.AddSingleton<ProfileService>();      // the ds_users row: the account name
@@ -133,7 +133,8 @@ public partial class App : Application
         services.AddSingleton<FolderBidImport>();
         services.AddSingleton<InterviewService>();
         services.AddSingleton<StatsService>();
-        services.AddSingleton<FormAnswerService>();
+        services.AddSingleton<PersonFactsService>();
+        services.AddSingleton<QuickAnswerService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
         services.AddSingleton<LocalApiServer>();
@@ -151,7 +152,7 @@ public partial class App : Application
         services.AddSingleton<ProfilesViewModel>();
         services.AddSingleton<PeersViewModel>();
         services.AddSingleton<ResumeStudioViewModel>();
-        services.AddSingleton<FormAnswersViewModel>();
+        services.AddSingleton<QuickAnswersViewModel>();
         services.AddSingleton<AssistedAutomationViewModel>();
         services.AddSingleton<JobBrowserViewModel>();
         services.AddSingleton<MainWindowViewModel>();
