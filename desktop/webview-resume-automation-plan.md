@@ -1,6 +1,6 @@
 # DevStrider ChatGPT UI Automation
 
-Updated: 2026-08-21
+Updated: 2026-08-23
 
 ## Product decision
 
@@ -8,10 +8,11 @@ DevStrider uses two persistent WebView2 workspaces: one for signed-in ChatGPT an
 job sites. It does not call an OpenAI API and does not request an API key. Model and reasoning-effort
 selection remain in the ChatGPT UI because those controls belong to the user's ChatGPT plan.
 
-This is intentionally **assisted automation**. DevStrider can navigate, extract, prompt, generate,
-fill, and upload after the user approves the queue. It always stops before a job site's final Submit
-action. Missing JDs, sign-in/MFA/bot interstitials, protected questions, uncertain selectors, and
-changed site markup are visible recovery points rather than reasons to guess.
+This is **user-approved automatic application processing**. After the user approves the queue,
+DevStrider can navigate, extract, prompt, generate, fill, upload, and submit through the selected
+job-site adapter. Missing JDs, sign-in/MFA/bot interstitials, protected questions, uncertain
+selectors, changed site markup, and submission results that cannot be confirmed remain visible
+recovery points rather than reasons to guess.
 
 ## Implemented user experience
 
@@ -30,10 +31,14 @@ changed site markup are visible recovery points rather than reasons to guess.
    - captures the resume as a local draft and runs the configured Word macro;
    - fills deterministic profile values, reusable answers, and ChatGPT answers;
    - uploads the generated PDF/DOC/DOCX when the configured output path resolves; and
-   - pauses at **Ready for review**.
-5. The user reviews every field and the resume, clicks Submit on the actual job site, then chooses
-   **Mark submitted & next**. Only then does the local bid move from `draft` to `applied` and the
-   next queued URL starts.
+   - validates the visible step with the selected apply adapter and advances intermediate
+     Next/Continue actions;
+   - clicks final Submit through WebView2's browser input pipeline;
+   - captures any site-rendered errors for one targeted ChatGPT correction and resubmits; and
+   - marks the bid `applied` and opens the next URL when the site confirms submission.
+5. If the site shows neither a readable validation error nor a reliable confirmation, the item pauses
+   at **Ready for review**. The user can inspect the visible result, submit manually if necessary,
+   and choose **Mark submitted & next**.
 
 The URL input and ordinary action controls are unavailable while the automatic portion is active.
 Manual and recovery tools remain available when automation is stopped or reaches a checkpoint.
@@ -80,7 +85,12 @@ website does not expose reliable request-token accounting to this workflow.
 
 ## Form adapters
 
-`JobSiteFormAdapters` contains host-specific core selectors for:
+The URL is resolved specific-first through `JobSiteApplyAdapters`. Each specific apply adapter owns
+its application-entry selectors, action selectors, and error selectors. If no host matches, the
+Default adapter is selected automatically. `JobSiteFormAdapters` supplies the corresponding
+host-specific core field selectors and the guarded generic field matcher.
+
+Implemented apply adapters are:
 
 - Greenhouse
 - Ashby
@@ -96,17 +106,87 @@ labels, accessible names, names, IDs, placeholders, and nearby legends. The valu
 2. saved reusable answers;
 3. answers generated for the current form.
 
-Adapters dispatch `input`, `change`, and `blur` so controlled forms see changes. They skip hidden,
-disabled, read-only, pre-filled, and file inputs during normal fill. They do not answer or change
-legal/consent/signature, demographic, disability, veteran, salary/compensation, work-authorization,
-sponsorship, or visa fields. Radio and checkbox changes require an explicit matching answer.
+Adapters type every normal text input and textarea character by character through WebView2 browser
+input, including long GPT prose answers, and move focus with Tab so controlled forms retain and validate the values. They
+skip disabled, read-only, pre-filled, and file inputs during normal fill. Government identifiers and
+financial-account details are never filled. Other sensitive questions require an explicit saved or
+GPT-returned answer; the app does not invent one. Settings > Application defaults provides an optional
+salary/compensation expectation, including currency and period. When it is blank, salary questions stay
+unanswered for human review.
+
+Choice extraction covers native radio/checkbox groups, visually hidden native radios with visible
+labels, semantic `[role="radio"]` controls, and grouped single-select buttons using `aria-pressed`.
+For Ashby native radios without a `fieldset` or ARIA group, the surrounding one-question
+`data-field-entry-id`/`data-field-path` element is the group boundary. Long eligibility and
+sponsorship questions retain their explanatory notes rather than being truncated in the GPT prompt.
+The complete option set is attached to the exact question sent to ChatGPT. Filling matches the returned
+answer to one exact visible option, measures its viewport coordinates, and commits it through
+WebView2's browser-level mouse input. The same selected-state check is used by extraction, filling,
+and final validation, so one chosen option marks the whole group answered.
+
+Ashby yes/no fields are a special button-group shape: two `aria-pressed` buttons and one hidden
+checkbox sit below the question label without a semantic group role. The adapter groups the buttons
+by their smallest shared option container, resolves the question from the surrounding
+`data-field-entry-id`/`data-field-path` field entry, and ignores the checkbox because it is only the
+widget's mirrored state. Consequently ChatGPT receives exactly `Yes` and `No`, and filling must click
+the matching visible button.
+
+Native and custom dropdowns contribute their available options to the ChatGPT question prompt.
+Every custom dropdown is activated and its final exact option is committed through browser-level
+mouse input; keyboard-backed fallbacks use browser-level Enter. The app then focuses the search input
+revealed by that interaction and polls while asynchronously rendered options mount. It collects the complete,
+unfiltered focused menu before typing any candidate; candidate typing is only a fallback for backend
+autocomplete controls that return no choices until searched. Menus are scanned through their scroll
+range so virtualized choices are included. During fill, the adapter activates the control the same
+way, chooses an exact returned option, and confirms the control renders that choice; leftover dropdown
+search text is not counted as a fill.
+
+Dropdown ownership is deliberately strict. Options are read only from the activated control's
+`aria-controls`/`aria-owns` menu or a menu that became visible because of that activation; ordinary
+page list items are never used as options. Extraction stops after repeated reads return a stable option
+set even if a site reports a scroll range that does not advance, then sends Escape, blur, and a neutral
+outside click before opening the next dropdown. This prevents Greenhouse controls from remaining open
+and blocking the following field. Placeholder values such as `No options` are not sent as autocomplete
+search terms.
+
+Resume upload runs before text entry because some controlled forms rerender after a file changes.
+For Ashby, static select candidates come from the job page's read-only application-form schema because
+its rendered menus do not consistently expose listbox/option roles. Autocomplete controls without a
+finite static list are queried using the candidate's saved value and their returned suggestions are
+attached to the question.
+
+Application fields use one bounded two-pass correction. The primary pass types the best grounded
+values from personal/reference data and the first ChatGPT answer, then physically clicks the visible
+Next or final Submit action. Only errors rendered by the job site after that click enter the second
+pass. The adapter's DOM outstanding-field scan remains diagnostic and never adds speculative questions
+to the GPT correction payload. Each rejected question carries its primary answer, the exact site error,
+and any options gathered from the live control. ChatGPT must choose an exact supplied option when
+options exist; otherwise it returns a corrected grounded value that addresses the failure. Corrected
+answers are merged into the work item and only failed fields are refilled. The failed-question inventory
+remains persisted until that refill begins, so a correct-looking old DOM value cannot cause the control
+to be skipped. Rejected grouped choices are deliberately transitioned to another option and back to
+the requested answer; text and dropdown fields are cleared/recommitted through browser input. There is no retry loop: one
+correction pass is allowed, then the application is resubmitted. It returns to human review only when
+fields remain unresolved or the job site's submission outcome cannot be confirmed.
+
+Controlled text fields are processed sequentially rather than in one browser task. After each blur,
+the host waits for the job site's asynchronous state update, reads the field back, and retries once
+if the value did not persist. A delayed final scan identifies anything still empty before submission.
 
 File upload uses WebView2's browser protocol because page JavaScript cannot assign a local file.
 It inspects flattened DOM nodes, prefers resume/CV inputs, rejects likely cover-letter/photo inputs,
 assigns only PDF/DOC/DOCX, and dispatches file-input notifications. If no suitable input or generated
-file exists, the review checkpoint asks for manual attention. No adapter clicks Submit, Next,
-Continue, CAPTCHA, MFA, or legal declarations. A narrowly matched Apply/Apply now/Start application
-control may be opened so the form itself becomes available.
+file exists, the review checkpoint asks for manual attention.
+
+After filling, the selected apply adapter calls the form's browser validation and reads its
+site-specific rendered errors. It locates intermediate Next/Continue and final Submit actions, while
+the host clicks their visible coordinates using WebView2 browser-level mouse events. After final
+Submit, the app polls for asynchronously rendered React errors and sends structured question/message
+pairs directly to the second ChatGPT answer pass. Corrected controls are committed and submitted once
+more. A site confirmation—or disappearance of the form after the bounded confirmation delay—completes
+the queue item; an ambiguous result pauses for review with a read-only validation observer still
+active. A narrowly matched Apply/Apply now/Start application control may be opened so the form itself
+becomes available. CAPTCHA and MFA remain human recovery points.
 
 Live job sites change frequently. “Implemented” means the engine and current selector contracts are
 present; it is not a guarantee that every provider variant or iframe works forever. Failures keep
@@ -119,11 +199,18 @@ Each queued item persists:
 - URL, intent, timestamps, and detailed pipeline status;
 - extracted JD and form questions;
 - current answers and generated resume path;
+- the ChatGPT answer-conversation ID and reopenable `/c/...` URL;
+- second-pass attempt count and any pending correction questions;
 - adapter, local bid ID, last error, and attempt count.
 
 Statuses distinguish loading, extraction, missing JD, ChatGPT generation, document creation, form
 fill, human review, submitted, failed, and skipped. Old `In progress`/`Completed` queue values migrate
 to `Queued`/`Submitted` when loaded.
+
+The answer-conversation URL is saved as soon as ChatGPT assigns it, before Word generation begins.
+A dynamic-field correction always returns to that exact conversation. If the process is restarted
+and the queue item is retried, its question phase also reopens the persisted answer conversation
+instead of silently creating a different chat without the earlier application-answer context.
 
 The two WebView controls are created once by the main window and hidden rather than recreated when
 tabs change. ChatGPT and job sites use separate WebView2 data folders, preserving their own signed-in

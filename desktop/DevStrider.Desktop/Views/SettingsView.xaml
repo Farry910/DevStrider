@@ -45,6 +45,19 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
+          <TextBlock Text="Application defaults" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Values entered here are explicit reusable answers. DevStrider may use them directly or give them to ChatGPT when an application offers fixed choices."/>
+          <TextBlock Text="Salary / compensation expectation"/>
+          <TextBox Text="{Binding Model.SalaryExpectation, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,4" Tag="Example: USD 140,000-160,000 per year"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="Include the currency and time period. Leave blank to keep salary questions unanswered for manual review."/>
+        </StackPanel>
+      </Border>
+
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
           <TextBlock Text="Shared database (PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
                      Text="The company portal's database — where your account is read from and where every bid and interview is stored. There is no local copy. DevStrider creates no tables: run desktop/shared-db-schema.sql against it once, by hand. Everything in these tables is visible to everyone on the team, job URLs, job descriptions, resume text and comments included."/>

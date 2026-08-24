@@ -90,8 +90,8 @@
         <Border Style="{StaticResource Card}" Margin="0,0,0,12"
                 Visibility="{Binding IsReadyForReview, Converter={StaticResource BooleanToVisibilityConverter}}">
           <StackPanel>
-            <TextBlock Text="Human review required" FontWeight="SemiBold"/>
-            <TextBlock Text="Review every field and the uploaded resume. Submit on the job site yourself; DevStrider never clicks the final Submit button."
+            <TextBlock Text="Review required" FontWeight="SemiBold"/>
+            <TextBlock Text="Automatic submission could not be confirmed. Review the visible fields and result; submit manually if needed, then continue the queue."
                        Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
             <WrapPanel>
               <Button Command="{Binding MarkSubmittedAndContinueCommand}" Content="Mark submitted &amp; next" Margin="0,0,8,8"/>

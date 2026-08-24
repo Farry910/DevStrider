@@ -81,6 +81,13 @@ public class AppSettings
     public string ResumeOutputFileBase { get; set; } = "Resume";
 
     /// <summary>
+    /// User-supplied salary or compensation expectation for application questions. Kept as free
+    /// text so the user can include currency, range, and period (for example USD 140k-160k/year).
+    /// The form adapter never invents this value; an empty setting leaves salary questions open.
+    /// </summary>
+    public string SalaryExpectation { get; set; } = "";
+
+    /// <summary>
     /// Legacy answer bank, kept only so <see cref="Services.FormAnswerService"/> can move it into
     /// <c>ds_form_answers</c> once and then empty it. Answers live in the shared database now, so
     /// they follow the account between machines instead of sitting in one settings.json. Nothing
@@ -188,6 +195,15 @@ public sealed partial class JobLinkQueueItem : ObservableObject
     public string AdapterName { get; set; } = "";
     public string Error { get; set; } = "";
 
+    /// <summary>
+    /// The ChatGPT conversation used to answer this application's questions. The conversation id
+    /// is stored separately for diagnostics; the URL is the durable value WebView2 can reopen.
+    /// </summary>
+    public string AnswerConversationId { get; set; } = "";
+    public string AnswerConversationUrl { get; set; } = "";
+    public int AnswerCorrectionAttempts { get; set; }
+    public string PendingCorrectionQuestionsJson { get; set; } = "[]";
+
     /// <summary>Survives requeues so a link that keeps failing is visible as such rather than looping silently.</summary>
     public int Attempts { get; set; }
 
@@ -208,6 +224,10 @@ public sealed partial class JobLinkQueueItem : ObservableObject
         BidId = BidId,
         AdapterName = AdapterName,
         Error = Error,
+        AnswerConversationId = AnswerConversationId,
+        AnswerConversationUrl = AnswerConversationUrl,
+        AnswerCorrectionAttempts = AnswerCorrectionAttempts,
+        PendingCorrectionQuestionsJson = PendingCorrectionQuestionsJson,
         Attempts = Attempts,
         Status = Status,
     };
@@ -228,6 +248,7 @@ public static class JobLinkQueueStatuses
     public const string GeneratingResume = "Generating resume";
     public const string CreatingDocument = "Creating document";
     public const string FillingApplication = "Filling application";
+    public const string ResolvingApplicationFields = "Resolving application fields";
     public const string ReadyForReview = "Ready for review";
     public const string Submitted = "Submitted";
     public const string ResumeReady = "Resume ready";

@@ -171,8 +171,172 @@
          arrives as {question, options[]} so ChatGPT picks one of the control's own strings instead
          of inventing wording it will then reject; checkbox groups add "multiple": true, and a
          react-select, whose list is not in the DOM until it is opened, is marked as a dropdown so
-         the model answers with a short likely value. Answer keys stay the plain question text. -->
-    <Version>9.5.3</Version>
+         the model answers with a short likely value. Answer keys stay the plain question text.
+         9.5.4 stops the form answers being thrown away in silence. NormalizeAnswersJson ended in
+         catch (JsonException) { return "{}"; }, so a reply that did not parse became no answers at
+         all with nothing logged — the application filled from saved personal data only and looked
+         merely unlucky. The wait now holds out for a reply that parses into a non-empty object,
+         the same predicate the resume step has had since 9.1.3 and this one never got, and a reply
+         that still will not parse is reported to Activity with what ChatGPT actually said.
+         9.5.5 removes the two silent dead-ends between the answers and the form. If the reply came
+         back for a run that was no longer active, CompleteAutomatedResumeAsync returned quietly; if
+         the queue row had gone, AcceptResumeResultAsync did the same. Either way Word never ran,
+         nothing switched back to the job browser, and no status, log or failure was produced — the
+         application simply stopped in Resume Studio. Both now report and fail the work item so the
+         queue can recover it. Returning to the resume conversation afterwards is also best-effort:
+         it is housekeeping, and letting it throw abandoned answers already in hand.
+         9.6.0 traces an automatic bid end to end. An application crosses the job-site browser,
+         ChatGPT, Word and the form filler, each in a different view-model reached through events,
+         so when one stalled there was no single place showing how far it got — every bug this week
+         cost a round trip of asking which screen said what. BidTraceService stamps every step with
+         one short run id and an elapsed clock, from opening the queue item through navigation, the
+         gate check, extraction, the prompts and replies in full, Word, the fill, each dropdown and
+         the upload, to how the run ended. Activity keeps 4000 entries and gains Copy last run and
+         Copy all, which render the feed as a plain-text transcript. A minor: new service, new
+         commands, no behaviour changed.
+         9.6.1 accepts the answers ChatGPT actually sends. The shape check sliced from the first {
+         to the last } and parsed once, so a reply with a worked example beside the real object, a
+         brace in the prose around it, or a line break inside a long value failed — and because the
+         wait was told to hold out for that shape, it then spun for its full three minutes repeating
+         the same rejection. AnswerJson finds each balanced top-level object, tries the longest
+         first, and repairs the raw newlines innerText introduces when a value wraps in the rendered
+         code block. The wait now logs the text it rejected, once per distinct reply rather than
+         once a second.
+         9.6.2 fills the way a person does, and stops corrupting what it fills with. innerText wraps
+         a long line in the rendered code block, so a raw newline arrived after the email address
+         and inside a question key; repairing those to spaces left "….com " and "Why  did you
+         pick…", and a trailing space in an email field is read by the form as no email at all —
+         which is why fields the log called filled came back as required. Answer text is now
+         trimmed and its space runs collapsed, while escaped newlines, being deliberate, survive.
+         Short fields are also typed a character at a time with real key events instead of having
+         their whole value assigned; long prose answers are still set in one go, where no validator
+         counts keystrokes and several thousand events would cost seconds.
+         9.6.3 removes that long-answer exception after the live Ashby form proved it unsafe: all
+         required prose answers were rendered but came back empty during validation. Every normal
+         input and textarea now follows the full per-character keyboard/input sequence, regardless
+         of length, and deliberate newlines produce Enter/insertLineBreak events.
+         9.6.4 separates text completion from dropdown selection. Text values have trailing line
+         breaks removed at the DOM boundary and never receive a completion Enter. Before asking
+         ChatGPT, every unanswered custom dropdown is opened and its rendered options are collected
+         across the whole scroll range, including virtualized lists. Filling prefers an exact option
+         click, uses Enter only as a dropdown fallback, and verifies a rendered chosen value rather
+         than mistaking search text for a selection. Resume upload now precedes typing so an Ashby
+         upload rerender cannot discard already-filled controlled fields.
+         9.6.5 sources Ashby's static dropdown candidates from the read-only application-form schema,
+         whose ValueSelect fields include their complete selectableValues list. DOM discovery remains
+         the fallback for other providers and autocomplete controls: it recognizes newly mounted menu
+         rows without requiring ARIA option roles and types a known profile candidate to materialize
+         search suggestions. Custom dropdown filling now types its search value character by character
+         and recognizes the same role-less option rows before committing and verifying a choice.
+         9.6.6 serializes controlled text entry. Ashby persists a field asynchronously on blur, so
+         typing nine fields inside one JavaScript task launched overlapping updates and stale responses
+         erased a random subset even though every DOM write logged success. Text fields now form a
+         plan that the host types one at a time, waits for, reads back, and retries once before moving
+         on. A delayed final outstanding-field scan runs after dropdowns. Exact dropdown option clicks
+         count even when Ashby's generated selected-value class defeats the generic visual verifier.
+         Location autocomplete candidates are typed before discovery and unrelated menu text is
+         rejected unless it shares a meaningful token with the saved candidate location.
+         9.6.7 adds a bounded second pass for backend-driven autocomplete fields. A failed primary
+         value materializes the site's candidates; those exact options and the failure are sent to
+         the same ChatGPT answer conversation once, then only unresolved fields are refilled. Each
+         queue item persists that answer conversation's /c/ id and URL as soon as it exists, plus
+         correction state, so restart/retry can reopen the same answer context. Search text no longer
+         makes an uncommitted combobox look answered.
+         9.7.0 introduces explicit application-flow adapters for Greenhouse, Ashby, Lever,
+         ApplyToJob and Teamtailor, selected specific-first from the URL with Default as the final
+         fallback. Each owns its apply-entry, action and validation-error selectors. The selected
+         adapter now runs non-submitting validation, advances safe intermediate Next/Continue steps,
+         and stops at final Submit. An observer catches errors rendered after the human clicks final
+         Submit and sends them back through refill/correction rather than treating the application as
+         successful. A minor because apply-flow selection and multi-step validation are new behavior.
+         9.7.1 standardizes dropdown activation across extraction and filling: pointer/mousedown,
+         explicit focus, pointer/mouseup and click, followed by focus on the revealed search input.
+         Option discovery now polls for delayed React menus and reads the complete unfiltered menu
+         before typing a candidate, using candidate search only for backend autocomplete fields that
+         expose nothing on activation. aria-controls scopes portal menus, and fill-time typing waits
+         for asynchronously mounted search inputs instead of accidentally focusing Name or Email.
+         9.7.2 fixes Greenhouse dropdown discovery stalling until a user clicks outside. A menu whose
+         option set is stable now terminates even when its widget reports a non-advancing scroll range,
+         and every menu is dismissed with an outside click before the next field. Discovery and fill
+         are scoped to the activated control's ARIA-owned or newly shown menu, preventing job-description
+         list items from being mistaken for options. Placeholder text such as "No options" is no longer
+         used as a server-backed autocomplete search candidate.
+         9.8.0 adds grouped single-select buttons to the entire form pipeline. Native radios hidden
+         behind visible labels, role=radio controls, and aria-pressed button groups now contribute
+         their exact options to ChatGPT, accept an exact returned answer, and participate in final
+         outstanding-field validation. Settings gains an explicit salary/compensation expectation;
+         it is included in application reference data and otherwise remains blank for human review.
+         A minor because this supports a new control family and a new persisted application default.
+         9.8.1 recognizes Ashby's role-less yes/no wrapper. It owns its aria-pressed buttons through
+         the surrounding data-field entry so the question label is retained, excludes the hidden
+         checkbox that merely mirrors button state, and clicks the exact visible Yes/No answer.
+         9.8.2 carries validation failures into the second ChatGPT answer pass. Errors from primary
+         validation and the human's final-Submit attempt retain their question/message association,
+         asynchronously rendered errors are polled, and correction payloads include text and button
+         fields as well as dropdowns, with primary answer, exact error and available options.
+         9.9.0 commits grouped choices and custom-dropdown selections through WebView2 browser-level
+         mouse/key input so controlled Ashby/React forms update their internal submission state, not
+         just their rendered value. After each primary or correction fill, the selected apply adapter
+         clicks final Submit, polls for structured site errors, routes failures into the one correction
+         pass, and advances the queue when submission is confirmed. Ambiguous results remain reviewable.
+         9.9.1 keeps the failed-question inventory until the correction refill actually runs, and
+         force-recommits those controls even when their old answers still look selected. Text entry now
+         uses WebView2 browser input; rejected choice groups transition through another option and back
+         to the requested answer before resubmission; answered custom dropdowns can also be force-filled.
+         9.9.2 recognizes Ashby native same-name radio groups that have no fieldset or ARIA group by
+         using their one-field data-field entry as the group boundary. Long question labels retain their
+         full eligibility notes so extraction, GPT answer keys, filling and correction all agree.
+         9.9.3 makes the site action authoritative for correction scope. The adapter physically clicks
+         Next or final Submit before reading validation, captures only errors rendered by that action,
+         and sends only those rejected questions to GPT. The speculative DOM outstanding scan remains
+         diagnostic and no longer expands the second-pass payload.
+         9.9.4 fixes two faults found by driving the live Greenhouse form in WebView2. scrollIntoView
+         animates when a page sets scroll-behavior:smooth, so the rectangle read on the next line was
+         the position before the scroll landed: the LinkedIn field targeted y=1017 in a 900px window,
+         the click fell outside the viewport and every keystroke after it went nowhere, reported only
+         as "value did not persist". Every scroll before a click is now instant, a target resolving
+         off-screen or under another element says so instead of being clicked blind, and verification
+         accepts a value the field reformatted — a phone widget appends a space, and an exact string
+         compare sent a correctly filled field to human review.
+         9.9.5 verifies before it retypes, and stops a click from opening a file dialog. A correction
+         round used to refill every field and only then commit the form, spending its single retry on
+         fields the site never rejected and overwriting good answers before they could be read; it
+         now commits first, reads the errors, and retypes only the fields named in them — and skips
+         re-attaching the resume, which makes a controlled form rerender and drop what was typed.
+         Separately, any click target that is, contains, or labels a file input is refused: the
+         operating system picker it raises blocks the run until a human dismisses it, which is why
+         extraction appeared to hang at the resume upload and freed itself when another area was
+         clicked. The DevTools attach calls are also bounded, so an unanswered one reports instead
+         of stalling.
+         9.9.6 corrects 9.9.5 and closes what a full read of the flow turned up. The verify-then-
+         retype change was added to FillApplicationAutomatically, which only ever runs the first fill:
+         a correction round arrives on ApplicationRefillRequested, where the order was already right,
+         so that branch was unreachable and is removed. Two silent dead-ends remain closed by this
+         release instead — corrected answers returning for a link that has left the queue, and a
+         refill arriving after the queue moved on, both of which used to abandon the round with no
+         error and nothing to retry. Validation now also says so when it can locate neither Submit
+         nor Next, because a form that was never committed reads afterwards exactly like one that
+         passed.
+         9.9.7 removes the 47-second stall in extraction. A search-first menu — Greenhouse's Location
+         (City) — renders no options at all until a term is typed, and the option-discovery loop's
+         early exit required at least one option, so it spent its whole 500 x 80ms budget waiting for
+         options that only ever appear in the search phase that follows. An unchanging empty list now
+         ends the phase like any other, cutting one field from forty seconds to about two. Custom
+         dropdowns are also no longer reported filled merely because a click was dispatched:
+         verification polls for the menu to close and the value to render, and a dropdown that never
+         confirms is left in the review list. Four dropdowns in one run were counted as filled by a
+         run whose own verification said they were empty.
+         9.9.8 answers screening questions instead of leaving them blank. A required option question
+         that the reference data does not settle now takes the option that keeps the application
+         eligible — consent, availability, willingness and acknowledgements are the applicant's own
+         choice, and an empty answer is a rejected application. The prompt states the direction
+         explicitly, because the eligible answer is not the word yes: consenting to a background check
+         is yes, requiring visa sponsorship is no. Checkable claims the reference data does not make —
+         work authorisation, a degree, a licence, a clearance, employment dates — are still returned
+         empty for a human, since passing a filter by asserting one of those is a misrepresentation
+         the applicant would have to stand behind. Applies to the first pass, the correction pass and
+         the manual prompt alike. -->
+    <Version>9.9.8</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

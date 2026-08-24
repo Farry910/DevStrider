@@ -71,7 +71,7 @@
 
           <TextBlock Text="4 · Application queue" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Paste job URLs into Application Queue and approve the automatic flow. DevStrider opens each page, extracts the JD, uses ChatGPT and Word to build the resume, fills supported fields, uploads the generated document, and pauses for review. You click the site's final Submit button, then Mark submitted &amp; next. If extraction fails, paste the JD into the recovery box and continue. Resume Studio handles recruiter-provided JDs that do not have an application URL."/>
+                     Text="Paste job URLs into Application Queue and approve the automatic flow. DevStrider opens each page, extracts the JD, uses ChatGPT and Word to build the resume, fills supported fields, uploads the generated document, and submits through the selected site adapter. Site validation errors receive one targeted correction pass; only ambiguous or unresolved results pause for review. If extraction fails, paste the JD into the recovery box and continue. Resume Studio handles recruiter-provided JDs that do not have an application URL."/>
 
           <TextBlock Text="5 · Tracking" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"

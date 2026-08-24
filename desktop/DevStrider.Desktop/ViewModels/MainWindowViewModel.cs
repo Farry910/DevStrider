@@ -109,10 +109,17 @@ public partial class MainWindowViewModel : ViewModelBase
                 request.JobUrl,
                 request.JobDescription,
                 request.QuestionsJson,
-                request.KnownAnswersJson);
+                request.KnownAnswersJson,
+                request.AnswerConversationUrl);
         };
         JobBrowser.ApplicationFillRequested += _ => Current = JobBrowser;
+        JobBrowser.ApplicationRefillRequested += _ => Current = JobBrowser;
         JobBrowser.QueueNavigationRequested += () => Current = JobBrowser;
+        JobBrowser.AnswerCorrectionRequested += request =>
+        {
+            Current = ResumeStudio;
+            ResumeStudio.PrepareAnswerCorrection(request);
+        };
         ResumeStudio.ResumeAutomationCompleted += result =>
         {
             if (result.ResumeOnly)
@@ -124,6 +131,12 @@ public partial class MainWindowViewModel : ViewModelBase
         };
         ResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
             _ = JobBrowser.MarkAutomationFailureAsync(workItemId, message);
+        ResumeStudio.AnswerConversationResolved += (workItemId, url, id) =>
+            _ = JobBrowser.RememberAnswerConversationAsync(workItemId, url, id);
+        ResumeStudio.AnswerCorrectionCompleted += result =>
+            _ = JobBrowser.AcceptAnswerCorrectionAsync(result);
+        ResumeStudio.AnswerCorrectionFailed += (workItemId, message) =>
+            _ = JobBrowser.MarkAnswerCorrectionFailureAsync(workItemId, message);
 
         // Forward profile-context changes so the title-bar ComboBox + nav bindings refresh.
         ProfileContext.ProfileChanged += () => OnPropertyChanged(nameof(ActiveProfile));

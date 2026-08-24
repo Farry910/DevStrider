@@ -102,6 +102,7 @@ public partial class App : Application
         var services = new ServiceCollection();
 
         services.AddSingleton<ActivityLogService>();
+        services.AddSingleton<BidTraceService>();
 
         // ── settings ────────────────────────────────────────────────────────
         // A file, not a table: it holds the credentials needed to reach the database, so reading

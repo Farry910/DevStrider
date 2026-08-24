@@ -34,15 +34,31 @@
                  Foreground="{StaticResource Muted}"
                  VerticalAlignment="Center"
                  Margin="16,0,0,0"/>
-      <Button Grid.Column="2"
-              Command="{Binding ClearCommand}"
-              Style="{StaticResource GhostButton}">
-        <StackPanel Orientation="Horizontal">
-          <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-          <TextBlock Text="Clear" VerticalAlignment="Center"/>
-        </StackPanel>
-      </Button>
+      <StackPanel Grid.Column="2" Orientation="Horizontal">
+        <Button Command="{Binding CopyLastRunCommand}" Margin="0,0,8,0"
+                ToolTip="Copy every step of the most recent application as plain text">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Copy last run" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <Button Command="{Binding CopyAllCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                ToolTip="Copy the entire log as plain text">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Copy all" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+        <Button Command="{Binding ClearCommand}" Style="{StaticResource GhostButton}">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBlock Text="Clear" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+      </StackPanel>
     </Grid>
+    <TextBlock DockPanel.Dock="Top" Text="{Binding StatusMessage}" Style="{StaticResource MutedText}"
+               TextWrapping="Wrap" Margin="0,0,0,8"/>
 
     <DataGrid ItemsSource="{Binding Entries}"
               IsReadOnly="True"

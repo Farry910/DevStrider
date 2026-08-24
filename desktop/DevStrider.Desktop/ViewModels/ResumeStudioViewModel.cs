@@ -18,6 +18,10 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private readonly BidBoardService _bids;
     private readonly WordMacroService _word;
     private readonly ActivityLogService _activity;
+    private readonly BidTraceService _trace;
+
+    /// <summary>The run trace, so the ChatGPT view can log the steps it drives.</summary>
+    public BidTraceService Trace => _trace;
 
     private string _recruiterJobDescription = "";
     public string RecruiterJobDescription
@@ -96,15 +100,21 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         : $"A fresh resume chat will start automatically (limit {GenerationLimit}).";
 
     public event Action<ChatGptResumeRequest>? AutoResumeRequested;
+    public event Action<ChatGptAnswerCorrectionRequest>? AutoAnswerCorrectionRequested;
     public event Action? AutoBidCancellationRequested;
     public event Action? NewChatRequested;
     public event Action<ResumeAutomationResult>? ResumeAutomationCompleted;
     public event Action<Guid, string>? ResumeAutomationFailed;
+    public event Action<ChatGptAnswerCorrectionResult>? AnswerCorrectionCompleted;
+    public event Action<Guid, string>? AnswerCorrectionFailed;
+    public event Action<Guid, string, string>? AnswerConversationResolved;
 
     private ChatGptResumeRequest? _pendingRequest;
+    private ChatGptAnswerCorrectionRequest? _pendingAnswerCorrection;
     private ChatGptResumeRequest? _activeRequest;
     private string _activeAnswersJson = "{}";
     private string _activeBidId = "";
+    private string _activeAnswerConversationUrl = "";
     private bool _chatGptBrowserReady;
 
     public ResumeStudioViewModel(
@@ -112,13 +122,15 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         ProfileContext profiles,
         BidBoardService bids,
         WordMacroService word,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        BidTraceService trace)
     {
         _settings = settings;
         _profiles = profiles;
         _bids = bids;
         _word = word;
         _activity = activity;
+        _trace = trace;
         _profiles.ProfileChanged += () =>
         {
             CancelAutomation();
@@ -148,9 +160,10 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         string jobUrl,
         string jobDescription,
         string questionsJson,
-        string knownAnswersJson) =>
+        string knownAnswersJson,
+        string answerConversationUrl = "") =>
         QueueResumeRequest(workItemId, jobUrl, jobDescription, questionsJson, knownAnswersJson,
-            resumeOnly: false, "");
+            resumeOnly: false, "", answerConversationUrl);
 
     private void QueueResumeRequest(
         Guid workItemId,
@@ -159,7 +172,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         string questionsJson,
         string knownAnswersJson,
         bool resumeOnly,
-        string label)
+        string label,
+        string answerConversationUrl = "")
     {
         var profile = _profiles.Current;
         if (profile == null || string.IsNullOrWhiteSpace(profile.ResumePrompt))
@@ -187,11 +201,17 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
         var request = new ChatGptResumeRequest(
             workItemId, prompt, jobUrl, jd, questionsJson, knownAnswersJson,
-            startFreshChat, resumeOnly, label, startFreshChat ? "" : ResumeConversationUrl);
+            startFreshChat, resumeOnly, label, startFreshChat ? "" : ResumeConversationUrl,
+            answerConversationUrl);
 
+        _trace.Step("ChatGPT", "request queued",
+            $"freshChat={startFreshChat}, chat={CompletedInChat}/{GenerationLimit}, " +
+            $"conversation={(string.IsNullOrWhiteSpace(ResumeConversationUrl) ? "(none)" : ResumeConversationUrl)}");
+        _trace.Payload("ChatGPT", "resume prompt", prompt);
         _activeRequest = request;
         _activeAnswersJson = "{}";
         _activeBidId = "";
+        _activeAnswerConversationUrl = "";
         _pendingRequest = request;
         PreparedPrompt = prompt;
         GeneratedResume = "";
@@ -217,19 +237,86 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
     private void DispatchPendingRequest()
     {
-        if (!_chatGptBrowserReady || _pendingRequest == null) return;
-        var request = _pendingRequest;
-        _pendingRequest = null;
-        AutoResumeRequested?.Invoke(request);
+        if (!_chatGptBrowserReady) return;
+        if (_pendingRequest != null)
+        {
+            var request = _pendingRequest;
+            _pendingRequest = null;
+            AutoResumeRequested?.Invoke(request);
+            return;
+        }
+        if (_pendingAnswerCorrection == null) return;
+        var correction = _pendingAnswerCorrection;
+        _pendingAnswerCorrection = null;
+        AutoAnswerCorrectionRequested?.Invoke(correction);
+    }
+
+    public void PrepareAnswerCorrection(ChatGptAnswerCorrectionRequest request)
+    {
+        _pendingAnswerCorrection = request;
+        IsAutomationRunning = true;
+        ShowManualRecovery = false;
+        StatusMessage = "Reopening this application's answer chat to correct failed fields...";
+        DispatchPendingRequest();
+    }
+
+    public void NoteAnswerConversation(Guid workItemId, string conversationUrl)
+    {
+        var id = ConversationId(conversationUrl);
+        AnswerConversationResolved?.Invoke(workItemId, conversationUrl, id);
+    }
+
+    public void CompleteAnswerCorrection(ChatGptAnswerCorrectionRequest request, string answersJson,
+        string conversationUrl)
+    {
+        var normalized = NormalizeAnswersJson(answersJson);
+        if (normalized == "{}")
+        {
+            FailAnswerCorrection(request.WorkItemId,
+                "ChatGPT did not return usable JSON for the application-field correction.");
+            return;
+        }
+        IsAutomationRunning = false;
+        StatusMessage = "Corrected answers received. Returning to the application form...";
+        var id = ConversationId(conversationUrl);
+        AnswerConversationResolved?.Invoke(request.WorkItemId, conversationUrl, id);
+        AnswerCorrectionCompleted?.Invoke(new ChatGptAnswerCorrectionResult(
+            request.WorkItemId, normalized, conversationUrl, id));
+    }
+
+    public void FailAnswerCorrection(Guid workItemId, string message)
+    {
+        _pendingAnswerCorrection = null;
+        IsAutomationRunning = false;
+        ShowManualRecovery = true;
+        StatusMessage = message;
+        _trace.Fail("ChatGPT", "answer correction failed", message);
+        _activity.Error("Resume Studio", "Answer correction failed", message);
+        AnswerCorrectionFailed?.Invoke(workItemId, message);
     }
 
     public async Task CompleteAutomatedResumeAsync(
         ChatGptResumeRequest request,
         string resumeReply,
-        string answersJson)
+        string answersJson,
+        string answerConversationUrl = "")
     {
-        if (_activeRequest?.WorkItemId != request.WorkItemId) return;
+        // The reply belongs to a run that is no longer the active one — a profile switch, a fresh
+        // chat, or a second request replaced it. This used to return quietly, which stranded the
+        // application in Resume Studio: no Word, no handoff back to the form, no error, nothing to
+        // retry. Say so and fail the work item so the queue can recover it.
+        if (_activeRequest?.WorkItemId != request.WorkItemId)
+        {
+            const string reason = "The resume came back after its application had already been " +
+                "cancelled or replaced, so it was not handed back to the job browser. " +
+                "Retry that link from the queue.";
+            StatusMessage = reason;
+            _activity.Warning("Resume Studio", "Completed resume had no active request", reason);
+            ResumeAutomationFailed?.Invoke(request.WorkItemId, reason);
+            return;
+        }
         GeneratedResume = resumeReply;
+        _activeAnswerConversationUrl = answerConversationUrl;
 
         try
         {
@@ -245,6 +332,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
             var bidId = "";
             _activeAnswersJson = NormalizeAnswersJson(answersJson);
+            _trace.Step("ChatGPT", "answers normalised",
+                $"in={answersJson?.Length ?? 0} chars, out={_activeAnswersJson.Length} chars");
             if (!request.ResumeOnly)
             {
                 var captured = await _bids.CaptureAsync(request.JobUrl, request.JobDescription, bid =>
@@ -265,7 +354,10 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
             StatusMessage = "ChatGPT reply received. Generating the Word resume...";
             var profile = _profiles.Current ?? throw new InvalidOperationException("No active profile.");
+            _trace.Step("Word", "running macro",
+                $"{profile.MacroName} on {profile.WordDocPath} ({split.ResumePart.Length} chars)");
             var macro = await _word.RunAsync(split.ResumePart, profile.WordDocPath, profile.MacroName, profile.Name);
+            _trace.Step("Word", "macro returned", $"success={macro.Success}: {macro.Message}");
             if (!macro.Success) throw new InvalidOperationException("Word macro failed: " + macro.Message);
 
             await FinishSuccessfulRequestAsync(request, split.ResumePart, split.FastFeedLine, split.Parsed, bidId);
@@ -304,6 +396,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         IsAutomationRunning = false;
         ShowManualRecovery = true;
         StatusMessage = message;
+        _trace.Fail("ChatGPT", "resume automation failed", message);
         _activity.Error("Resume Studio", "Resume automation failed", message);
         ResumeAutomationFailed?.Invoke(workItemId, message);
     }
@@ -383,9 +476,11 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private void CancelAutomation()
     {
         _pendingRequest = null;
+        _pendingAnswerCorrection = null;
         _activeRequest = null;
         _activeAnswersJson = "{}";
         _activeBidId = "";
+        _activeAnswerConversationUrl = "";
         IsAutomationRunning = false;
         AutoBidCancellationRequested?.Invoke();
     }
@@ -399,6 +494,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     {
         CompletedInChat++;
         var filePath = await ResolveGeneratedResumePathAsync(fastFeedLine);
+        _trace.Step("Word", "resume file resolved",
+            $"folder=\"{fastFeedLine}\" -> " + (filePath.Length == 0 ? "(not found)" : filePath));
         IsAutomationRunning = false;
         _activeRequest = null;
         StatusMessage = request.ResumeOnly
@@ -409,11 +506,14 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
         _activity.Success("Resume Studio", "Resume generated",
             parsed == null ? request.Label : $"{parsed.Company} - {parsed.Role}");
+        _trace.Ok("ChatGPT", "handing back to job browser", $"resumeOnly={request.ResumeOnly}");
         ResumeAutomationCompleted?.Invoke(new ResumeAutomationResult(
             request.WorkItemId, request.JobUrl, resumeContent,
-            _activeAnswersJson, filePath, bidId, request.ResumeOnly));
+            _activeAnswersJson, filePath, bidId, request.ResumeOnly,
+            _activeAnswerConversationUrl, ConversationId(_activeAnswerConversationUrl)));
         _activeAnswersJson = "{}";
         _activeBidId = "";
+        _activeAnswerConversationUrl = "";
     }
 
     /// <summary>
@@ -518,27 +618,20 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         await _settings.SaveAsync(settings);
     }
 
-    private static string NormalizeAnswersJson(string raw)
+    /// <summary>
+    /// The answers object from a rendered ChatGPT reply, or <c>{}</c>. Delegates to
+    /// <see cref="AnswerJson"/> so the wait predicate and this agree on what counts as usable —
+    /// they disagreed before, and the wait then spun until its timeout on a reply it would have
+    /// accepted here.
+    /// </summary>
+    private static string NormalizeAnswersJson(string raw) => AnswerJson.Extract(raw);
+
+    private static string ConversationId(string url)
     {
-        if (string.IsNullOrWhiteSpace(raw)) return "{}";
-        raw = raw.Trim();
-        if (raw.StartsWith("```", StringComparison.Ordinal))
-        {
-            var firstLine = raw.IndexOf('\n');
-            var lastFence = raw.LastIndexOf("```", StringComparison.Ordinal);
-            if (firstLine >= 0 && lastFence > firstLine) raw = raw[(firstLine + 1)..lastFence].Trim();
-        }
-        var objectStart = raw.IndexOf('{');
-        var objectEnd = raw.LastIndexOf('}');
-        if (objectStart >= 0 && objectEnd > objectStart) raw = raw[objectStart..(objectEnd + 1)];
-        try
-        {
-            using var document = JsonDocument.Parse(raw);
-            return document.RootElement.ValueKind == JsonValueKind.Object
-                ? document.RootElement.GetRawText()
-                : "{}";
-        }
-        catch (JsonException) { return "{}"; }
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return "";
+        var parts = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var index = Array.FindIndex(parts, part => part.Equals("c", StringComparison.OrdinalIgnoreCase));
+        return index >= 0 && index + 1 < parts.Length ? parts[index + 1] : "";
     }
 }
 
@@ -552,7 +645,8 @@ public sealed record ChatGptResumeRequest(
     bool StartFreshChat,
     bool ResumeOnly,
     string Label,
-    string ConversationUrl = "");
+    string ConversationUrl = "",
+    string AnswerConversationUrl = "");
 
 public sealed record ResumeAutomationResult(
     Guid WorkItemId,
@@ -561,4 +655,21 @@ public sealed record ResumeAutomationResult(
     string AnswersJson,
     string ResumeFilePath,
     string BidId,
-    bool ResumeOnly);
+    bool ResumeOnly,
+    string AnswerConversationUrl = "",
+    string AnswerConversationId = "");
+
+public sealed record ChatGptAnswerCorrectionRequest(
+    Guid WorkItemId,
+    string ConversationUrl,
+    string ConversationId,
+    string QuestionsJson,
+    string KnownAnswersJson,
+    string CurrentAnswersJson,
+    string JobDescription);
+
+public sealed record ChatGptAnswerCorrectionResult(
+    Guid WorkItemId,
+    string AnswersJson,
+    string ConversationUrl,
+    string ConversationId);

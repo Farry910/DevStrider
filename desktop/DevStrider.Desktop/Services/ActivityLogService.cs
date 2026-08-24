@@ -12,7 +12,10 @@ namespace DevStrider.Desktop.Services;
 /// </summary>
 public sealed class ActivityLogService
 {
-    private const int MaxEntries = 300;
+    // Deep on purpose. One automatic bid now traces every step it takes across the browser,
+    // ChatGPT, Word and the filler, and the whole run has to still be there when it is pasted
+    // into a bug report — a few thousand strings is nothing next to losing the evidence.
+    private const int MaxEntries = 4000;
 
     public ObservableCollection<ActivityEntry> Entries { get; } = new();
 
