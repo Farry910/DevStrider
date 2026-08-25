@@ -128,6 +128,48 @@ public partial class SettingsViewModel : ViewModelBase
     /// session stays usable so nobody loses a half-finished bid to a mis-click.
     /// </para>
     /// </summary>
+    /// <summary>Proxy scope choices, for the picker.</summary>
+    public IReadOnlyList<string> ProxyScopeOptions { get; } = [ProxyScopes.ChatGpt, ProxyScopes.All];
+
+    private string _proxyHint = "";
+
+    /// <summary>What the proxy settings currently amount to, in a sentence.</summary>
+    public string ProxyHint { get => _proxyHint; private set => SetProperty(ref _proxyHint, value); }
+
+    private void RefreshProxyHint()
+    {
+        if (!Model.ProxyEnabled) { ProxyHint = "Off — both browsers connect directly."; return; }
+        var rejection = ProxyConfiguration.Reject(Model.ProxyAddress);
+        if (rejection.Length > 0) { ProxyHint = rejection; return; }
+
+        var proxy = new ProxyConfiguration(Model);
+        var scope = proxy.AppliesToJobSites ? "ChatGPT and the job sites" : "ChatGPT only";
+        var bypass = proxy.BypassList();
+        ProxyHint = $"{scope} via {proxy.Address}. Bypassing: {bypass}. " +
+                    "Takes effect the next time DevStrider starts — a browser cannot be moved " +
+                    "onto a proxy once it is running.";
+    }
+
+    /// <summary>
+    /// Asks the proxy for a ChatGPT URL and reports what came back.
+    ///
+    /// <para>
+    /// Reaching ChatGPT is the whole point of the setting, so that is what gets asked for rather
+    /// than some neutral host: a proxy that answers but still cannot reach ChatGPT is a different
+    /// problem, and it is better to learn which one before a run does.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    public async Task TestProxyAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            StatusMessage = "Testing the proxy...";
+            StatusMessage = await new ProxyConfiguration(Model).TestAsync();
+        }
+        finally { IsBusy = false; }
+    }
     [RelayCommand]
     public void SignOut()
     {
@@ -148,6 +190,7 @@ public partial class SettingsViewModel : ViewModelBase
             OnPropertyChanged(nameof(SignedInAs));
             RefreshPortalHint();
             RefreshR2Hints();
+            RefreshProxyHint();
         }
         finally { IsBusy = false; }
     }
@@ -173,6 +216,7 @@ public partial class SettingsViewModel : ViewModelBase
             Model = await _settings.GetForEditAsync();
             RefreshPortalHint();
             RefreshR2Hints();
+            RefreshProxyHint();
 
             // Always ensure the listener is running on the (possibly new) saved port.
             if (_localApi.IsRunning && _localApi.BoundPort != Model.ListenerPort)

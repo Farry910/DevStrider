@@ -626,8 +626,26 @@
          PortalApi joined its base address to a path as Uri + string, and Uri.ToString() re-adds the
          trailing slash - "https://host" + "/api/me" came out "https://host//api/me", which is a
          different number of path segments, matches no route, falls through to the static handler and
-         redirects. The joined form is text now, and never carries a trailing slash. -->
-    <Version>10.0.0</Version>
+         redirects. The joined form is text now, and never carries a trailing slash.
+
+         10.1.0 adds a proxy, so DevStrider can run where ChatGPT cannot be reached. The whole app is
+         built around driving ChatGPT in a real browser, so from those places it did not work slowly
+         - it did not work.
+
+         WebView2 takes its proxy from the arguments its environment was created with, and there is
+         no way to move a live browser onto one, which is why the setting says it applies at the next
+         start rather than pretending otherwise. The two browsers already had separate environments,
+         and that is what makes the default scope possible: ChatGPT goes through the proxy and the
+         job sites stay direct, because they are reachable already and an extra hop would be paid on
+         the page-heaviest part of every run. Widening the scope routes both.
+
+         The portal is always bypassed, listed or not - signing in is traffic the person can already
+         reach, and a session token has no reason to travel through someone else s server. A proxy
+         that asks for a password is answered only when the challenge names a proxy, so a job board
+         putting up a login box cannot collect it. Test asks the proxy for a ChatGPT URL rather than
+         a neutral host, because a proxy that answers but still cannot reach ChatGPT is a different
+         problem and worth learning about before a run finds it. -->
+    <Version>10.1.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

@@ -25,6 +25,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     /// <summary>The run trace, so the view can log the browser steps it owns.</summary>
     public BidTraceService Trace => _trace;
 
+    /// <summary>The settings the job-site browsers are built from. See ResumeStudio for why.</summary>
+    public AppSettings? ProxySettings => _settings.Current;
+
     /// <summary>
     /// Personal reference data for the active profile. Cached because the fill script needs it
     /// synchronously, and reloaded whenever the profile changes or its personal data is saved.

@@ -50,6 +50,68 @@
         </StackPanel>
       </Border>
 
+      <!--
+        Proxy. This exists because ChatGPT is unreachable from some of the places people run
+        DevStrider from, and the entire app is built around driving ChatGPT in a real browser —
+        so without this it does not work there at all, rather than working slowly.
+      -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Proxy" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Routes browser traffic through a proxy, for running DevStrider where ChatGPT is not reachable. Job sites keep the direct connection unless you widen the scope — they are usually reachable already, and an extra hop is paid on the part of a run that does the most page work."/>
+
+          <CheckBox IsChecked="{Binding Model.ProxyEnabled}" Margin="0,0,0,10"
+                    Content="Route browser traffic through a proxy"/>
+
+          <TextBlock Text="Proxy address"/>
+          <TextBox Text="{Binding Model.ProxyAddress, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="{StaticResource UiFontMono}" Margin="0,2,0,4"
+                   Tag="host:port, or scheme://host:port"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="http, https, socks4 or socks5 — a browser accepts no other proxy scheme. A bare host:port is treated as http."/>
+
+          <TextBlock Text="Applies to"/>
+          <ComboBox ItemsSource="{Binding ProxyScopeOptions}"
+                    SelectedItem="{Binding Model.ProxyScope}"
+                    Width="180" HorizontalAlignment="Left" Margin="0,2,0,10"/>
+
+          <TextBlock Text="Username (only if the proxy asks for one)"/>
+          <TextBox Text="{Binding Model.ProxyUsername, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,8" Width="260" HorizontalAlignment="Left"/>
+
+          <TextBlock Text="Password"/>
+          <TextBox Text="{Binding Model.ProxyPassword, UpdateSourceTrigger=PropertyChanged}"
+                   Margin="0,2,0,4" Width="260" HorizontalAlignment="Left"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Stored in cleartext in this machine's settings file, like the other credentials here, and never written to the trace or the activity log. SOCKS proxies cannot be given a password by a browser at all — use an http proxy if yours needs one."/>
+
+          <TextBlock Text="Reach these directly (bypass)"/>
+          <TextBox Text="{Binding Model.ProxyBypassList, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="{StaticResource UiFontMono}" Margin="0,2,0,4"
+                   Tag="&lt;local&gt;, *.corp.example, 10.0.0.0/8"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
+                     Text="Comma-separated. The company portal is always bypassed whether or not it is listed: signing in is traffic you can already reach, and there is no reason to send a session token through someone else's server."/>
+
+          <TextBlock Text="{Binding ProxyHint}" Foreground="{StaticResource Muted}" TextWrapping="Wrap"/>
+
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Save settings" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding TestProxyCommand}" Style="{StaticResource GhostButton}">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Test proxy against ChatGPT" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Company portal" FontWeight="SemiBold" Margin="0,0,0,8"/>

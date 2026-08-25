@@ -136,6 +136,43 @@ public class AppSettings
     public string R2Endpoint =>
         string.IsNullOrWhiteSpace(R2AccountId) ? "" : $"https://{R2AccountId.Trim()}.r2.cloudflarestorage.com";
 
+    // -- Proxy (ChatGPT reachability) ----------------------------------------
+    // ChatGPT is unavailable from some of the places people run this from, and the whole app is
+    // built around driving it through a real browser. A proxy is the difference between the app
+    // working there and not working at all.
+
+    /// <summary>Route browser traffic through <see cref="ProxyAddress"/>.</summary>
+    public bool ProxyEnabled { get; set; }
+
+    /// <summary>
+    /// Proxy to route through, as <c>scheme://host:port</c>. <c>http</c>, <c>https</c>,
+    /// <c>socks4</c> and <c>socks5</c> are the schemes Chromium accepts; a bare host:port is
+    /// treated as http, which is what most people mean.
+    /// </summary>
+    public string ProxyAddress { get; set; } = "";
+
+    /// <summary>
+    /// Which browsers go through it. <c>chatgpt</c> - the default - leaves job sites on the direct
+    /// connection, because they are reachable already and every extra hop is latency on the part of
+    /// the run that does the most page work. <c>all</c> routes both.
+    /// </summary>
+    public string ProxyScope { get; set; } = Services.ProxyScopes.ChatGpt;
+
+    /// <summary>Username for a proxy that asks for one. Blank means it does not.</summary>
+    public string ProxyUsername { get; set; } = "";
+
+    /// <summary>
+    /// Proxy password, stored in cleartext beside the other credentials in this file. Only ever
+    /// handed to the proxy that asked for it, and never written to the trace or the activity log.
+    /// </summary>
+    public string ProxyPassword { get; set; } = "";
+
+    /// <summary>
+    /// Hosts to reach directly, comma-separated, Chromium bypass syntax
+    /// (<c>&lt;local&gt;, *.corp.example, 10.0.0.0/8</c>). The portal is added automatically.
+    /// </summary>
+    public string ProxyBypassList { get; set; } = "";
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>

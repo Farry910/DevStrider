@@ -23,6 +23,12 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     /// <summary>The run trace, so the ChatGPT view can log the steps it drives.</summary>
     public BidTraceService Trace => _trace;
 
+    /// <summary>
+    /// The settings the ChatGPT browser is built from. Read once, at the moment that browser is
+    /// created — WebView2 fixes its proxy then and cannot be moved onto one afterwards.
+    /// </summary>
+    public AppSettings? ProxySettings => _settings.Current;
+
     private string _recruiterJobDescription = "";
     public string RecruiterJobDescription
     {

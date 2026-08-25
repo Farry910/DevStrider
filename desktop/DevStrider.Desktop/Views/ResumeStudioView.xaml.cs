@@ -47,8 +47,20 @@ public partial class ResumeStudioView : UserControl
             var dataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DevStrider", "webview2", "chatgpt");
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: dataFolder);
+            // WebView2 reads its proxy from the arguments the environment was built with, so this
+            // has to happen here and nowhere later — there is no way to move a live browser onto a
+            // proxy, which is why changing the setting asks for a restart.
+            var proxy = new ProxyConfiguration(_attachedViewModel?.ProxySettings);
+            var arguments = proxy.BrowserArguments(forChatGpt: true);
+            var environment = await CoreWebView2Environment.CreateAsync(
+                userDataFolder: dataFolder,
+                options: new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
             await ChatGptBrowser.EnsureCoreWebView2Async(environment);
+            if (arguments.Length > 0)
+            {
+                Trace?.Step("ChatGPT", "browser started behind a proxy", proxy.Address);
+                ProxyConfiguration.AttachCredentials(ChatGptBrowser.CoreWebView2, proxy);
+            }
             _initialized = true;
             // A new CoreWebView2 reports about:blank rather than an empty source, so an emptiness
             // check skips the only navigation that matters and the pane stays blank for good.

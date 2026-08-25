@@ -68,15 +68,27 @@ public partial class JobBrowserView : UserControl
     /// <summary>Builds a browser, wires it, and puts it in the host behind the tabs.</summary>
     private async Task<WebView2> CreateBrowserAsync()
     {
-        _environment ??= await CoreWebView2Environment.CreateAsync(userDataFolder: Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DevStrider", "webview2", "job-sites"));
+        var proxy = new ProxyConfiguration((DataContext as JobBrowserViewModel)?.ProxySettings);
+        if (_environment == null)
+        {
+            // Job sites stay on the direct connection unless the scope says otherwise. They are
+            // reachable from wherever this is running — it is ChatGPT that is not — and an extra
+            // hop would be paid on the page-heavy part of every run for nothing.
+            var arguments = proxy.BrowserArguments(forChatGpt: false);
+            _environment = await CoreWebView2Environment.CreateAsync(
+                userDataFolder: Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DevStrider", "webview2", "job-sites"),
+                options: new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
+            if (arguments.Length > 0) Trace?.Step("Browser", "job sites behind a proxy", proxy.Address);
+        }
 
         var browser = new WebView2 { Visibility = Visibility.Hidden };
         BrowserHost.Children.Add(browser);
         await browser.EnsureCoreWebView2Async(_environment);
         browser.CoreWebView2.SourceChanged += OnBrowserSourceChanged;
         browser.CoreWebView2.WebMessageReceived += OnJobSiteWebMessageReceived;
+        if (proxy.AppliesToJobSites) ProxyConfiguration.AttachCredentials(browser.CoreWebView2, proxy);
         return browser;
     }
 
