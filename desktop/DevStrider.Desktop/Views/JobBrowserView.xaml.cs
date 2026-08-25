@@ -8,13 +8,168 @@ using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 
 namespace DevStrider.Desktop.Views;
 
 public partial class JobBrowserView : UserControl
 {
+    /// <summary>
+    /// The browsers behind the tabs, one per open application, keyed by work item.
+    ///
+    /// <para>
+    /// They all live in the same Grid cell and are all arranged at full size. Only the selected one
+    /// is <see cref="Visibility.Visible"/>; the rest are <see cref="Visibility.Hidden"/>, never
+    /// Collapsed, because a collapsed WebView2 is arranged at zero size and forwards that to the
+    /// browser as the viewport — every offsetWidth test on the page then reports false and the
+    /// filler skips every field. Hidden keeps a real viewport, which is what lets the run fill a tab
+    /// while somebody reads another one.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<Guid, WebView2> _browsers = new();
+
+    private CoreWebView2Environment? _environment;
+
+    /// <summary>The browser the run drives. Every script in this file goes to this one.</summary>
+    private WebView2? _automationBrowser;
+
+    /// <summary>
+    /// Created before any work item exists, and adopted by the first one that arrives, so the very
+    /// first job does not open a second browser next to an empty one.
+    /// </summary>
+    private WebView2? _unassignedBrowser;
+
+    /// <summary>
+    /// The browser the automation acts on.
+    ///
+    /// <para>
+    /// This was a XAML-declared field, and stays a property with the same name so the ~80 call sites
+    /// that drive the page did not have to learn about tabs. Which browser it resolves to is the
+    /// only thing that changed.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Stands in when there is no browser yet, so callers see a null CoreWebView2 rather than an
+    /// exception.
+    ///
+    /// <para>
+    /// Most call sites here guard with <c>JobSiteBrowser.CoreWebView2 == null</c> and expect that to
+    /// be answerable. Throwing from the property instead turned a quiet "not ready, come back later"
+    /// into a failure the operator saw as "the job browser is unavailable" - which is what happened
+    /// between disposing a finished tab and creating the next one. An uninitialised WebView2 costs
+    /// nothing until EnsureCoreWebView2Async is called on it, and it makes those guards true again.
+    /// </para>
+    /// </summary>
+    private WebView2? _placeholder;
+
+    private WebView2 JobSiteBrowser =>
+        _automationBrowser ?? _unassignedBrowser ?? (_placeholder ??= new WebView2());
+
+    /// <summary>Builds a browser, wires it, and puts it in the host behind the tabs.</summary>
+    private async Task<WebView2> CreateBrowserAsync()
+    {
+        _environment ??= await CoreWebView2Environment.CreateAsync(userDataFolder: Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DevStrider", "webview2", "job-sites"));
+
+        var browser = new WebView2 { Visibility = Visibility.Hidden };
+        BrowserHost.Children.Add(browser);
+        await browser.EnsureCoreWebView2Async(_environment);
+        browser.CoreWebView2.SourceChanged += OnBrowserSourceChanged;
+        browser.CoreWebView2.WebMessageReceived += OnJobSiteWebMessageReceived;
+        return browser;
+    }
+
+    /// <summary>Gives the run a browser for this work item, adopting the spare one if it is free.</summary>
+    private async Task OpenAutomationTabAsync(Guid workItemId)
+    {
+        try
+        {
+            if (_browsers.TryGetValue(workItemId, out var existing))
+            {
+                _automationBrowser = existing;
+                ShowOnly(existing);
+                return;
+            }
+
+            WebView2 browser;
+            if (_unassignedBrowser != null)
+            {
+                browser = _unassignedBrowser;
+                _unassignedBrowser = null;
+            }
+            else browser = await CreateBrowserAsync();
+
+            _browsers[workItemId] = browser;
+            _automationBrowser = browser;
+            ShowOnly(browser);
+        }
+        catch (Exception ex) when (DataContext is JobBrowserViewModel vm)
+        {
+            vm.StatusMessage = "Could not open another application tab: " + ex.Message;
+            vm.RecordFailure("Application tab", ex.Message);
+        }
+    }
+
+    /// <summary>Disposes the browser behind a tab that has been dealt with.</summary>
+    private void CloseTab(Guid workItemId)
+    {
+        if (!_browsers.Remove(workItemId, out var browser)) return;
+        if (ReferenceEquals(_automationBrowser, browser)) _automationBrowser = null;
+        try
+        {
+            if (browser.CoreWebView2 != null)
+            {
+                browser.CoreWebView2.SourceChanged -= OnBrowserSourceChanged;
+                browser.CoreWebView2.WebMessageReceived -= OnJobSiteWebMessageReceived;
+            }
+            BrowserHost.Children.Remove(browser);
+            browser.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Trace?.Warn("Browser", "closing a tab did not go cleanly", ex.Message);
+        }
+    }
+
+    /// <summary>Brings a tab to the front, leaving every other browser laid out but unpainted.</summary>
+    private void SelectTab(ApplicationTabViewModel? tab)
+    {
+        if (tab == null || !_browsers.TryGetValue(tab.WorkItemId, out var browser)) return;
+        ShowOnly(browser);
+    }
+
+    private void ShowOnly(WebView2 browser)
+    {
+        foreach (var child in BrowserHost.Children.OfType<WebView2>())
+            child.Visibility = ReferenceEquals(child, browser) ? Visibility.Visible : Visibility.Hidden;
+    }
+
+    private void OnSelectTab(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is JobBrowserViewModel vm && sender is FrameworkElement { Tag: ApplicationTabViewModel tab })
+            vm.SelectedTab = tab;
+    }
+
     private bool _initialized;
     private bool _validationRepairing;
+
+    /// <summary>
+    /// Fields this page has already been given a verified value for, keyed by normalised label.
+    ///
+    /// <para>
+    /// A fill pass is not a one-shot: validation sends the run back for a correction pass, and an
+    /// intermediate Next step starts another. Without a ledger every pass reconsiders the whole form,
+    /// so a name typed and confirmed in pass one is selected, cleared and retyped in pass two for no
+    /// reason — several seconds each, and a controlled input that drops the retyped value turns a
+    /// correct field into an empty one. Entries are added only after the host verified the value
+    /// stuck, and removed only when the form itself reports an error against that field.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, string> _settledFields = new(StringComparer.Ordinal);
+
+    /// <summary>The page the ledger describes. A different form is a different set of fields.</summary>
+    private string _settledPage = "";
 
     /// <summary>Resolved from the DataContext rather than injected: the view is created by XAML.</summary>
     private BidTraceService? Trace => (DataContext as JobBrowserViewModel)?.Trace;
@@ -31,17 +186,19 @@ public partial class JobBrowserView : UserControl
         _initialized = true;
         try
         {
-            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DevStrider", "webview2", "job-sites");
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: path);
-            await JobSiteBrowser.EnsureCoreWebView2Async(environment);
-            JobSiteBrowser.CoreWebView2.SourceChanged += OnBrowserSourceChanged;
-            JobSiteBrowser.CoreWebView2.WebMessageReceived += OnJobSiteWebMessageReceived;
+            // One browser up front so the address bar and the manual tools work before any queue
+            // runs. The first work item adopts it rather than opening a second.
+            _unassignedBrowser = await CreateBrowserAsync();
+            _unassignedBrowser.Visibility = Visibility.Visible;
             if (DataContext is JobBrowserViewModel vm)
             {
                 vm.QueueNavigationRequested += NavigateToQueuedLink;
+                vm.ManualJobDescriptionRequested += OpenLinkForManualJobDescription;
                 vm.ApplicationFillRequested += FillApplicationAutomatically;
                 vm.ApplicationRefillRequested += RefillApplicationAutomatically;
+                vm.AutomationTabRequested += OpenAutomationTabAsync;
+                vm.TabCloseRequested += CloseTab;
+                vm.TabSelectionChanged += SelectTab;
             }
         }
         catch (Exception ex) when (DataContext is JobBrowserViewModel vm)
@@ -61,33 +218,303 @@ public partial class JobBrowserView : UserControl
         vm.AdapterName = JobSiteFormAdapters.NameFor(uri);
     }
 
+    /// <summary>
+    /// One automatic bid, as a fixed sequence of steps with a checked shape between each pair.
+    ///
+    /// <para>
+    /// The order matters and is not negotiable: read the description from the posting, then open the
+    /// form, then read the questions. It used to read whichever page had loaded and then click
+    /// through to the form, which on any site that keeps the posting and the form at two addresses
+    /// meant the description was whatever the form page happened to say.
+    /// </para>
+    ///
+    /// <para>
+    /// A step that produces the wrong shape ends this link rather than passing the wrong shape on.
+    /// The link is recorded with what was expected and what arrived, and the queue takes the next
+    /// one - a bad page costs one entry, not the batch.
+    /// </para>
+    /// </summary>
     private async void NavigateToQueuedLink()
     {
         if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null ||
             !TryGetHttpUri(vm.Address, out var uri)) return;
+        var contract = new FlowContract(Trace);
         try
         {
+            contract.Input("navigate", uri.Scheme is "http" or "https",
+                "an absolute http(s) job URL", uri.AbsoluteUri);
             vm.AdapterName = JobSiteFormAdapters.NameFor(uri);
-            Trace?.Step("Browser", "navigating", $"{uri.AbsoluteUri} (adapter {vm.AdapterName})");
-            await NavigateAsync(uri);
+
+            // Ashby and Lever serve the posting and the form at two addresses, and an aggregator
+            // link points at the form. Go to the posting for the description and come back.
+            var posting = JobPostingExtractor.PostingUrlFor(uri);
+            if (!JobPostingExtractor.SamePage(posting, uri))
+                Trace?.Step("Browser", "description lives on the posting page", posting.AbsoluteUri);
+            Trace?.Step("Browser", "navigating", $"{posting.AbsoluteUri} (adapter {vm.AdapterName})");
+            await NavigateAsync(posting);
+            contract.Output("navigate", TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out _),
+                "a loaded http(s) page", JobSiteBrowser.CoreWebView2?.Source ?? "nothing");
             Trace?.Ok("Browser", "navigation complete", JobSiteBrowser.CoreWebView2?.Source ?? "");
-            if (!vm.IsAutomaticQueueRunning) { Trace?.Warn("Browser", "queue not running", "stopping after navigation"); return; }
+            if (!vm.IsAutomaticQueueRunning)
+            {
+                Trace?.Warn("Browser", "queue not running", "stopping after navigation");
+                return;
+            }
             await Task.Delay(900);
             vm.BeginPageExtraction();
-            var (jobDescription, questions, gate) = await ExtractPageAsync(openApplication: true);
+
+            var gate = await CheckHumanGateAsync();
             if (!string.IsNullOrWhiteSpace(gate))
             {
                 if (vm.CurrentQueueItem != null)
                     await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate);
                 return;
             }
+
+            var jobDescription = await ReadJobDescriptionAsync(contract);
+
+            gate = await OpenApplicationFormAsync(contract, uri, posting);
+            if (!string.IsNullOrWhiteSpace(gate))
+            {
+                if (vm.CurrentQueueItem != null)
+                    await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate);
+                return;
+            }
+
+            var questions = await ReadQuestionsAsync(contract);
             await vm.AcceptExtractedPageAsync(jobDescription, questions);
+        }
+        catch (FlowFormatException ex) when (ex.Step == "job description")
+        {
+            // A description a person can point at in seconds is not worth failing a link over, and
+            // guessing at it wrecks everything downstream. Set it aside and keep the batch moving.
+            if (vm.CurrentQueueItem != null)
+                await vm.DeferForManualJobDescriptionAsync(vm.CurrentQueueItem.Id, ex.Actual);
+        }
+        catch (FlowFormatException ex)
+        {
+            // Every other step ran and produced something unusable. Nothing downstream can recover
+            // from that, so this link is done and the next one starts.
+            Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
+            if (vm.CurrentQueueItem != null)
+                await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, ex.Summary);
         }
         catch (Exception ex)
         {
             if (vm.CurrentQueueItem != null)
                 await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, "Could not read the job page: " + ex.Message);
         }
+    }
+
+
+    /// <summary>
+    /// Opens a link the automatic pass set aside, and stops. No extraction runs: the adapters
+    /// already looked, and looking again would only produce the same wrong answer.
+    /// </summary>
+    private async void OpenLinkForManualJobDescription()
+    {
+        if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null ||
+            !TryGetHttpUri(vm.Address, out var uri)) return;
+        try
+        {
+            // Land on the posting rather than the form: it is the page the description is on, and
+            // the one a person can read it from.
+            var posting = JobPostingExtractor.PostingUrlFor(uri);
+            Trace?.Step("Browser", "opening for a manual description", posting.AbsoluteUri);
+            await NavigateAsync(posting);
+            await Task.Delay(900);
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = "Could not open that link: " + ex.Message;
+            vm.RecordFailure("Manual description pass", $"{vm.Address}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Takes whatever the person highlighted on the page as the job description.</summary>
+    private async void OnUseSelectedJobDescription(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
+        try
+        {
+            var raw = await JobSiteBrowser.ExecuteScriptAsync(
+                "(() => { const s = window.getSelection(); return s ? s.toString() : ''; })()");
+            var selected = JsonSerializer.Deserialize<string>(raw) ?? "";
+            Trace?.Step("Extract", "selection read", $"{selected.Trim().Length} chars");
+            if (string.IsNullOrWhiteSpace(selected))
+            {
+                vm.StatusMessage = "Nothing is selected on the page. Highlight the job description first.";
+                return;
+            }
+            await ContinueFromManualJobDescriptionAsync(vm, selected);
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = "Could not read the selection: " + ex.Message;
+        }
+    }
+
+    /// <summary>Takes the pasted text as the job description.</summary>
+    private async void OnUsePastedJobDescription(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not JobBrowserViewModel vm) return;
+        if (string.IsNullOrWhiteSpace(vm.FallbackJobDescription))
+        {
+            vm.StatusMessage = "Paste the job description first.";
+            return;
+        }
+        try
+        {
+            await ContinueFromManualJobDescriptionAsync(vm, vm.FallbackJobDescription);
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = "Could not continue: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Rejoins the automatic flow with a description a person supplied: check it, open the form,
+    /// read the questions, and hand over to resume generation exactly as the automatic pass does.
+    /// </summary>
+    private async Task ContinueFromManualJobDescriptionAsync(JobBrowserViewModel vm, string text)
+    {
+        // Held to the same standard as an extracted one, minus the container test there is no
+        // container for. Somebody selecting the wrong half of the page should hear about it now.
+        var rejection = JobPostingExtractor.RejectSupplied(text);
+        if (rejection.Length > 0)
+        {
+            vm.StatusMessage = "That does not look like a job description: " + rejection;
+            Trace?.Warn("Extract", "supplied description refused", rejection);
+            return;
+        }
+
+        var contract = new FlowContract(Trace);
+        vm.StatusMessage = "Description accepted. Opening the application form...";
+        if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var current))
+            throw new InvalidOperationException("The application URL is unavailable.");
+
+        // The queue item names the form; the browser is on the posting. Where they differ, the
+        // queued address is the one that opens the form.
+        var target = TryGetHttpUri(vm.CurrentQueueItem?.Url, out var queued) ? queued : current;
+        var gate = await OpenApplicationFormAsync(contract, target, current);
+        if (!string.IsNullOrWhiteSpace(gate))
+        {
+            vm.StatusMessage = gate;
+            return;
+        }
+
+        var questions = await ReadQuestionsAsync(contract);
+        await vm.AcceptManualJobDescriptionAsync(text, questions);
+    }
+    /// <summary>The blocker text when a human is required, or an empty string when the page is ours.</summary>
+    private async Task<string> CheckHumanGateAsync()
+    {
+        var (gate, advisory) = await DetectHumanGateAsync();
+        Trace?.Step("Extract", "human gate checked",
+            $"blocker={(gate.Length == 0 ? "none" : gate)}; advisory={(advisory.Length == 0 ? "none" : advisory)}");
+        return gate;
+    }
+
+    /// <summary>
+    /// Reads the description from the page that is open, and refuses anything that is not one.
+    ///
+    /// <para>
+    /// The old read was <c>document.body.innerText</c> against a 180-character floor. Absci's
+    /// application page clears that floor with 2,857 characters of contact fields, demographic
+    /// survey and cookie banner, and every one of those characters went to ChatGPT as the job
+    /// description. Structure is what separates them: a description is prose in a container with no
+    /// form controls in it.
+    /// </para>
+    /// </summary>
+    private async Task<string> ReadJobDescriptionAsync(FlowContract contract)
+    {
+        var raw = await JobSiteBrowser.ExecuteScriptAsync(JobPostingExtractor.ExtractScript);
+        using var document = contract.Json("job description", raw, JsonValueKind.Object,
+            "an object holding the description container");
+        var read = JobPostingExtractor.Read(document.RootElement);
+        Trace?.Step("Extract", "description read",
+            $"{read.Text.Length} chars via {read.Source}; {read.Sentences} sentence(s), {read.Controls} form control(s)");
+        Trace?.Payload("Extract", "description", read.Text);
+
+        var rejection = JobPostingExtractor.Reject(read);
+        contract.Output("job description", rejection.Length == 0,
+            "prose from the posting with no form controls in it",
+            rejection.Length == 0 ? "a job description" : rejection);
+        return read.Text.Trim();
+    }
+
+    /// <summary>
+    /// Puts the application form on screen, by URL where the site has one and by clicking Apply
+    /// where it does not, and confirms a form actually arrived.
+    /// </summary>
+    private async Task<string> OpenApplicationFormAsync(FlowContract contract, Uri queued, Uri posting)
+    {
+        if (!JobPostingExtractor.SamePage(posting, queued))
+        {
+            // The queued link already named the form. Navigating there beats hunting for a button.
+            Trace?.Step("Extract", "opening the application by URL", queued.AbsoluteUri);
+            await NavigateAsync(queued);
+            await Task.Delay(1200);
+        }
+        else if (TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var current))
+        {
+            var openResult = await JobSiteBrowser.ExecuteScriptAsync(
+                JobSiteApplyAdapters.BuildOpenApplicationScript(current));
+            Trace?.Step("Extract", "open-application script", openResult);
+            using var opened = contract.Json("open application", openResult, JsonValueKind.Object,
+                "an object reporting whether the apply control was clicked");
+            if (opened.RootElement.TryGetProperty("clicked", out var clicked) && clicked.GetBoolean())
+                await Task.Delay(1500);
+        }
+
+        var gate = await CheckHumanGateAsync();
+        if (!string.IsNullOrWhiteSpace(gate)) return gate;
+
+        // Give a slow form time to render before deciding it never arrived. Abandoning a good link
+        // because a React form took another second is the expensive mistake here, not the wait.
+        var controls = 0;
+        for (var attempt = 0; attempt < 6 && controls < 3; attempt++)
+        {
+            if (attempt > 0) await Task.Delay(500);
+            var formJson = await JobSiteBrowser.ExecuteScriptAsync(FormPresenceScript);
+            using var form = contract.Json("open application", formJson, JsonValueKind.Object,
+                "an object counting the controls on the page");
+            controls = form.RootElement.TryGetProperty("controls", out var count) ? count.GetInt32() : 0;
+        }
+        Trace?.Step("Extract", "application form on screen", $"{controls} fillable control(s)");
+        contract.Output("open application", controls >= 3,
+            "an application form with at least 3 fillable controls", $"{controls} control(s)");
+        return "";
+    }
+
+    /// <summary>Counts what a form would have, so "the form opened" is checked and not assumed.</summary>
+    private const string FormPresenceScript = """
+(() => {
+  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const controls = Array.from(document.querySelectorAll(
+    'input:not([type="hidden"]),select,textarea,[role="radio"],[role="checkbox"],[role="combobox"]'))
+    .filter(visible);
+  return { controls: controls.length, files: controls.filter(e => e.type === 'file').length };
+})()
+""";
+
+    /// <summary>Reads the questions the form asks, and checks the result is a list this run can act on.</summary>
+    private async Task<string> ReadQuestionsAsync(FlowContract contract)
+    {
+        var questions = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.QuestionsScript);
+        contract.Json("questions", questions, JsonValueKind.Array, "an array of questions").Dispose();
+        questions = await EnrichDropdownQuestionsAsync(questions);
+        using var enriched = contract.Json("questions", questions, JsonValueKind.Array,
+            "an array of questions with dropdown options merged in");
+        var total = enriched.RootElement.GetArrayLength();
+        var named = enriched.RootElement.EnumerateArray().Count(item =>
+            item.TryGetProperty("question", out var text) && !string.IsNullOrWhiteSpace(text.GetString()));
+        Trace?.Step("Extract", "questions read", $"{total} entr(ies), {named} with a question");
+        Trace?.Payload("Extract", "questions with dropdown options", questions);
+        contract.Output("questions", named == total,
+            "every entry to carry a question", $"{named} of {total} named");
+        return questions;
     }
 
     private async Task NavigateAsync(Uri uri)
@@ -111,15 +538,28 @@ public partial class JobBrowserView : UserControl
 
     private void OnBrowserSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
     {
-        if (DataContext is not JobBrowserViewModel vm ||
-            !Uri.TryCreate(JobSiteBrowser.CoreWebView2?.Source, UriKind.Absolute, out var uri)) return;
+        // Every tab raises this. Only the one being driven owns the address bar and the adapter
+        // name; a reviewer clicking a link in a parked tab must not redirect the run.
+        if (DataContext is not JobBrowserViewModel vm || !IsAutomationSender(sender) ||
+            !Uri.TryCreate(_automationBrowser?.CoreWebView2?.Source, UriKind.Absolute, out var uri)) return;
         vm.Address = uri.AbsoluteUri;
         vm.AdapterName = JobSiteFormAdapters.NameFor(uri);
     }
 
+    /// <summary>True when an event came from the browser the run is driving.</summary>
+    private bool IsAutomationSender(object? sender) =>
+        _automationBrowser?.CoreWebView2 != null && ReferenceEquals(sender, _automationBrowser.CoreWebView2);
+
+    /// <summary>The tab an event came from, or null when the browser is no longer tracked.</summary>
+    private ApplicationTabViewModel? TabForSender(JobBrowserViewModel vm, object? sender)
+    {
+        var match = _browsers.FirstOrDefault(pair => ReferenceEquals(sender, pair.Value.CoreWebView2));
+        return match.Value == null ? null : vm.Tabs.FirstOrDefault(tab => tab.WorkItemId == match.Key);
+    }
+
     private async void OnJobSiteWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (_validationRepairing || DataContext is not JobBrowserViewModel vm || !vm.IsReadyForReview) return;
+        if (_validationRepairing || DataContext is not JobBrowserViewModel vm) return;
         try
         {
             using var message = JsonDocument.Parse(e.WebMessageAsJson);
@@ -129,6 +569,26 @@ public partial class JobBrowserView : UserControl
                 !root.TryGetProperty("errors", out var errorsElement) ||
                 errorsElement.ValueKind != JsonValueKind.Array) return;
             var errors = ValidationErrors(root);
+
+            // The message can come from any open tab, and the recovery below drives the page through
+            // JobSiteBrowser - the tab the run is on. Firing it for a parked tab would fill the wrong
+            // application, and would want ChatGPT while the run is already using it. A parked tab
+            // gets its errors written onto the tab instead, for the person already looking at it.
+            if (!IsAutomationSender(sender))
+            {
+                var source = TabForSender(vm, sender);
+                if (source != null && errors.Count > 0)
+                {
+                    source.Status = "Site rejected the submission";
+                    source.Summary = "The site returned: " + string.Join("; ", errors.Take(6)
+                        .Select(error => error.Question == error.Message
+                            ? error.Message
+                            : $"{error.Question}: {error.Message}"));
+                    Trace?.Warn("Review", "a parked tab was rejected on submit", source.Summary);
+                }
+                return;
+            }
+            if (!vm.IsReadyForReview) return;
             if (errors.Count == 0) return;
             _validationRepairing = true;
             var descriptions = errors.Select(error => error.Question == error.Message
@@ -166,35 +626,42 @@ public partial class JobBrowserView : UserControl
         finally { _validationRepairing = false; }
     }
 
+    /// <summary>
+    /// The manual "start application" read: the same steps as the automatic flow, run against
+    /// whichever page the person is already looking at.
+    ///
+    /// <para>
+    /// One difference, and it is deliberate. A description that fails its format check leaves the
+    /// field empty so the person can paste one in, instead of ending anything. The automatic flow
+    /// gives up on the link because nobody is watching it; here somebody is.
+    /// </para>
+    /// </summary>
     private async Task<(string JobDescription, string QuestionsJson, string Gate)> ExtractPageAsync(bool openApplication)
     {
-        var (gate, advisory) = await DetectHumanGateAsync();
-        Trace?.Step("Extract", "human gate checked",
-            $"blocker={(gate.Length == 0 ? "none" : gate)}; advisory={(advisory.Length == 0 ? "none" : advisory)}");
+        var contract = new FlowContract(Trace);
+        var gate = await CheckHumanGateAsync();
         if (!string.IsNullOrWhiteSpace(gate)) return ("", "[]", gate);
-        var rawText = await JobSiteBrowser.ExecuteScriptAsync("document.body ? document.body.innerText : ''");
-        var jobDescription = JsonSerializer.Deserialize<string>(rawText) ?? "";
+
+        var jobDescription = "";
+        try
+        {
+            jobDescription = await ReadJobDescriptionAsync(contract);
+        }
+        catch (FlowFormatException ex)
+        {
+            Trace?.Warn("Extract", "no usable description on this page", ex.Summary);
+        }
+
         if (openApplication)
         {
-            if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var applicationUri))
+            if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var current))
                 throw new InvalidOperationException("The application URL is unavailable.");
-            var openResult = await JobSiteBrowser.ExecuteScriptAsync(
-                JobSiteApplyAdapters.BuildOpenApplicationScript(applicationUri));
-            Trace?.Step("Extract", "open-application script", openResult);
-            using var opened = JsonDocument.Parse(openResult);
-            if (opened.RootElement.TryGetProperty("clicked", out var clicked) && clicked.GetBoolean())
-            {
-                await Task.Delay(1500);
-                (gate, _) = await DetectHumanGateAsync();
-                if (!string.IsNullOrWhiteSpace(gate)) return (jobDescription, "[]", gate);
-            }
+            gate = await OpenApplicationFormAsync(contract, current, current);
+            if (!string.IsNullOrWhiteSpace(gate)) return (jobDescription, "[]", gate);
         }
-        var questions = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.QuestionsScript);
-        questions = await EnrichDropdownQuestionsAsync(questions);
-        Trace?.Step("Extract", "page text read",
-            $"{jobDescription.Length} chars, usable JD={LooksLikeJobDescription(jobDescription)}");
-        Trace?.Payload("Extract", "questions with dropdown options", questions);
-        return (LooksLikeJobDescription(jobDescription) ? jobDescription : "", questions, "");
+
+        var questions = await ReadQuestionsAsync(contract);
+        return (jobDescription, questions, "");
     }
 
     /// <summary>
@@ -424,9 +891,6 @@ public partial class JobBrowserView : UserControl
             document.RootElement.GetProperty("advisory").GetString() ?? "");
     }
 
-    private static bool LooksLikeJobDescription(string text) =>
-        !string.IsNullOrWhiteSpace(text) && text.Trim().Length >= 180;
-
     private async void OnExtract(object sender, RoutedEventArgs e)
     {
         if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
@@ -489,10 +953,13 @@ public partial class JobBrowserView : UserControl
     private async void FillApplicationAutomatically(ResumeAutomationResult result)
     {
         if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
+        var contract = new FlowContract(Trace);
         try
         {
             if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out _) && TryGetHttpUri(result.JobUrl, out var target))
                 await NavigateAsync(target);
+            contract.Input("fill", TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out _),
+                "an application page open in the browser", JobSiteBrowser.CoreWebView2.Source ?? "nothing");
 
             // The shell has just brought this workspace forward. Let the layout pass finish so the
             // WebView is at its final size before any script measures the page.
@@ -502,6 +969,12 @@ public partial class JobBrowserView : UserControl
             var notes = new List<string>();
             if (!string.IsNullOrWhiteSpace(result.ResumeFilePath) && File.Exists(result.ResumeFilePath))
             {
+                // The macro can leave a file behind that exists and is not a document - a stub Word
+                // wrote before it failed, or a PDF export that produced nothing. Uploading that is
+                // worse than not applying, because the application looks complete and is not.
+                var rejection = RejectResumeFile(result.ResumeFilePath);
+                contract.Output("resume document", rejection.Length == 0, "a readable PDF",
+                    rejection.Length == 0 ? Path.GetFileName(result.ResumeFilePath) : rejection);
                 vm.SelectedResumePath = result.ResumeFilePath;
                 uploaded = await UploadResumeAsync(vm, reportStatus: false);
                 // Ashby can rerender its controlled form after a file input changes. Upload first,
@@ -514,6 +987,12 @@ public partial class JobBrowserView : UserControl
             // correction round arrives on ApplicationRefillRequested instead, and already commits
             // the form before it retypes anything — see RefillApplicationAutomatically.
             var fill = await FillFieldsAsync(vm);
+            // Nothing verified on a first pass means the page is not the shape the adapters read,
+            // and another pass would not change that - unless nothing needed filling, which is a
+            // complete form rather than a broken one.
+            contract.Output("fill", fill.Touched.Count > 0 || fill.Unfilled.Count == 0,
+                "at least one field filled and read back, or nothing left to fill",
+                $"{fill.Touched.Count} verified, {fill.Skipped} skipped, {fill.Unfilled.Count} outstanding");
             var validation = await ValidateAndAdvanceAsync(vm, fill);
             fill = validation.Fill;
             if (!string.IsNullOrWhiteSpace(validation.Note)) notes.Add(validation.Note);
@@ -523,11 +1002,21 @@ public partial class JobBrowserView : UserControl
                 return;
             }
 
-            // The second pass is driven only by errors observed after a real Next/Submit click.
-            // DOM "outstanding" guesses remain review diagnostics and never expand the GPT payload.
+            // The site s own errors are the best evidence of what is wrong, and when there are any
+            // they are used on their own. But Submit can produce neither a confirmation nor an error
+            // - the click lands, the page does not move - and the run was then handing a form with
+            // known-empty fields straight to a person without ever trying to finish it. In that case
+            // the empty fields are the only evidence left, so they drive the second pass. They are
+            // matched against the question inventory on the way through, so protected and demographic
+            // fields, which have no question entry, cannot reach ChatGPT this way.
             var correctionQuestions = validation.Errors.Count > 0
                 ? await BuildCorrectionQuestionsAsync(vm, [], validation.Errors)
-                : "[]";
+                : fill.Unfilled.Count > 0
+                    ? await BuildCorrectionQuestionsAsync(vm, fill.Unfilled, [])
+                    : "[]";
+            if (validation.Errors.Count == 0 && fill.Unfilled.Count > 0)
+                Trace?.Step("Fill", "submit gave no verdict; second pass driven by empty fields",
+                    string.Join(" | ", fill.Unfilled.Take(10)));
             if (await vm.RequestAnswerCorrectionAsync(correctionQuestions)) return;
 
             // A challenge that appears only once the form is filled is still the human's to solve at
@@ -539,6 +1028,11 @@ public partial class JobBrowserView : UserControl
 
             await vm.MarkReadyForReviewAsync(fill.Adapter, fill.Filled, fill.Skipped, fill.Touched, uploaded,
                 string.Join(" ", notes), fill.Unfilled);
+        }
+        catch (FlowFormatException ex)
+        {
+            Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
+            await vm.MarkAutomationFailureAsync(result.WorkItemId, ex.Summary);
         }
         catch (Exception ex)
         {
@@ -581,6 +1075,11 @@ public partial class JobBrowserView : UserControl
             if (!string.IsNullOrWhiteSpace(outstanding)) notes.Add(outstanding);
             await vm.MarkReadyForReviewAsync(fill.Adapter, fill.Filled, fill.Skipped, fill.Touched,
                 !string.IsNullOrWhiteSpace(vm.SelectedResumePath), string.Join(" ", notes), fill.Unfilled);
+        }
+        catch (FlowFormatException ex)
+        {
+            Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
+            await vm.MarkAutomationFailureAsync(workItemId, ex.Summary);
         }
         catch (Exception ex)
         {
@@ -712,11 +1211,13 @@ public partial class JobBrowserView : UserControl
             var script = JobSiteApplyAdapters.BuildValidationScript(uri, allowSafeAdvance: true);
             var json = await JobSiteBrowser.ExecuteScriptAsync(script);
             Trace?.Step("Validate", $"{JobSiteApplyAdapters.Resolve(uri).Name} step {step + 1}", json);
-            using var result = JsonDocument.Parse(json);
+            using var result = new FlowContract(Trace).Json("validate", json, JsonValueKind.Object,
+                "an object naming the next action and any errors");
             var root = result.RootElement;
             var errors = ValidationErrors(root);
             if (errors.Count > 0)
             {
+                UnsettleFields(errors.Select(error => error.Question));
                 aggregate = aggregate with
                 {
                     Unfilled = aggregate.Unfilled.Concat(errors.Select(error => error.Question))
@@ -761,6 +1262,7 @@ public partial class JobBrowserView : UserControl
                 }
                 if (nextErrors.Count > 0)
                 {
+                    UnsettleFields(nextErrors.Select(error => error.Question));
                     aggregate = aggregate with
                     {
                         Unfilled = aggregate.Unfilled.Concat(nextErrors.Select(error => error.Question))
@@ -776,6 +1278,9 @@ public partial class JobBrowserView : UserControl
                 }
                 if (TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var nextUri))
                     vm.AdapterName = JobSiteApplyAdapters.Resolve(nextUri).Name;
+                // A multi-step form renders new controls without necessarily changing the URL, so the
+                // page-key check in FillFieldsAsync would not notice. These are different fields.
+                ResetSettledFields("advanced to the next step");
                 var nextFill = await FillFieldsAsync(vm);
                 aggregate = new FillOutcome(
                     nextFill.Adapter,
@@ -898,8 +1403,22 @@ public partial class JobBrowserView : UserControl
             throw new InvalidOperationException("No application page is open.");
         var values = vm.BuildFillValues();
         Trace?.Step("Fill", "values assembled", $"{values.Count} key(s): " + string.Join(", ", values.Keys.Take(25)));
+
+        var page = uri.GetLeftPart(UriPartial.Query);
+        if (!string.Equals(page, _settledPage, StringComparison.OrdinalIgnoreCase))
+        {
+            ResetSettledFields("page is now " + page);
+            _settledPage = page;
+        }
+        // Anything the caller forces is being corrected, so it is no longer settled whatever the
+        // ledger says - drop it before the scripts read the ledger, not after.
+        if (forceLabels is { Count: > 0 }) UnsettleFields(forceLabels);
+        var settled = _settledFields.Values.ToArray();
+        if (settled.Length > 0)
+            Trace?.Step("Fill", $"skipping {settled.Length} settled field(s)", string.Join(" | ", settled.Take(20)));
+
         var json = await JobSiteBrowser.ExecuteScriptAsync(
-            JobSiteFormAdapters.BuildFillScript(uri, values, forceLabels));
+            JobSiteFormAdapters.BuildFillScript(uri, values, forceLabels, settled));
         Trace?.Payload("Fill", "fill script returned", json);
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -914,7 +1433,7 @@ public partial class JobBrowserView : UserControl
 
         // Custom dropdowns are driven after the plain fields, because typing into one opens an
         // overlay that would sit on top of anything still to be filled.
-        var (comboFilled, comboTouched) = await FillCustomDropdownsAsync(values, forceLabels);
+        var (comboFilled, comboTouched) = await FillCustomDropdownsAsync(values, forceLabels, settled);
 
         await Task.Delay(800);
         var outstandingJson = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.OutstandingFieldsScript);
@@ -930,6 +1449,12 @@ public partial class JobBrowserView : UserControl
         var nonTextTouched = StringList(root, "touched")
             .Where(item => !textKeys.Contains(NormalizeFieldLabel(item)) &&
                            !choiceKeys.Contains(NormalizeFieldLabel(item)));
+
+        // Only verified values enter the ledger. Every one of these lists is written after a read-back
+        // confirmed the control holds what we typed, so a field that silently refused the value stays
+        // out and gets another attempt on the next pass.
+        MarkFieldsSettled(textTouched.Concat(choiceTouched).Concat(comboTouched));
+
         return new FillOutcome(
             root.GetProperty("adapter").GetString() ?? "Default (generic)",
             Math.Max(0, root.GetProperty("filled").GetInt32() - textPlanned - choicePlanned) +
@@ -1092,11 +1617,11 @@ public partial class JobBrowserView : UserControl
     /// </summary>
     private async Task<(int Filled, List<string> Touched)> FillCustomDropdownsAsync(
         IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels)
+        IReadOnlyCollection<string>? forceLabels, IReadOnlyCollection<string>? settledLabels = null)
     {
         var touched = new List<string>();
         var planJson = await JobSiteBrowser.ExecuteScriptAsync(
-            JobSiteFormAdapters.BuildComboboxPlanScript(values, forceLabels));
+            JobSiteFormAdapters.BuildComboboxPlanScript(values, forceLabels, settledLabels));
         Trace?.Payload("Dropdown", "plan", planJson);
         using var plan = JsonDocument.Parse(planJson);
         if (plan.RootElement.ValueKind != JsonValueKind.Array) return (0, touched);
@@ -1211,8 +1736,78 @@ public partial class JobBrowserView : UserControl
             ? element.EnumerateArray().Select(item => item.GetString() ?? "").Where(item => item.Length > 0).ToArray()
             : Array.Empty<string>();
 
+    /// <summary>
+    /// Why the generated resume cannot be uploaded, or an empty string when it can.
+    ///
+    /// <para>
+    /// The macro writes a .docm and exports a PDF beside it, and a run that failed partway can leave
+    /// a file that exists, has a .pdf name, and is not a PDF. "File.Exists" was the whole check, so
+    /// that file was uploaded and the application went out looking complete.
+    /// </para>
+    /// </summary>
+    private static string RejectResumeFile(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists) return "the generated resume file is missing";
+        if (!path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            return $"the generated resume is not a PDF ({Path.GetExtension(path)})";
+        if (info.Length < 8 * 1024) return $"the generated resume is only {info.Length} bytes";
+        try
+        {
+            using var stream = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[5];
+            return stream.ReadAtLeast(header, 5, throwOnEndOfStream: false) == 5 && header.StartsWith("%PDF"u8)
+                ? ""
+                : "the generated resume does not start with a PDF header";
+        }
+        catch (IOException ex) { return "the generated resume could not be read: " + ex.Message; }
+    }
+
     private static string NormalizeFieldLabel(string value) =>
         new(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    /// <summary>Drops the ledger when the form underneath it changed.</summary>
+    private void ResetSettledFields(string reason)
+    {
+        if (_settledFields.Count > 0)
+            Trace?.Step("Fill", "settled ledger cleared", $"{_settledFields.Count} field(s): {reason}");
+        _settledFields.Clear();
+    }
+
+    /// <summary>Records fields the host typed and verified, so later passes leave them alone.</summary>
+    private void MarkFieldsSettled(IEnumerable<string> labels)
+    {
+        foreach (var label in labels)
+        {
+            var key = NormalizeFieldLabel(label);
+            if (key.Length > 0) _settledFields[key] = label;
+        }
+    }
+
+    /// <summary>
+    /// Releases fields the form complained about. An error is the only evidence that outranks our
+    /// own verification: the value is in the input, and the site still refuses it.
+    /// </summary>
+    private void UnsettleFields(IEnumerable<string> labels)
+    {
+        var released = new List<string>();
+        foreach (var label in labels)
+        {
+            var key = NormalizeFieldLabel(label);
+            if (key.Length == 0) continue;
+            // Site error text rarely repeats the label verbatim - "Phone" against "Phone number".
+            foreach (var settled in _settledFields.Keys.Where(settled => settled == key ||
+                         Math.Min(settled.Length, key.Length) >= 6 &&
+                         (settled.Contains(key, StringComparison.Ordinal) ||
+                          key.Contains(settled, StringComparison.Ordinal))).ToArray())
+            {
+                released.Add(_settledFields[settled]);
+                _settledFields.Remove(settled);
+            }
+        }
+        if (released.Count > 0)
+            Trace?.Step("Fill", "released for retry", string.Join(" | ", released));
+    }
 
     /// <summary>Names what the page still needs, so "review before submitting" says what to review.</summary>
     private static string DescribeUnfilled(IReadOnlyList<string> unfilled) =>

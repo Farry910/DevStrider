@@ -84,6 +84,59 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
 
     public ObservableCollection<JobLinkQueueItem> JobQueue { get; } = new();
 
+    /// <summary>
+    /// The open applications, one per browser. The run drives exactly one of these at a time; the
+    /// rest are filled forms waiting for a person.
+    /// </summary>
+    public ObservableCollection<ApplicationTabViewModel> Tabs { get; } = new();
+
+    private ApplicationTabViewModel? _selectedTab;
+    public ApplicationTabViewModel? SelectedTab
+    {
+        get => _selectedTab;
+        set
+        {
+            if (!SetProperty(ref _selectedTab, value)) return;
+            foreach (var tab in Tabs) tab.IsSelected = ReferenceEquals(tab, value);
+            TabSelectionChanged?.Invoke(value);
+            NotifyTabState();
+        }
+    }
+
+    /// <summary>
+    /// How many filled applications may wait for review at once.
+    ///
+    /// <para>
+    /// Each one is a live browser holding a rendered page, so this is a memory ceiling as much as an
+    /// attention one. When it is reached the run pauses rather than dropping work, and resumes as
+    /// soon as a tab is closed.
+    /// </para>
+    /// </summary>
+    public int MaxReviewTabs { get; private set; } = 4;
+
+    public int ParkedReviewCount => Tabs.Count(tab => tab.IsAwaitingReview);
+    public bool HasReviewBacklog => ParkedReviewCount > 0;
+    public bool ShowTabStrip => Tabs.Count > 1;
+    public bool IsReviewCapacityFull => ParkedReviewCount >= MaxReviewTabs;
+
+    public string ReviewBacklogSummary => ParkedReviewCount switch
+    {
+        0 => "",
+        1 => "1 application waiting for review",
+        _ => $"{ParkedReviewCount} applications waiting for review",
+    };
+
+    private void NotifyTabState()
+    {
+        OnPropertyChanged(nameof(ParkedReviewCount));
+        OnPropertyChanged(nameof(HasReviewBacklog));
+        OnPropertyChanged(nameof(ShowTabStrip));
+        OnPropertyChanged(nameof(IsReviewCapacityFull));
+        OnPropertyChanged(nameof(ReviewBacklogSummary));
+        OnPropertyChanged(nameof(IsReadyForReview));
+        OnPropertyChanged(nameof(ShowManualTools));
+    }
+
     private const int ConsecutiveFailureLimit = 3;
     private int _consecutiveFailures;
     private int _submittedCount;
@@ -93,10 +146,48 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     public int FailedCount => FailedLinks.Count();
     public bool HasFailedLinks => FailedCount > 0;
 
+    private bool _isManualJobDescriptionPhase;
+
+    /// <summary>
+    /// True once the automatic pass is done and the links it could not read a description from are
+    /// being worked through by hand.
+    /// </summary>
+    public bool IsManualJobDescriptionPhase
+    {
+        get => _isManualJobDescriptionPhase;
+        private set
+        {
+            if (!SetProperty(ref _isManualJobDescriptionPhase, value)) return;
+            OnPropertyChanged(nameof(ShowManualTools));
+        }
+    }
+
+    public IEnumerable<JobLinkQueueItem> DeferredJdLinks =>
+        JobQueue.Where(item => item.Status == JobLinkQueueStatuses.NeedsJobDescription);
+    public int DeferredJdCount => DeferredJdLinks.Count();
+    public bool HasDeferredJdLinks => DeferredJdCount > 0;
+
+    /// <summary>"Manual JD 2 of 5" - where this link sits in the deferred pass.</summary>
+    public string ManualJobDescriptionProgress
+    {
+        get
+        {
+            if (!IsManualJobDescriptionPhase || CurrentQueueItem == null) return "";
+            var remaining = DeferredJdCount;
+            return remaining <= 1 ? "Last link needing a description by hand"
+                : $"{remaining} link(s) still need a description by hand";
+        }
+    }
+
     public bool QueueInputReadOnly => IsAutomaticQueueRunning;
     public bool IsAutomaticQueueIdle => !IsAutomaticQueueRunning;
     public bool NeedsJobDescription => CurrentQueueItem?.Status == JobLinkQueueStatuses.NeedsJobDescription;
-    public bool IsReadyForReview => CurrentQueueItem?.Status == JobLinkQueueStatuses.ReadyForReview;
+    /// <summary>
+    /// True when the tab in front of the person is a filled application waiting on them. The run may
+    /// well be filling another one behind it - that is the point of the tabs - so this deliberately
+    /// follows the selection rather than whatever the run is currently doing.
+    /// </summary>
+    public bool IsReadyForReview => SelectedTab?.IsAwaitingReview == true;
     public bool ShowManualTools => !IsAutomaticQueueRunning || NeedsJobDescription || IsReadyForReview;
     public string CurrentStep => CurrentQueueItem?.Status ?? "Idle";
     public string QueueSummary
@@ -115,6 +206,27 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     }
 
     public event Action? QueueNavigationRequested;
+
+    /// <summary>
+    /// Give the run a fresh browser for this item, because the last one is parked.
+    ///
+    /// <para>
+    /// Returns a task, and the caller awaits it. Creating a WebView2 is genuinely slow - a cold
+    /// environment takes a moment to come up - and as a plain event the handler returned at its
+    /// first await, so navigation could start before any browser existed and fail with "the job
+    /// browser is unavailable".
+    /// </para>
+    /// </summary>
+    public event Func<Guid, Task>? AutomationTabRequested;
+
+    /// <summary>This tab is finished with; dispose its browser.</summary>
+    public event Action<Guid>? TabCloseRequested;
+
+    /// <summary>Show this tab and hide the rest.</summary>
+    public event Action<ApplicationTabViewModel?>? TabSelectionChanged;
+
+    /// <summary>Raised for the manual pass: open this link, but do not try to read the JD from it.</summary>
+    public event Action? ManualJobDescriptionRequested;
     public event Action<JobResumePreparation>? ResumeGenerationRequested;
     public event Action<ResumeAutomationResult>? ApplicationFillRequested;
     public event Action<ChatGptAnswerCorrectionRequest>? AnswerCorrectionRequested;
@@ -179,10 +291,26 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         await OpenNextWorkItemAsync();
     }
 
+    /// <summary>Raised so whatever is mid-flight for this run gets torn down, not just the queue flag.</summary>
+    public event Action? RunCancellationRequested;
+
+    /// <summary>
+    /// Stops the queue and everything it currently has running.
+    ///
+    /// <para>
+    /// This used to set the flag and nothing else, which only decided whether a <em>next</em> link
+    /// would be opened. Anything already in flight carried on - and the longest of those is the wait
+    /// for a ChatGPT reply, which runs to a three-minute timeout. Stop appeared to do nothing for
+    /// three minutes and then produced a timeout alert for a run the person had already abandoned.
+    /// </para>
+    /// </summary>
     [RelayCommand]
     private void StopAutomaticQueue()
     {
         IsAutomaticQueueRunning = false;
+        IsManualJobDescriptionPhase = false;
+        RunCancellationRequested?.Invoke();
+        _trace.Warn("Queue", "stopped by the operator", "cancelling anything still in flight");
         StatusMessage = "Automatic queue stopped. The current page and recovery controls remain available.";
         NotifyQueueState();
     }
@@ -199,15 +327,27 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var item = CurrentQueueItem;
         if (item == null || item.Status is JobLinkQueueStatuses.Submitted or JobLinkQueueStatuses.Skipped or JobLinkQueueStatuses.Failed)
             item = JobQueue.FirstOrDefault(candidate => candidate.Status == JobLinkQueueStatuses.Queued);
+
+        // The automatic pass is over. Anything it set aside for want of a readable description is
+        // now worked through with a person present, one link at a time, in the same window.
+        if (item == null && HasDeferredJdLinks)
+        {
+            await BeginManualJobDescriptionPassAsync();
+            return;
+        }
+
         if (item == null)
         {
             IsAutomaticQueueRunning = false;
+            IsManualJobDescriptionPhase = false;
             CurrentQueueItem = null;
             StatusMessage = "No queued job links remain.";
             return;
         }
 
+        IsManualJobDescriptionPhase = false;
         CurrentQueueItem = item;
+        await EnsureAutomationTabAsync(item);
         _trace.Begin(item.Id, item.Url);
         _trace.Step("Queue", "opened work item",
             $"status={item.Status}, attempts={item.Attempts}, auto={IsAutomaticQueueRunning}");
@@ -222,6 +362,92 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         _trace.Step("Queue", "navigation requested", item.Url);
         QueueNavigationRequested?.Invoke();
         _activity.Info("Job Browser", "Opening queued job", item.Url);
+    }
+
+    /// <summary>
+    /// Opens the next link that needs a description by hand and waits for the person to point at it.
+    ///
+    /// <para>
+    /// No extraction runs here. The adapters already looked and did not find one, so looking again
+    /// would only produce the same wrong answer; the page is put on screen and the person selects
+    /// the description or pastes it.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Gives the run a tab to work in, reusing the current one when it is still free.
+    ///
+    /// <para>
+    /// The previous tab is only reused when it was never parked. Once an application is waiting for
+    /// review its browser belongs to the reviewer, and driving a new job into it would wipe the very
+    /// thing they were asked to look at.
+    /// </para>
+    /// </summary>
+    private async Task EnsureAutomationTabAsync(JobLinkQueueItem item)
+    {
+        var existing = Tabs.FirstOrDefault(tab => tab.WorkItemId == item.Id);
+        if (existing != null)
+        {
+            existing.IsAutomation = true;
+            SelectedTab = existing;
+            if (AutomationTabRequested != null) await AutomationTabRequested(item.Id);
+            return;
+        }
+
+        var free = Tabs.FirstOrDefault(tab => tab.IsAutomation);
+        if (free != null)
+        {
+            // The run had a tab and never parked it - that job ended without an application to keep.
+            TabCloseRequested?.Invoke(free.WorkItemId);
+            Tabs.Remove(free);
+        }
+
+        var tab = new ApplicationTabViewModel(item.Id, item.Url, TabTitleFor(item)) { IsAutomation = true };
+        Tabs.Add(tab);
+        SelectedTab = tab;
+        NotifyTabState();
+        // Awaited: nothing may navigate until the browser behind this tab actually exists.
+        if (AutomationTabRequested != null) await AutomationTabRequested(item.Id);
+    }
+
+    /// <summary>A tab needs a short name; the host and the last path segment carry the most.</summary>
+    private static string TabTitleFor(JobLinkQueueItem item)
+    {
+        if (!Uri.TryCreate(item.Url, UriKind.Absolute, out var uri)) return "Application";
+        var host = uri.Host.Replace("www.", "", StringComparison.OrdinalIgnoreCase);
+        var slug = uri.Segments.Select(segment => segment.Trim('/'))
+            .LastOrDefault(segment => segment.Length is > 2 and < 40 &&
+                                      !segment.Equals("application", StringComparison.OrdinalIgnoreCase)) ?? "";
+        return slug.Length == 0 ? host : $"{host} · {slug}";
+    }
+
+    private async Task BeginManualJobDescriptionPassAsync()
+    {
+        var item = DeferredJdLinks.FirstOrDefault();
+        if (item == null)
+        {
+            IsManualJobDescriptionPhase = false;
+            IsAutomaticQueueRunning = false;
+            StatusMessage = "No queued job links remain.";
+            return;
+        }
+
+        IsAutomaticQueueRunning = false;
+        IsManualJobDescriptionPhase = true;
+        CurrentQueueItem = item;
+        _trace.Begin(item.Id, item.Url);
+        _trace.Step("Queue", "manual description pass", $"{DeferredJdCount} link(s) waiting");
+        Address = item.Url;
+        JobDescription = "";
+        FallbackJobDescription = "";
+        FormQuestionsJson = item.FormQuestionsJson;
+        SelectedResumePath = item.ResumeFilePath;
+        await SaveQueueAsync();
+        NotifyQueueState();
+        OnPropertyChanged(nameof(ManualJobDescriptionProgress));
+        StatusMessage = "The automatic pass is finished. Select the job description on this page, " +
+                        "then choose Use selection - or paste it below.";
+        _activity.Info("Job Browser", "Manual description pass started", item.Url);
+        ManualJobDescriptionRequested?.Invoke();
     }
 
     [RelayCommand]
@@ -241,13 +467,63 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     [RelayCommand]
     private async Task MarkSubmittedAndContinueAsync()
     {
-        var item = CurrentQueueItem;
-        if (item == null || item.Status != JobLinkQueueStatuses.ReadyForReview)
+        var tab = SelectedTab;
+        var item = tab == null ? null : JobQueue.FirstOrDefault(x => x.Id == tab.WorkItemId);
+        if (tab == null || item == null || !tab.IsAwaitingReview)
         {
             StatusMessage = "There is no reviewed application waiting to be marked submitted.";
             return;
         }
         await CompleteSubmittedItemAsync(item, "Marked submitted after human review.", automatic: false);
+    }
+
+    /// <summary>Closes a reviewed tab without submitting it, freeing its slot for the run.</summary>
+    [RelayCommand]
+    private async Task CloseSelectedTabAsync()
+    {
+        var tab = SelectedTab;
+        if (tab == null) { StatusMessage = "There is no tab selected."; return; }
+        if (tab.IsAutomation)
+        {
+            StatusMessage = "That tab is being worked on. Stop the queue first if you want it closed.";
+            return;
+        }
+        var item = JobQueue.FirstOrDefault(x => x.Id == tab.WorkItemId);
+        if (item != null)
+        {
+            SetStatus(item, JobLinkQueueStatuses.Skipped);
+            _activity.Info("Job Browser", "Application closed without submitting", item.Url);
+        }
+        await ReleaseTabAsync(tab);
+    }
+
+    /// <summary>
+    /// Disposes a tab and lets the run have the slot back.
+    ///
+    /// <para>
+    /// This is the other half of the review ceiling. A run that stopped because every slot was full
+    /// starts again here, without anybody having to notice that it had stopped.
+    /// </para>
+    /// </summary>
+    private async Task ReleaseTabAsync(ApplicationTabViewModel tab)
+    {
+        TabCloseRequested?.Invoke(tab.WorkItemId);
+        Tabs.Remove(tab);
+        if (ReferenceEquals(SelectedTab, tab))
+            SelectedTab = Tabs.FirstOrDefault(candidate => candidate.IsAwaitingReview) ?? Tabs.FirstOrDefault();
+        NotifyTabState();
+        await SaveQueueAsync();
+
+        var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
+        if (!moreWork || IsAutomaticQueueRunning || IsReviewCapacityFull)
+        {
+            if (!moreWork && ParkedReviewCount == 0) StatusMessage = "Everything is reviewed and the queue is empty.";
+            return;
+        }
+        _trace.Step("Queue", "resumed after a review slot freed", $"{ParkedReviewCount} still parked");
+        IsAutomaticQueueRunning = true;
+        StatusMessage = "A review slot freed up. Continuing with the next link.";
+        await OpenNextWorkItemAsync();
     }
 
     public async Task MarkSubmittedAutomaticallyAsync(string detail)
@@ -271,9 +547,20 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         // entry is spent. Drop it instead of letting submitted links pile up in the working list.
         JobQueue.Remove(item);
         _submittedCount++;
-        CurrentQueueItem = null;
-        IsAutomaticQueueRunning = true;
+        if (CurrentQueueItem?.Id == item.Id) CurrentQueueItem = null;
         await SaveQueueAsync();
+
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab != null)
+        {
+            // A reviewed tab going away is what frees a slot; ReleaseTabAsync restarts the run if it
+            // had stopped for want of one. Restarting it unconditionally here would start a second
+            // one on top of a run that never paused.
+            await ReleaseTabAsync(tab);
+            return;
+        }
+
+        IsAutomaticQueueRunning = true;
         await OpenNextWorkItemAsync();
     }
 
@@ -369,15 +656,62 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
 
         if (string.IsNullOrWhiteSpace(JobDescription))
         {
-            SetStatus(item, JobLinkQueueStatuses.NeedsJobDescription);
-            _trace.Warn("Extract", "no usable JD", "waiting for a pasted job description");
-            _trace.End("needs job description");
-            IsAutomaticQueueRunning = false;
-            StatusMessage = "This site did not expose a usable JD. Paste it below to resume the same flow.";
-            await SaveQueueAsync();
+            await DeferForManualJobDescriptionAsync(item.Id, "the page exposed no job description");
             return;
         }
         await StartResumeGenerationAsync(item, JobDescription, FormQuestionsJson);
+    }
+
+    /// <summary>Hands the current tab over to the reviewer and takes it off the run.</summary>
+    private void ParkTabForReview(JobLinkQueueItem item, string summary)
+    {
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab == null)
+        {
+            tab = new ApplicationTabViewModel(item.Id, item.Url, TabTitleFor(item));
+            Tabs.Add(tab);
+        }
+        tab.IsAutomation = false;
+        tab.Status = JobLinkQueueStatuses.ReadyForReview;
+        tab.Summary = summary;
+        NotifyTabState();
+    }
+
+    /// <summary>
+    /// Decides what the run does once an application has been parked.
+    ///
+    /// <para>
+    /// It carries on into the next link unless there is nowhere to put the result. Every parked tab
+    /// is a live browser holding a rendered page, so they cannot accumulate without limit; at the
+    /// ceiling the run stops and says so, and closing any one of them starts it again.
+    /// </para>
+    /// </summary>
+    private async Task ContinueAfterParkingAsync(JobLinkQueueItem parked)
+    {
+        CurrentQueueItem = null;
+        var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
+
+        if (!moreWork)
+        {
+            IsAutomaticQueueRunning = false;
+            StatusMessage = ParkedReviewCount == 1
+                ? "All links are done. One application is waiting for review."
+                : $"All links are done. {ParkedReviewCount} applications are waiting for review.";
+            return;
+        }
+
+        if (IsReviewCapacityFull)
+        {
+            IsAutomaticQueueRunning = false;
+            StatusMessage = $"{ParkedReviewCount} applications are waiting for review, which is the limit. " +
+                            "Submit or close one and the queue continues on its own.";
+            _trace.Step("Queue", "paused on the review limit", $"{ParkedReviewCount} parked");
+            return;
+        }
+
+        IsAutomaticQueueRunning = true;
+        StatusMessage = $"{parked.Url} is ready for review. Starting the next link; review it whenever you like.";
+        await OpenNextWorkItemAsync();
     }
 
     public async Task StartManualBidFromCurrentPageAsync(string jobUrl, string jobDescription, string questionsJson)
@@ -449,6 +783,24 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             (string.IsNullOrWhiteSpace(result.ResumeFilePath) ? "(none)" : result.ResumeFilePath) +
             $", bidId={result.BidId}");
         _trace.Payload("ChatGPT", "answers", result.AnswersJson);
+
+        // The answers object is the only thing that can fill this form s screening questions. If the
+        // form asked and nothing parseable came back, filling would leave every required question
+        // empty and the run would end at human review having achieved nothing. That is a format
+        // failure, not a slow step, so the link is recorded and the queue moves on.
+        var asked = CountQuestions(item.FormQuestionsJson);
+        var answered = CountQuestions(result.AnswersJson);
+        if (asked > 0 && answered <= 0)
+        {
+            var summary = $"Gave up on format at answers (output): expected answers to {asked} " +
+                          (answered < 0 ? "question(s); got unparseable JSON." : "question(s); got none.");
+            _trace.Fail("Contract", "answers output rejected", summary);
+            await MarkAutomationFailureAsync(item.Id, summary);
+            return;
+        }
+        _trace.Ok("Contract", "answers output ok", $"{answered} answer(s) for {asked} question(s)");
+
+        WarnAboutBlankAnswers(item, result.AnswersJson);
         // Again before filling: an answer saved in Quick answers mid-run is a new personal fact,
         // and the fill script reads this cache synchronously.
         await LoadSavedAnswersAsync();
@@ -575,13 +927,17 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             unfilled ?? Array.Empty<string>());
         SetStatus(item, JobLinkQueueStatuses.ReadyForReview);
         _consecutiveFailures = 0;
-        IsAutomaticQueueRunning = false;
         await SaveQueueAsync();
         var upload = resumeUploaded ? "Resume uploaded." : "Resume upload needs manual attention.";
-        StatusMessage = $"{adapter}: filled {filled}, skipped {skipped}. {upload} Automatic submission could not be confirmed. Review the visible result; submit manually if needed, then choose Mark submitted & next. {note}".Trim();
         RecordFill(new Uri(item.Url).Host, adapter, filled, skipped, touched);
         _activity.Info("Job Browser", "Human review required", item.Url);
         _trace.End("ready for review", $"filled={filled}, skipped={skipped}");
+
+        // Park this application in its own tab and keep going. The reviewer picks it up when they
+        // are ready; the run does not wait for them, because the next resume can be generated while
+        // this form sits on screen.
+        ParkTabForReview(item, $"{adapter}: filled {filled}, skipped {skipped}. {upload} {note}".Trim());
+        await ContinueAfterParkingAsync(item);
     }
 
     public async Task BeginValidationRepairAsync(IReadOnlyCollection<string> errors)
@@ -603,6 +959,68 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     /// consecutive failures does stop the queue, because at that point the machine, the network, or
     /// the profile is usually the problem rather than any individual link.
     /// </summary>
+    /// <summary>
+    /// Sets a link aside because its description could not be read, and carries straight on.
+    ///
+    /// <para>
+    /// This is not a failure and is deliberately kept out of the consecutive-failure count. Nothing
+    /// is wrong with the machine, the network or the profile - one page did not expose a description
+    /// where the adapters look for one, and a person can point at it in a few seconds. Stopping the
+    /// batch to ask, or burning the link, both cost more than deferring it: the automatic pass runs
+    /// to the end untouched, and these links are worked through together afterwards.
+    /// </para>
+    /// </summary>
+    public async Task DeferForManualJobDescriptionAsync(Guid workItemId, string reason)
+    {
+        var item = JobQueue.FirstOrDefault(x => x.Id == workItemId);
+        if (item == null) return;
+        item.Error = reason;
+        SetStatus(item, JobLinkQueueStatuses.NeedsJobDescription);
+        _trace.Warn("Queue", "deferred for a manual description", $"{item.Url}: {reason}");
+        _trace.End("deferred", reason);
+        _activity.Info("Job Browser", "Job description needs a human", $"{item.Url} | {reason}");
+        await SaveQueueAsync();
+        NotifyQueueState();
+
+        if (!IsAutomaticQueueRunning)
+        {
+            StatusMessage = "Set aside for a manual description: " + reason;
+            return;
+        }
+        StatusMessage = $"No readable description here, so it is set aside for later. {DeferredJdCount} waiting.";
+        CurrentQueueItem = null;
+        await OpenNextWorkItemAsync();
+    }
+
+    /// <summary>
+    /// Takes a description the person picked out on the page and rejoins the normal flow with it.
+    /// </summary>
+    public async Task AcceptManualJobDescriptionAsync(string jobDescription, string questionsJson)
+    {
+        var item = CurrentQueueItem;
+        if (item == null) return;
+        item.Error = "";
+        JobDescription = jobDescription.Trim();
+        FormQuestionsJson = string.IsNullOrWhiteSpace(questionsJson) ? "[]" : questionsJson;
+        item.FormQuestionsJson = FormQuestionsJson;
+        _trace.Ok("Extract", "description supplied by hand",
+            $"{JobDescription.Length} chars, questions={CountQuestions(FormQuestionsJson)}");
+        await StartResumeGenerationAsync(item, JobDescription, FormQuestionsJson);
+    }
+
+    /// <summary>Gives up on the link in front of the manual pass and moves to the next one.</summary>
+    [RelayCommand]
+    private async Task SkipManualJobDescriptionAsync()
+    {
+        var item = CurrentQueueItem;
+        if (item == null) return;
+        SetStatus(item, JobLinkQueueStatuses.Skipped);
+        _activity.Info("Job Browser", "Skipped a link needing a manual description", item.Url);
+        CurrentQueueItem = null;
+        await SaveQueueAsync();
+        await OpenNextWorkItemAsync();
+    }
+
     public async Task MarkAutomationFailureAsync(Guid workItemId, string message)
     {
         var item = JobQueue.FirstOrDefault(x => x.Id == workItemId);
@@ -713,6 +1131,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var profile = _profiles.Current;
         if (profile == null) return;
         var settings = await _settings.GetAsync();
+        // Clamped: one tab is the old one-at-a-time behaviour, and past a handful the browsers cost
+        // more memory than the overlap saves attention.
+        MaxReviewTabs = Math.Clamp(settings.MaxReviewTabs, 1, 8);
         var items = settings.JobLinkQueues.TryGetValue(profile.Id.ToString(), out var saved)
             ? saved.Select(item => item.Clone()).ToList() : new List<JobLinkQueueItem>();
         JobQueue.Clear();
@@ -720,6 +1141,10 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         foreach (var item in items)
         {
             if (item.Status == JobLinkQueueStatuses.InProgress) item.Status = JobLinkQueueStatuses.Queued;
+            // A review waiting at shutdown cannot survive it: the filled form lived in a browser that
+            // is gone, and the tab it belonged to went with it. Re-queue rather than showing a review
+            // card for a page that no longer exists.
+            if (item.Status == JobLinkQueueStatuses.ReadyForReview) item.Status = JobLinkQueueStatuses.Queued;
             if (item.Status == JobLinkQueueStatuses.Completed) item.Status = JobLinkQueueStatuses.Submitted;
             // Clears out links submitted by builds that kept them, so an existing queue prunes itself once.
             if (item.Status == JobLinkQueueStatuses.Submitted) continue;
@@ -803,6 +1228,34 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         return root.EnumerateObject()
             .Where(p => p.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
             .ToDictionary(p => p.Name, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Names the questions ChatGPT returned nothing for.
+    ///
+    /// <para>
+    /// A blank answer to a required question is the quietest way an application dies: the field is
+    /// simply never typed, the site rejects the submission, and the reason is buried among a dozen
+    /// "still empty" diagnostics. Saying it plainly at the moment the answers arrive is what turns
+    /// that into something noticeable — and if the site does reject them, these are exactly the
+    /// questions the correction round will carry back.
+    /// </para>
+    /// </summary>
+    private void WarnAboutBlankAnswers(JobLinkQueueItem item, string answersJson)
+    {
+        try
+        {
+            var answers = ParseAnswers(answersJson);
+            var blank = answers.Where(pair => string.IsNullOrWhiteSpace(pair.Value))
+                .Select(pair => pair.Key).ToArray();
+            if (blank.Length == 0) return;
+            _trace.Warn("ChatGPT", $"{blank.Length} question(s) answered blank",
+                string.Join(" | ", blank.Select(question =>
+                    question.Length <= 90 ? question : question[..90] + "…")));
+            _activity.Warning("Job Browser", "ChatGPT left application questions unanswered",
+                $"{blank.Length} of {answers.Count} on {item.Url}");
+        }
+        catch (JsonException) { /* the reply shape is already reported by Resume Studio */ }
     }
 
     private static string MergeAnswers(string original, string correction)

@@ -195,10 +195,13 @@ public static class JobSiteFormAdapters
 """;
 
     public static string BuildFillScript(Uri uri, IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels = null)
+        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null)
     {
         var payload = JsonSerializer.Serialize(new
-            { adapter = NameFor(uri), values, forceLabels = forceLabels ?? [] });
+        {
+            adapter = NameFor(uri), values,
+            forceLabels = forceLabels ?? [], settledLabels = settledLabels ?? [],
+        });
         return """
 (() => {
 __PRELUDE__
@@ -211,6 +214,17 @@ __PRELUDE__
    const key = fieldKey(labelFor(e) || textFor(e));
    return !!key && forceKeys.some(forced => key === forced
      || Math.min(key.length, forced.length) >= 8 && (key.includes(forced) || forced.includes(key)));
+ };
+ // Fields the host has already typed and verified, and that the last validation pass did not
+ // complain about. Retyping a correct answer is not free: every pass costs a click, a full retype
+ // and a settle delay, and each one is another chance for a controlled input to drop the value it
+ // already held. A field leaves this set only when the form itself reports an error on it.
+ const settledKeys = (payload.settledLabels || []).map(fieldKey).filter(Boolean);
+ const settledField = e => {
+   if (forceField(e)) return false;
+   const key = fieldKey(labelFor(e) || textFor(e));
+   return !!key && settledKeys.some(done => key === done
+     || Math.min(key.length, done.length) >= 8 && (key.includes(done) || done.includes(key)));
  };
  // Ashby persists controlled fields asynchronously. Sending every blur in one JS task starts
  // overlapping state updates and later responses can restore an older, partially-filled form.
@@ -287,13 +301,24 @@ __PRELUDE__
  // A radio group is answered when ANY of its options is, not when this particular one is. Asked per
  // element, a group we had just filled reported as still outstanding, once per unchosen option.
  const groupAnswered = e => choice(e) ? choiceOptions(e).some(choiceSelected) : answered(e);
- for (const [key, selectors] of Object.entries(core[adapter] || core['Default (generic)'])) { const v = payload.values[key]; if (!v) continue; for (const selector of selectors) { const e=document.querySelector(selector); if (write(e,v)) { filled++; touched.push(key); break; } } }
+ // The core selectors used to write unconditionally, so name/email/phone/LinkedIn were retyped on
+ // every pass including the post-validation correction one, where nothing had asked for them.
+ // They answer to the same rule as everything else now: already answered, or settled, means leave it.
+ for (const [key, selectors] of Object.entries(core[adapter] || core['Default (generic)'])) {
+   const v = payload.values[key]; if (!v) continue;
+   for (const selector of selectors) {
+     const e = document.querySelector(selector);
+     if (!e || settledField(e) || groupAnswered(e) && !forceField(e)) continue;
+     if (write(e,v)) { filled++; touched.push(key); break; }
+   }
+ }
  const controls = Array.from(new Set(Array.from(document.querySelectorAll(
    'input:not([type="hidden"]),textarea,select,' + choiceSelector))));
  for (const e of controls) {
    if (e.type === 'file' || comboInput(e) || mirroredChoice(e)
        || (!visible(e) && !choiceVisible(e)) || e.disabled
-       || groupAnswered(e) && !forceField(e) || planned(e) || choicePlanned(e)) continue;
+       || groupAnswered(e) && !forceField(e) || settledField(e)
+       || planned(e) || choicePlanned(e)) continue;
    const v=valueFor(e);
    if (v === null) { skipped++; continue; }
    if (write(e,v)) { filled++; touched.push(textFor(e)); } else skipped++;
@@ -542,10 +567,13 @@ __PRELUDE__
     /// and returns what will be typed into each. Nothing is touched yet.
     /// </summary>
     public static string BuildComboboxPlanScript(IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels = null)
+        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null)
     {
         var payload = JsonSerializer.Serialize(new
-            { adapter = "", values, forceLabels = forceLabels ?? [] });
+        {
+            adapter = "", values,
+            forceLabels = forceLabels ?? [], settledLabels = settledLabels ?? [],
+        });
         return """
 (() => {
 __PRELUDE__
@@ -559,9 +587,18 @@ __PRELUDE__
    return !!key && forceKeys.some(force => key === force
      || Math.min(key.length, force.length) >= 8 && (key.includes(force) || force.includes(key)));
  };
+ // A dropdown the host already drove and confirmed. Reopening one costs an overlay, a schema read
+ // and a verify poll each time, and the overlay covers whatever still needs filling underneath.
+ const settledKeys = (payload.settledLabels || []).map(fieldKey).filter(Boolean);
+ const settled = e => {
+   if (forced(e)) return false;
+   const key = fieldKey(labelFor(e) || labelFor(shell(e)));
+   return !!key && settledKeys.some(done => key === done
+     || Math.min(key.length, done.length) >= 8 && (key.includes(done) || done.includes(key)));
+ };
  const controls = Array.from(document.querySelectorAll(comboSelector))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !e.disabled
-     && (!answered(e) || forced(e)));
+     && !settled(e) && (!answered(e) || forced(e)));
  const plan = [];
  window.__dsCombos = [];
  for (const control of controls) {

@@ -80,8 +80,16 @@ public static class AnswerJson
     /// breaks arrive escaped and survive: only the raw ones were ever an artefact.
     /// </para>
     /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex MarkdownLink =
+        new(@"\[([^\]\r\n]{1,300})\]\((?:[^)\r\n]{1,500})\)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static string Tidy(string value)
     {
+        // ChatGPT renders an address or URL as a markdown link when it is the whole answer, and
+        // "[me@example.com](mailto:me@example.com)" typed into an email field is not an address.
+        // Only the visible text was ever the answer, so the link syntax is unwrapped away.
+        if (value.Contains('[') && value.Contains("](", StringComparison.Ordinal))
+            value = MarkdownLink.Replace(value, "$1");
         if (value.Length == 0) return value;
         var text = new StringBuilder(value.Length);
         var lastWasSpace = false;

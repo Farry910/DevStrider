@@ -187,7 +187,18 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
             return;
         }
 
-        var startFreshChat = !ResumeChatStarted || CompletedInChat >= GenerationLimit;
+        // Continuing a chat means sending the job description on its own, because the profile prompt
+        // is already at the top of that conversation. That only holds if we know which conversation
+        // it is. ChatGPT assigns the /c/ id after the first reply and the capture can come back
+        // empty; the run then believed it had a chat, sent a bare job description, and - with no URL
+        // to navigate to - sent it into whatever the pane was last pointing at, which after the
+        // questions step is the previous job s answer chat. A resume tailored by a conversation that
+        // never saw the resume prompt looks plausible and is wrong.
+        var lostTheChat = ResumeChatStarted && string.IsNullOrWhiteSpace(ResumeConversationUrl);
+        if (lostTheChat)
+            _trace.Warn("ChatGPT", "resume chat url was never captured", "starting a fresh chat instead");
+
+        var startFreshChat = !ResumeChatStarted || lostTheChat || CompletedInChat >= GenerationLimit;
         if (startFreshChat)
         {
             ResumeChatStarted = true;
@@ -195,16 +206,19 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
 
         var jd = jobDescription.Trim();
-        var prompt = startFreshChat
-            ? profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + jd
-            : "Job description:\n\n" + jd;
+        // Both are built every time. The driver sends Prompt, but if a continuation turns out to
+        // point at a conversation that will not open, it needs the full one in hand right then.
+        var freshPrompt = profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + jd;
+        var prompt = startFreshChat ? freshPrompt : "Job description:\n\n" + jd;
 
         var request = new ChatGptResumeRequest(
-            workItemId, prompt, jobUrl, jd, questionsJson, knownAnswersJson,
+            workItemId, prompt, freshPrompt, jobUrl, jd, questionsJson, knownAnswersJson,
             startFreshChat, resumeOnly, label, startFreshChat ? "" : ResumeConversationUrl,
             answerConversationUrl);
 
-        _trace.Step("ChatGPT", "request queued",
+        _trace.Step("ChatGPT", startFreshChat
+                ? "new chat: sending the resume prompt with this job description"
+                : "same chat: sending this job description only",
             $"freshChat={startFreshChat}, chat={CompletedInChat}/{GenerationLimit}, " +
             $"conversation={(string.IsNullOrWhiteSpace(ResumeConversationUrl) ? "(none)" : ResumeConversationUrl)}");
         _trace.Payload("ChatGPT", "resume prompt", prompt);
@@ -473,6 +487,35 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         finally { IsAutomationRunning = false; }
     }
 
+    /// <summary>
+    /// Records that a remembered resume chat could not be reopened and a fresh one took its place.
+    ///
+    /// <para>
+    /// The counters move with it. The old conversation is unreachable, so its URL is worth nothing,
+    /// and the generation count belongs to a chat nothing is being added to any more.
+    /// </para>
+    /// </summary>
+    public async Task NoteResumeChatRestartedAsync(string reason)
+    {
+        _trace.Warn("ChatGPT", "remembered resume chat could not be opened", reason + "; started a fresh one");
+        CompletedInChat = 0;
+        ResumeChatStarted = true;
+        await RememberConversationAsync("");
+        StatusMessage = "The previous resume chat could not be opened, so a fresh one was started " +
+                        "with the full profile prompt.";
+    }
+
+    /// <summary>
+    /// Tears down whatever this workspace has running, for a run the operator stopped elsewhere.
+    /// </summary>
+    public void CancelActiveRun()
+    {
+        if (!IsAutomationRunning && _pendingRequest == null && _pendingAnswerCorrection == null) return;
+        _trace.Warn("ChatGPT", "cancelled with the run", "the queue was stopped");
+        CancelAutomation();
+        StatusMessage = "Stopped with the queue.";
+    }
+
     private void CancelAutomation()
     {
         _pendingRequest = null;
@@ -635,9 +678,16 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     }
 }
 
+/// <param name="Prompt">What to send: prompt plus JD for a fresh chat, JD alone for a continuation.</param>
+/// <param name="FreshChatPrompt">
+/// The full prompt plus JD, carried on every request. A continuation only works if the conversation
+/// it names still opens; when it does not, the driver starts a fresh chat and needs the full prompt
+/// at that moment rather than having to ask for the request to be rebuilt.
+/// </param>
 public sealed record ChatGptResumeRequest(
     Guid WorkItemId,
     string Prompt,
+    string FreshChatPrompt,
     string JobUrl,
     string JobDescription,
     string QuestionsJson,

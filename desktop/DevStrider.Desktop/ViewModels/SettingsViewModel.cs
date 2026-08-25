@@ -195,6 +195,7 @@ public partial class SettingsViewModel : ViewModelBase
         try
         {
             Model.ResumeGenerationsPerChat = Math.Clamp(Model.ResumeGenerationsPerChat, 1, 50);
+            Model.MaxReviewTabs = Math.Clamp(Model.MaxReviewTabs, 1, 8);
             Model.ResumeOutputRoot = (Model.ResumeOutputRoot ?? "").Trim();
             Model.ResumeOutputFileBase = string.IsNullOrWhiteSpace(Model.ResumeOutputFileBase)
                 ? "Resume"

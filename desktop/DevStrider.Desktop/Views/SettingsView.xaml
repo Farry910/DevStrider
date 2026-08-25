@@ -53,6 +53,12 @@
                    Margin="0,2,0,4" Tag="Example: USD 140,000-160,000 per year"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
                      Text="Include the currency and time period. Leave blank to keep salary questions unanswered for manual review."/>
+
+          <TextBlock Text="Applications waiting for review at once" Margin="0,12,0,0"/>
+          <TextBox Text="{Binding Model.MaxReviewTabs, UpdateSourceTrigger=PropertyChanged}"
+                   Width="80" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="4"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="A filled application parks in its own tab so the queue can carry on to the next link instead of waiting for you. Each tab is a live browser, so this caps memory as well as attention: at the limit the queue pauses, and closing any tab starts it again. 1 restores the old one-at-a-time behaviour; 8 is the maximum."/>
         </StackPanel>
       </Border>
 

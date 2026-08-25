@@ -112,6 +112,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 request.KnownAnswersJson,
                 request.AnswerConversationUrl);
         };
+        // Stopping the queue has to reach the ChatGPT driver too: the resume wait is the longest
+        // thing a run has in flight, and it is owned by the other workspace.
+        JobBrowser.RunCancellationRequested += ResumeStudio.CancelActiveRun;
         JobBrowser.ApplicationFillRequested += _ => Current = JobBrowser;
         JobBrowser.ApplicationRefillRequested += _ => Current = JobBrowser;
         JobBrowser.QueueNavigationRequested += () => Current = JobBrowser;

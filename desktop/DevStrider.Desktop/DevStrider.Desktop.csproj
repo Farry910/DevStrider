@@ -335,8 +335,153 @@
          work authorisation, a degree, a licence, a clearance, employment dates — are still returned
          empty for a human, since passing a filter by asserting one of those is a misrepresentation
          the applicant would have to stand behind. Applies to the first pass, the correction pass and
-         the manual prompt alike. -->
-    <Version>9.9.8</Version>
+         the manual prompt alike.
+         9.9.9 stops an open question coming back blank. Asked for a credit-model example this person
+         has no credit work for, ChatGPT declined outright and returned an empty string, which is the
+         one answer that guarantees the application is never read. The prompt now rules that out: an
+         open question is answered from real work in two to five concrete sentences, and where it
+         names a domain the person has not worked in, the closest genuine work is described with the
+         domain stated plainly rather than claimed or refused. Fabricating an employer, a project or
+         a credential stays forbidden. Answers must also be plain text — a markdown link was being
+         typed into an email field — and any that survives is unwrapped to its visible text. Questions
+         answered blank are now named in the trace and in Activity as they arrive.
+
+         9.9.10 stops reworking fields that were already right. Every fill pass reconsidered the whole
+         form, and the core identity selectors — name, email, phone, LinkedIn — wrote unconditionally,
+         with no answered check at all, so the correction pass that runs after a validation error
+         selected and retyped fields nothing had complained about. That is seconds per field and a
+         real risk: a controlled input that drops a retyped value turns a correct field into an empty
+         one. The host now keeps a ledger of fields it typed and read back, per page, and the fill,
+         choice and dropdown planners all skip them. A field leaves the ledger only when the form
+         reports an error against it, when a correction pass forces it, or when the page or step
+         changes. What was held back and what was released is named in the trace.
+
+         9.10.0 stops tailoring resumes to the application form, and puts a checked contract between
+         every step. The job description was document.body.innerText of whichever page had loaded,
+         accepted if it cleared 180 characters. Ashby serves the posting and the form at two
+         addresses and an aggregator link points at the form, so for those links the "job
+         description" was the contact fields, the demographic survey and the cookie banner - 2,857
+         characters on Absci, comfortably over the floor, and nothing downstream could tell. The run
+         now goes to the posting URL first, reads the description container rather than the body, and
+         judges it by structure: prose in a block with no form controls in it. Absci s posting gives
+         5,038 clean characters; its form page is refused because the best block on it holds 36
+         controls. Around that, each step of a bid declares what it needs and what it promises -
+         navigation, description, form opened, questions, answers, resume PDF, fill, validation - and
+         both ends are checked. A step that produces the wrong shape ends that link with what was
+         expected and what arrived, and the queue takes the next one, because unusable data is worse
+         than no data once it flows on.
+
+         9.11.0 stops a batch waiting on a person, at both ends of it.
+
+         A link whose description could not be read is no longer failed - it is set aside, the run
+         carries on to the end, and the links it set aside are then worked through together with a
+         person present: the posting opens, they highlight the description, and the normal flow
+         resumes from there. One awkward page used to be able to interrupt a batch; now it costs a
+         few seconds at the end of one. Deferrals are deliberately kept out of the consecutive-
+         failure count, because nothing is wrong with the machine when a page simply lays its
+         description out somewhere new.
+
+         And a finished application no longer holds the queue still. It parks in its own tab and the
+         run starts the next link immediately, so reviewing - a minute or two of close attention per
+         application - happens against a batch of tabs whenever the reviewer is ready, instead of
+         once per link the moment each one lands. Generation stays strictly sequential, because it
+         is driven through the ChatGPT UI and there is one of those; only the reviewing overlaps.
+         Parked tabs are capped (MaxReviewTabs, default 4) since each is a live browser holding a
+         rendered page: at the ceiling the run pauses, and closing any tab starts it again. Hidden,
+         never Collapsed - a collapsed WebView2 is arranged at zero size and every visibility test on
+         the page then reports false, which is exactly what lets a hidden tab keep being filled.
+
+         9.11.1 keeps a continued resume chat honest, and surfaces the review-tab limit.
+
+         Reusing a chat means sending the job description alone, because the profile prompt is
+         already at the top of that conversation - which only works if we know which conversation.
+         ChatGPT assigns the /c/ id after the first reply and the capture can come back empty; the
+         run then believed it had a chat, sent a bare job description, and with no URL to navigate to
+         sent it wherever the pane was last pointing, which after the questions step is the previous
+         job s answer chat. The resume came back tailored by a conversation that had never seen the
+         resume prompt, which looks plausible and is wrong. A chat with no captured URL is now no
+         chat: the next request starts a fresh one and sends the prompt with it. The submit path
+         refuses the same case outright rather than typing into whatever is on screen, because the
+         failure is silent. The trace now names which of the two was sent.
+
+         MaxReviewTabs was added to the settings file in 9.11.0 and never to the settings screen, so
+         the only way to change it was to edit JSON. It is on the Application defaults card now.
+
+         9.11.2 makes Stop actually stop, and closes a gap 9.11.0 opened.
+
+         Stopping the queue set a flag that only decided whether a next link would be opened.
+         Anything already running carried on, and the longest of those is the wait for a ChatGPT
+         reply - three minutes. Stop appeared to do nothing, then produced a timeout alert for a run
+         that had been abandoned minutes earlier. Stop now cancels the in-flight work as well, which
+         means reaching into the ChatGPT workspace, since that is where the wait lives.
+
+         The other one was mine. Tabs made browsers arrive on demand, and the request for one was a
+         plain event: the handler returned at its first await, so navigation could start before the
+         browser existed and fail with "the job browser is unavailable" - most easily after a failed
+         run, where starting again disposes the old tab before making the new one. Tab creation is
+         awaited now. The browser property also no longer throws when there is nothing yet; it hands
+         back an uninitialised control so the CoreWebView2 == null guards all over this file can
+         answer the question they were written to ask.
+
+         9.11.3 carries no code change. It is a version marker, so the next run can be identified
+         from the title bar as the one that came after the 9.11.2 fixes rather than being confused
+         with a build that predates them.
+
+         9.11.4 checks that a remembered resume chat actually opened before typing into it.
+
+         9.11.1 stopped a continuation being sent when no conversation URL was known. It did not
+         cover the case that turned up in practice: a URL that is known and dead. The run navigated
+         to the remembered chat, ChatGPT answered "unable to access this tab", and the bare job
+         description went in anyway - so the whole prompt ChatGPT received was "Job description:"
+         followed by the posting, with no profile prompt above it. The reply looks like a resume and
+         is not the one the profile asks for.
+
+         Arriving is now checked separately from navigating. Existing messages are the test that
+         counts: the URL can still read /c/ and the composer can still be there on a conversation
+         that failed to load its history, and the history is the entire reason a continuation is
+         allowed to send the job description alone. When the check fails the driver opens a fresh
+         chat and sends the full prompt, which it now carries on every request for exactly this
+         moment, and the generation counters move to the new chat.
+
+         9.11.5 stops the prompt being typed into the previous reply, and finishes a form the site
+         will not comment on.
+
+         The submit script took the first visible text input in document order. The transcript is
+         above the composer, so a reply left open for editing - an editable wrapper holding the last
+         generated resume - captured the next prompt instead. The job description went into the old
+         answer, nothing was sent, and the run stopped there with no way forward. Anything inside a
+         conversation turn is now excluded from both the input and the Send button, the composer is
+         addressed directly, and where it has to be guessed the last candidate wins rather than the
+         first, because the composer is below the transcript and a message editor is inside it. An
+         open editor is closed and the submit retried, since ChatGPT will not take a new message
+         while one is up.
+
+         Second: Submit can land and produce neither a confirmation nor an error. The correction pass
+         only ever ran on site errors, so in that case a form with known-empty fields went straight
+         to a person untouched. Those empty fields now drive the second pass when there is no other
+         evidence. They are matched against the question inventory on the way through, so protected
+         and demographic fields - which have no entry there - still cannot reach ChatGPT.
+
+         9.11.6 takes the reply and not what the free plan puts under it. The extraction read the
+         whole assistant message, which on a free account carries the Copy/Rate/Retry row and then an
+         advertisement below it. Both went to Word as part of the resume, and because an ad rotates on
+         its own the text never held still - so the wait for a settled reply ran its full three
+         minutes and the run stopped. The rendered message body is now what is read, and where no
+         named container exists the children are kept only up to the first one holding a button,
+         which is the action row. The test is structural rather than word-matching, because a resume
+         is allowed to contain the words Retry or Copy. This covers the answers reply too; both go
+         through the same snapshot.
+
+         9.11.7 removes the trip back to the resume chat. After the answers were collected in their
+         own conversation, the run navigated back to the resume conversation before handing to Word.
+         It was housekeeping - the answers were already in hand - but it was awaited, and a
+         navigation that never reports completion costs 45 seconds before giving up. That wait sat
+         between the answers and the Word handoff: the pane shows the resume chat, nothing appears to
+         happen, and the run reads as stuck. Nothing depended on it. Every operation that follows
+         navigates somewhere explicit first - the next resume request to its conversation or a fresh
+         chat, a correction to the answer conversation - so where the pane is left is not an input to
+         anything, and the handoff to Word now happens immediately. -->
+    <Version>9.11.7</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

@@ -74,6 +74,18 @@ public class AppSettings
     /// <summary>Maximum successful resume generations kept in one ChatGPT conversation.</summary>
     public int ResumeGenerationsPerChat { get; set; } = 10;
 
+    /// <summary>
+    /// How many filled applications may wait for review at once, each in its own tab.
+    ///
+    /// <para>
+    /// Reviewing is the slow part of a batch and it needs a person, so the run parks finished
+    /// applications and carries on rather than waiting. Every parked tab is a live browser holding a
+    /// rendered page, so this is a memory ceiling as much as an attention one; at the limit the run
+    /// pauses and resumes as soon as a tab is closed.
+    /// </para>
+    /// </summary>
+    public int MaxReviewTabs { get; set; } = 4;
+
     /// <summary>Must match the Word macro's OUTPUT_ROOT when automatic upload is desired.</summary>
     public string ResumeOutputRoot { get; set; } = "";
 

@@ -99,6 +99,68 @@ public partial class ResumeStudioView : UserControl
     private void CancelAutomation() => _automationCancellation?.Cancel();
     private void StartFreshChat() => ChatGptBrowser.CoreWebView2?.Navigate("https://chatgpt.com/");
 
+
+    /// <summary>Whether a remembered conversation actually opened, and what was wrong if it did not.</summary>
+    private readonly record struct ConversationCheck(bool Ok, string Detail);
+
+    /// <summary>
+    /// Confirms the conversation we navigated to is really open before anything is typed into it.
+    ///
+    /// <para>
+    /// A continuation sends the job description alone, because the profile prompt is supposed to be
+    /// sitting above it in that conversation. If the conversation did not open — deleted, a different
+    /// account, ChatGPT throwing "unable to load" — then the prompt is not above it, and submitting
+    /// anyway produces a resume written against nothing but a job description. That reads as a
+    /// plausible resume and is not the one this profile asks for, which is the worst kind of wrong.
+    /// </para>
+    ///
+    /// <para>
+    /// Existing messages are the test that matters. The URL can still say /c/… and the composer can
+    /// still be there on a conversation that failed to load its history, and it is the history that
+    /// the continuation depends on.
+    /// </para>
+    /// </summary>
+    private async Task<ConversationCheck> WaitForUsableConversationAsync(CancellationToken token)
+    {
+        const string probe = """
+(() => {
+  const text = (document.body && document.body.innerText || '').slice(0, 4000);
+  const error = /unable to (load|access)[^.\n]{0,60}|conversation not found|this conversation (is |)unavailable|something went wrong|does not exist/i.exec(text);
+  return {
+    url: location.href,
+    onConversation: /\/c\/[0-9a-zA-Z-]{8,}/.test(location.href),
+    messages: document.querySelectorAll('[data-message-author-role]').length,
+    composer: !!document.querySelector('#prompt-textarea,[contenteditable="true"],textarea'),
+    error: error ? error[0] : '',
+  };
+})()
+""";
+
+        var last = "no reading";
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Delay(attempt == 0 ? 600 : 500, token);
+
+            var raw = await ChatGptBrowser.ExecuteScriptAsync(probe);
+            using var document = JsonDocument.Parse(raw);
+            var root = document.RootElement;
+            var error = root.GetProperty("error").GetString() ?? "";
+            var onConversation = root.GetProperty("onConversation").GetBoolean();
+            var messages = root.GetProperty("messages").GetInt32();
+            var composer = root.GetProperty("composer").GetBoolean();
+            last = $"url={root.GetProperty("url").GetString()}, messages={messages}, " +
+                   $"composer={composer}, error={(error.Length == 0 ? "none" : error)}";
+
+            // An error banner will not clear itself, and being bounced off /c/ is final too.
+            if (error.Length > 0) return new ConversationCheck(false, "ChatGPT said: " + error);
+            if (!onConversation && attempt >= 2)
+                return new ConversationCheck(false, "ChatGPT left the conversation URL: " + last);
+            if (onConversation && composer && messages > 0) return new ConversationCheck(true, last);
+        }
+        return new ConversationCheck(false, "the conversation never finished loading: " + last);
+    }
+
     private async void SubmitAutomatedResumeAsync(ChatGptResumeRequest request)
     {
         if (DataContext is not ResumeStudioViewModel vm || ChatGptBrowser.CoreWebView2 == null) return;
@@ -113,16 +175,42 @@ public partial class ResumeStudioView : UserControl
             // chat used to mean "submit wherever the pane happens to be pointing", so one click in
             // ChatGPT's sidebar sent the next job description to a chat that had never seen the
             // profile prompt — and the reply came back with none of the resume's structure.
+            var prompt = request.Prompt;
             if (request.StartFreshChat)
                 await NavigateAsync("https://chatgpt.com/", token);
             else if (!string.IsNullOrWhiteSpace(request.ConversationUrl))
+            {
                 await NavigateAsync(request.ConversationUrl, token);
+                // Navigating somewhere is not the same as arriving. A remembered conversation can be
+                // gone, or belong to an account this browser is no longer signed into.
+                var usable = await WaitForUsableConversationAsync(token);
+                Trace?.Step("ChatGPT", "remembered chat opened", $"ok={usable.Ok}; {usable.Detail}");
+                if (!usable.Ok)
+                {
+                    // Start over properly rather than sending a bare job description into a chat that
+                    // never received the profile prompt.
+                    await NavigateAsync("https://chatgpt.com/", token);
+                    prompt = request.FreshChatPrompt;
+                    await vm.NoteResumeChatRestartedAsync(usable.Detail);
+                }
+            }
+            else
+            {
+                // A continuation carries the job description alone; the prompt it depends on is at
+                // the top of a conversation we cannot name. Submitting here would put it wherever
+                // the pane was left - the caller guards against this, and this is the second lock,
+                // because the failure is silent and produces a resume that reads fine.
+                vm.ReportAutomatedResumeFailure(request.WorkItemId,
+                    "The resume chat could not be reopened, so the job description had nowhere safe " +
+                    "to go. Use Start fresh chat and run this link again.");
+                return;
+            }
 
             Trace?.Step("ChatGPT", "at conversation", ChatGptBrowser.CoreWebView2?.Source ?? "");
             var before = await GetAssistantSnapshotAsync();
             Trace?.Step("ChatGPT", "snapshot before prompt",
                 $"messages={before.Count}, generating={before.Generating}");
-            var submitted = await SubmitPromptAsync(request.Prompt, token);
+            var submitted = await SubmitPromptAsync(prompt, token);
             Trace?.Step("ChatGPT", "prompt submitted", $"ok={submitted.Ok} {submitted.Error}");
             if (!submitted.Ok)
             {
@@ -179,19 +267,15 @@ public partial class ResumeStudioView : UserControl
                 if (!string.IsNullOrWhiteSpace(answerConversationUrl))
                     vm.NoteAnswerConversation(request.WorkItemId, answerConversationUrl);
 
-                // Returning to the resume chat is housekeeping — the answers are already in hand.
-                // Letting it throw aborted the run between the answers and the form, which is the
-                // one place a failure costs the whole application.
-                if (!string.IsNullOrWhiteSpace(resumeConversationUrl))
-                {
-                    try { await NavigateAsync(resumeConversationUrl, token); }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        vm.StatusMessage = "Could not return to the resume chat: " + ex.Message +
-                                           " Continuing with the answers already received.";
-                    }
-                }
+                // The run used to navigate back to the resume chat here. It was housekeeping - the
+                // answers were already in hand - but it was awaited, and a navigation that never
+                // reports completion costs 45 seconds before it gives up. That wait sat between the
+                // answers and the Word handoff, which is the worst place in the flow to spend time:
+                // the pane shows the resume chat, nothing appears to be happening, and the run looks
+                // stuck. Nothing needed it either. Every operation that follows navigates somewhere
+                // explicit first - the next resume request to its conversation or a fresh chat, a
+                // correction to the answer conversation - so where the pane happens to be left is
+                // not an input to anything.
             }
 
             Trace?.Step("ChatGPT", "work complete", "handing to Word");
@@ -281,8 +365,33 @@ public partial class ResumeStudioView : UserControl
 (() => {
  const prompt = __PROMPT__;
  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
- const input = Array.from(document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]'))
-   .find(e => visible(e) && !e.disabled && !e.readOnly);
+ // Anything inside the transcript is a message, not the composer. This mattered: taking the first
+ // visible text input in document order meant that a reply left open for editing - an editable
+ // wrapper sitting above the composer - captured the next prompt. The job description went into the
+ // previous answer, nothing was ever sent, and the run stopped there.
+ const inMessage = e => !!(e.closest && e.closest(
+   '[data-message-author-role],[data-testid^="conversation-turn"],article'));
+ const usable = e => !!e && visible(e) && !e.disabled && !e.readOnly && !inMessage(e);
+
+ // Close an open editor first; while one is up ChatGPT will not accept a new message anyway.
+ const editing = Array.from(document.querySelectorAll('textarea,[contenteditable="true"]'))
+   .some(e => visible(e) && inMessage(e));
+ if (editing) {
+   const cancel = Array.from(document.querySelectorAll('button')).find(b => visible(b) &&
+     /^(cancel|discard)$/i.test(((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim()));
+   if (cancel) cancel.click();
+   return { ok:false, waiting:true, error:'a reply was open for editing; closed it and retrying' };
+ }
+
+ const composer = document.querySelector('#prompt-textarea');
+ let input = usable(composer) ? composer : null;
+ if (!input) {
+   // The composer is the last text input on the page; everything above it is transcript.
+   const candidates = Array.from(document.querySelectorAll(
+     'form textarea,form [contenteditable="true"],textarea,[contenteditable="true"],[role="textbox"]'))
+     .filter(usable);
+   input = candidates[candidates.length - 1] || null;
+ }
  if (!input) return { ok:false, waiting:true, error:'ChatGPT input was not found. Sign in and dismiss any dialog.' };
  input.focus();
  if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
@@ -296,7 +405,8 @@ public partial class ResumeStudioView : UserControl
  input.dispatchEvent(new Event('change',{bubbles:true}));
  const send = Array.from(document.querySelectorAll('button')).find(button => {
    const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '') + ' ' + (button.title || '')).toLowerCase();
-   return visible(button) && !button.disabled &&
+   // Same rule as the input: a Send inside a message belongs to that message s editor.
+   return visible(button) && !button.disabled && !inMessage(button) &&
      (label.includes('send') || label.includes('submit') || button.getAttribute('data-testid') === 'send-button');
  });
  if (!send) return { ok:false, waiting:true, error:'ChatGPT send button was not found.' };
@@ -325,11 +435,30 @@ public partial class ResumeStudioView : UserControl
 (() => {
  const nodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
  const last = nodes.at(-1);
+ // The reply is the rendered message body and nothing else. Taking innerText of the whole message
+ // swept up what the free plan puts underneath it - the Copy/Rate/Retry row, and after that an
+ // advertisement. That corrupts what goes to Word, and because an ad rotates on its own the text
+ // never holds still, so the wait for a settled reply ran to its full timeout and the run stopped.
+ const bodyOf = node => {
+   if (!node) return '';
+   const markdown = node.querySelector('.markdown, [data-message-content], .prose');
+   if (markdown) return (markdown.innerText || '').trim();
+   // Nothing named: keep children up to the first that holds a button. That is the action row, and
+   // everything from there down is chrome. Structural, not word-matching - a resume is allowed to
+   // contain the word "Retry".
+   const parts = [];
+   for (const child of Array.from(node.children)) {
+     if (child.tagName === 'BUTTON' || child.querySelector('button')) break;
+     parts.push(child.innerText || '');
+   }
+   const kept = parts.join('\n').trim();
+   return kept || (node.innerText || '').trim();
+ };
  const generating = Array.from(document.querySelectorAll('button')).some(button => {
    const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '')).toLowerCase();
    return label.includes('stop') || label.includes('cancel');
  });
- return { count:nodes.length, text:last?.innerText?.trim() || '', generating };
+ return { count:nodes.length, text:bodyOf(last), generating };
 })()
 """;
         var json = await ChatGptBrowser.ExecuteScriptAsync(script);
@@ -438,6 +567,18 @@ public partial class ResumeStudioView : UserControl
         "close but not identical is discarded. When it also carries \"multiple\": true, answer with a " +
         "comma-separated subset of those options. When it is marked \"type\": \"dropdown\" with no options, " +
         "the list could not be read, so answer with the short plain value most likely to appear in it. " +
+        "A question without options must not come back empty either. Answer it in two to five " +
+        "sentences from this person's real work — the methods they used, the scale, the metrics, the " +
+        "outcome — and be concrete rather than general. " +
+        "When the question names a domain they have not worked in, do not claim it and do not refuse: " +
+        "answer with the closest genuine work they have done, say plainly which domain it was in, and " +
+        "make the transferable part explicit. An honest adjacent answer is read; an empty required " +
+        "field ends the application unread, which serves nobody. Declining to answer is not a neutral " +
+        "choice here — it is the worst available outcome, and it is never the right one for an open " +
+        "question. The narrow exception below still holds: never assert a credential, an employer, or " +
+        "a project that the reference data does not contain. Describe real work accurately instead. " +
+        "Answer in plain text only — no markdown, links, bullet characters or code fences, because " +
+        "the text is typed straight into a form field. " +
         "Screening questions decide whether the application is read by anyone at all, so a required " +
         "question with options must never come back empty. When the reference data does not settle " +
         "one, choose the option that keeps the application eligible rather than returning nothing. " +

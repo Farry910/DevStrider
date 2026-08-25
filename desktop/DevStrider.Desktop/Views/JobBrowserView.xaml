@@ -5,12 +5,41 @@
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="420"/></Grid.ColumnDefinitions>
     <Grid Grid.Column="0" Margin="0,0,12,0">
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
       <DockPanel Margin="0,0,0,8">
         <Button DockPanel.Dock="Right" Click="OnNavigate" Content="Go" Margin="8,0,0,0"/>
         <TextBox Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"/>
       </DockPanel>
-      <wv2:WebView2 x:Name="JobSiteBrowser" Grid.Row="1"/>
+
+      <!-- One tab per open application. The run drives one of them; the others are filled forms
+           waiting for a person, which is why a batch no longer stops once per link. -->
+      <ItemsControl Grid.Row="1" ItemsSource="{Binding Tabs}" Margin="0,0,0,8"
+                    Visibility="{Binding ShowTabStrip, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button Click="OnSelectTab" Tag="{Binding}" Margin="0,0,6,6" Padding="10,5"
+                    Style="{StaticResource GhostButton}">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="●" Margin="0,0,6,0" Foreground="{DynamicResource AccentBrush}"
+                             Visibility="{Binding IsAutomation, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                </StackPanel>
+                <TextBlock Text="{Binding Status}" Style="{StaticResource MutedText}" FontSize="11"/>
+              </StackPanel>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+      <!-- Every application browser lives here at once. Only the selected one is Visible; the rest
+           are Hidden, never Collapsed, because a collapsed WebView2 is arranged at zero size and a
+           0x0 viewport makes every visibility test on the page report false. That is what lets the
+           run keep filling a tab nobody is looking at. -->
+      <Grid x:Name="BrowserHost" Grid.Row="2"/>
     </Grid>
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
@@ -76,26 +105,41 @@
             <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
           </StackPanel>
         </Border>
+        <!-- The manual description pass. Links the automatic run could not read a description
+             from are gathered here and worked through together once it finishes, so one awkward
+             page never stalls a batch. Selecting on the page is the fast path; pasting is for
+             postings that block selection. -->
         <Border Style="{StaticResource Card}" Margin="0,0,0,12"
                 Visibility="{Binding NeedsJobDescription, Converter={StaticResource BooleanToVisibilityConverter}}">
           <StackPanel>
             <TextBlock Text="Job description needed" FontWeight="SemiBold"/>
-            <TextBlock Text="This page did not expose a usable JD. Paste it here; the same automatic flow will continue."
-                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+            <TextBlock Text="{Binding ManualJobDescriptionProgress}" Style="{StaticResource MutedText}"
+                       TextWrapping="Wrap" Margin="0,2,0,0"/>
+            <TextBlock Text="Highlight the description on the page, then Use selection. The rest of the flow runs as usual."
+                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+            <WrapPanel>
+              <Button Click="OnUseSelectedJobDescription" Content="Use selection" Margin="0,0,8,8"/>
+              <Button Command="{Binding SkipManualJobDescriptionCommand}" Content="Skip this link"
+                      Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+            </WrapPanel>
+            <TextBlock Text="Or paste it" Style="{StaticResource MutedText}" Margin="0,4,0,4"/>
             <TextBox Text="{Binding FallbackJobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
-                     Height="180" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
-            <Button Command="{Binding ContinueWithPastedJdCommand}" Content="Continue automatic flow" HorizontalAlignment="Left" Margin="0,8,0,0"/>
+                     Height="140" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+            <Button Click="OnUsePastedJobDescription" Content="Use pasted text" HorizontalAlignment="Left" Margin="0,8,0,0"/>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource Card}" Margin="0,0,0,12"
                 Visibility="{Binding IsReadyForReview, Converter={StaticResource BooleanToVisibilityConverter}}">
           <StackPanel>
             <TextBlock Text="Review required" FontWeight="SemiBold"/>
-            <TextBlock Text="Automatic submission could not be confirmed. Review the visible fields and result; submit manually if needed, then continue the queue."
+            <TextBlock Text="{Binding ReviewBacklogSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
+            <TextBlock Text="{Binding SelectedTab.Summary}" Style="{StaticResource MutedText}"
+                       TextWrapping="Wrap" Margin="0,4,0,0"/>
+            <TextBlock Text="Check the form in this tab and submit it on the site, then mark it here. The queue keeps working in the other tabs meanwhile."
                        Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
             <WrapPanel>
-              <Button Command="{Binding MarkSubmittedAndContinueCommand}" Content="Mark submitted &amp; next" Margin="0,0,8,8"/>
-              <Button Command="{Binding SkipCurrentQueuedLinkCommand}" Content="Skip &amp; next" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
+              <Button Command="{Binding MarkSubmittedAndContinueCommand}" Content="Mark submitted &amp; close" Margin="0,0,8,8"/>
+              <Button Command="{Binding CloseSelectedTabCommand}" Content="Close without submitting" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
             </WrapPanel>
           </StackPanel>
         </Border>
