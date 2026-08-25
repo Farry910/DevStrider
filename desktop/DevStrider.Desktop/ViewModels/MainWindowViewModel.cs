@@ -67,6 +67,35 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool IsRegularViewVisible => !IsJobBrowserVisible && !IsResumeStudioVisible;
     public ViewModelBase? RegularCurrent => IsRegularViewVisible ? Current : null;
 
+    /// <summary>
+    /// Runs one workspace-to-workspace handoff and makes its failure visible.
+    ///
+    /// <para>
+    /// These were all "_ = SomeAsync(...)": started, never awaited, never looked at again. A task
+    /// that faults there disappears completely — no log, no status, no failed work item, nothing to
+    /// retry — and the run simply stops where it stood. That is indistinguishable from a hang, and
+    /// it is what "after generating the corrected answers, nothing happens" was: the corrections
+    /// came back, the handoff threw, and the exception went into a task nobody held.
+    /// </para>
+    ///
+    /// <para>
+    /// The work item is left where it is rather than failed automatically. These handoffs are the
+    /// seam between two workspaces and a fault here says the seam broke, not that the application
+    /// is bad; the operator can see what happened and retry the link.
+    /// </para>
+    /// </summary>
+    private void Handoff(string what, Task work)
+    {
+        _ = work.ContinueWith(finished =>
+        {
+            var error = finished.Exception?.GetBaseException();
+            if (error == null) return;
+            JobBrowser.Trace.Fail("Run", what + " threw", error.ToString());
+            JobBrowser.StatusMessage = what + " failed: " + error.Message +
+                                       " The link is unchanged — retry it from the queue.";
+        }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+    }
+
     public MainWindowViewModel(
         BidBoardViewModel bids,
         InterviewPanelViewModel interviews,
@@ -130,16 +159,18 @@ public partial class MainWindowViewModel : ViewModelBase
                 Current = ResumeStudio;
                 return;
             }
-            _ = JobBrowser.AcceptResumeResultAsync(result);
+            Handoff("Accepting the generated resume", JobBrowser.AcceptResumeResultAsync(result));
         };
         ResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
-            _ = JobBrowser.MarkAutomationFailureAsync(workItemId, message);
+            Handoff("Recording a resume failure", JobBrowser.MarkAutomationFailureAsync(workItemId, message));
         ResumeStudio.AnswerConversationResolved += (workItemId, url, id) =>
-            _ = JobBrowser.RememberAnswerConversationAsync(workItemId, url, id);
+            Handoff("Remembering the answer conversation",
+                JobBrowser.RememberAnswerConversationAsync(workItemId, url, id));
         ResumeStudio.AnswerCorrectionCompleted += result =>
-            _ = JobBrowser.AcceptAnswerCorrectionAsync(result);
+            Handoff("Applying the corrected answers", JobBrowser.AcceptAnswerCorrectionAsync(result));
         ResumeStudio.AnswerCorrectionFailed += (workItemId, message) =>
-            _ = JobBrowser.MarkAnswerCorrectionFailureAsync(workItemId, message);
+            Handoff("Recording a correction failure",
+                JobBrowser.MarkAnswerCorrectionFailureAsync(workItemId, message));
 
         // Forward profile-context changes so the title-bar ComboBox + nav bindings refresh.
         ProfileContext.ProfileChanged += () => OnPropertyChanged(nameof(ActiveProfile));

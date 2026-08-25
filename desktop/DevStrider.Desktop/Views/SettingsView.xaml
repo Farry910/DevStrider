@@ -32,14 +32,8 @@
           <TextBlock Text="Resumes per ChatGPT conversation"/>
           <TextBox Text="{Binding Model.ResumeGenerationsPerChat, UpdateSourceTrigger=PropertyChanged}"
                    Width="80" HorizontalAlignment="Left" Margin="0,2,0,8" Tag="10"/>
-          <TextBlock Text="Word macro output root"/>
-          <TextBox Text="{Binding Model.ResumeOutputRoot, UpdateSourceTrigger=PropertyChanged}"
-                   Margin="0,2,0,8" Tag="Must match OUTPUT_ROOT in the Word macro"/>
-          <TextBlock Text="Generated resume file base"/>
-          <TextBox Text="{Binding Model.ResumeOutputFileBase, UpdateSourceTrigger=PropertyChanged}"
-                   Width="220" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="Resume"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="Automatic upload looks for &lt;output root&gt;\&lt;FolderName&gt;\&lt;file base&gt;.pdf, then .docx. Leave the output root empty to select the generated file manually at review time."/>
+                     Text="The output root and generated file name live on each profile now, beside its Word document and macro — they describe that document, not this machine."/>
         </StackPanel>
       </Border>
 
@@ -47,14 +41,8 @@
         <StackPanel>
           <TextBlock Text="Application defaults" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Values entered here are explicit reusable answers. DevStrider may use them directly or give them to ChatGPT when an application offers fixed choices."/>
-          <TextBlock Text="Salary / compensation expectation"/>
-          <TextBox Text="{Binding Model.SalaryExpectation, UpdateSourceTrigger=PropertyChanged}"
-                   Margin="0,2,0,4" Tag="Example: USD 140,000-160,000 per year"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="Include the currency and time period. Leave blank to keep salary questions unanswered for manual review."/>
-
-          <TextBlock Text="Applications waiting for review at once" Margin="0,12,0,0"/>
+                     Text="Machine-wide behaviour for the automatic queue. Answers a person gives — salary among them — belong to a profile rather than to this machine, and are edited there."/>
+          <TextBlock Text="Applications waiting for review at once"/>
           <TextBox Text="{Binding Model.MaxReviewTabs, UpdateSourceTrigger=PropertyChanged}"
                    Width="80" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="4"/>
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"

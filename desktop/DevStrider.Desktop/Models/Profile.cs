@@ -44,6 +44,23 @@ public class Profile
     /// </summary>
     public string ResumePrompt { get; set; } = "";
 
+    /// <summary>
+    /// Where this profile s Word macro writes its output. Must match that macro s OUTPUT_ROOT.
+    ///
+    /// <para>
+    /// Per profile rather than per machine, for the same reason the macro name and the .docm are:
+    /// each profile drives its own document, and one profile quietly writing into another s folder
+    /// is not a setting anybody would choose.
+    /// </para>
+    /// </summary>
+    public string ResumeOutputRoot { get; set; } = "";
+
+    /// <summary>Must match this profile s macro FILE_BASE constant. The PDF is this plus ".pdf".</summary>
+    public string ResumeOutputFileBase { get; set; } = "Resume";
+
+    /// <summary>What this person answers when an application asks for compensation.</summary>
+    public string SalaryExpectation { get; set; } = "";
+
     // ── who this identity is, in the few fields the app actually uses ───────
 
     public string Headline { get; set; } = "";

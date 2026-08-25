@@ -196,11 +196,6 @@ public partial class SettingsViewModel : ViewModelBase
         {
             Model.ResumeGenerationsPerChat = Math.Clamp(Model.ResumeGenerationsPerChat, 1, 50);
             Model.MaxReviewTabs = Math.Clamp(Model.MaxReviewTabs, 1, 8);
-            Model.ResumeOutputRoot = (Model.ResumeOutputRoot ?? "").Trim();
-            Model.ResumeOutputFileBase = string.IsNullOrWhiteSpace(Model.ResumeOutputFileBase)
-                ? "Resume"
-                : Model.ResumeOutputFileBase.Trim();
-            Model.SalaryExpectation = (Model.SalaryExpectation ?? "").Trim();
             // Apply the typed password before the save. Blank means "keep what's there" — the
             // box renders empty on every load, so treating blank as "clear it" would silently
             // disconnect anyone who saved an unrelated setting.

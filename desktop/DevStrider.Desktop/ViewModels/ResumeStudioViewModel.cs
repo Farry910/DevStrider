@@ -573,9 +573,21 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     /// </summary>
     private async Task<string> ResolveGeneratedResumePathAsync(string folderName)
     {
-        var settings = await _settings.GetAsync();
-        var root = (settings.ResumeOutputRoot ?? "").Trim();
-        if (root.Length == 0 || !Directory.Exists(root)) return "";
+        // The profile owns this, not the machine: the macro that just wrote the file is this
+        // profile s macro, and its OUTPUT_ROOT is a property of that document.
+        var profile = _profiles.Current;
+        var root = (profile?.ResumeOutputRoot ?? "").Trim();
+        if (root.Length == 0)
+        {
+            _trace.Warn("Word", "no output root for this profile",
+                "set it on the profile so the generated resume can be found");
+            return "";
+        }
+        if (!Directory.Exists(root))
+        {
+            _trace.Warn("Word", "the profile s output root does not exist", root);
+            return "";
+        }
 
         var folder = "";
         var safeFolder = SafeFolderName(folderName);
@@ -589,7 +601,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         if (folder.Length == 0) folder = NewestFolderSince(root, DateTime.Now.AddMinutes(-10));
         if (folder.Length == 0) return "";
 
-        var preferred = (settings.ResumeOutputFileBase ?? "").Trim();
+        var preferred = (profile?.ResumeOutputFileBase ?? "").Trim();
         foreach (var pattern in new[] { "*.pdf", "*.docx", "*.doc" })
         {
             var files = Directory.EnumerateFiles(folder, pattern).ToList();

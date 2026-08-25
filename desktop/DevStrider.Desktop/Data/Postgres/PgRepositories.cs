@@ -85,7 +85,8 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
 {
     private const string Cols =
         "id, user_id, name, word_doc_path, macro_name, resume_prompt, headline, location, " +
-        "phone, personal_email, linkedin_url, created_at, updated_at";
+        "phone, personal_email, linkedin_url, resume_output_root, resume_output_file_base, " +
+        "salary_expectation, created_at, updated_at";
 
     public PgProfileRepository(SharedDbContext db, SessionContext session) : base(db, session) { }
 
@@ -118,8 +119,10 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
         return ExecuteAsync("""
             INSERT INTO ds_profiles (id, user_id, name, slug, word_doc_path, macro_name,
                                      resume_prompt, headline, location, phone, personal_email,
-                                     linkedin_url, created_at, updated_at)
-            VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @ca, @ua)
+                                     linkedin_url, resume_output_root, resume_output_file_base,
+                                     salary_expectation, created_at, updated_at)
+            VALUES (@id, @uid, @nm, @sl, @wd, @mn, @rp, @hl, @lo, @ph, @pe, @li, @ror, @rofb,
+                    @sal, @ca, @ua)
             ON CONFLICT (id) DO UPDATE SET
                 name              = EXCLUDED.name,
                 slug              = EXCLUDED.slug,
@@ -131,6 +134,9 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 phone             = EXCLUDED.phone,
                 personal_email    = EXCLUDED.personal_email,
                 linkedin_url      = EXCLUDED.linkedin_url,
+                resume_output_root      = EXCLUDED.resume_output_root,
+                resume_output_file_base = EXCLUDED.resume_output_file_base,
+                salary_expectation      = EXCLUDED.salary_expectation,
                 updated_at        = EXCLUDED.updated_at
             """,
             cmd =>
@@ -148,6 +154,11 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
                 cmd.Parameters.AddWithValue("ph", p.Phone ?? "");
                 cmd.Parameters.AddWithValue("pe", p.PersonalEmail ?? "");
                 cmd.Parameters.AddWithValue("li", p.LinkedinUrl ?? "");
+                cmd.Parameters.AddWithValue("ror", p.ResumeOutputRoot ?? "");
+                // The macro is asked for "{base}.pdf"; an empty base would ask for ".pdf".
+                cmd.Parameters.AddWithValue("rofb",
+                    string.IsNullOrWhiteSpace(p.ResumeOutputFileBase) ? "Resume" : p.ResumeOutputFileBase.Trim());
+                cmd.Parameters.AddWithValue("sal", p.SalaryExpectation ?? "");
                 cmd.Parameters.AddWithValue("ca", SharedDbContext.Utc(p.CreatedAt));
                 cmd.Parameters.AddWithValue("ua", SharedDbContext.Utc(p.UpdatedAt));
             });
@@ -174,8 +185,11 @@ public sealed class PgProfileRepository : PgRepository, IProfileRepository
         Phone = Pg.Text(r, 8),
         PersonalEmail = Pg.Text(r, 9),
         LinkedinUrl = Pg.Text(r, 10),
-        CreatedAt = r.GetDateTime(11),
-        UpdatedAt = r.GetDateTime(12),
+        ResumeOutputRoot = Pg.Text(r, 11),
+        ResumeOutputFileBase = Pg.Text(r, 12),
+        SalaryExpectation = Pg.Text(r, 13),
+        CreatedAt = r.GetDateTime(14),
+        UpdatedAt = r.GetDateTime(15),
     };
 }
 

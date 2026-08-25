@@ -87,6 +87,12 @@ public class AppSettings
     public int MaxReviewTabs { get; set; } = 4;
 
     /// <summary>Must match the Word macro's OUTPUT_ROOT when automatic upload is desired.</summary>
+    /// <summary>
+    /// Legacy. These three moved onto <see cref="Profile"/>, where they belong - each profile drives
+    /// its own Word document, so its OUTPUT_ROOT, FILE_BASE and salary answer are its own. They
+    /// remain here only as the source for the one-time hand-over in ProfileContext, which clears
+    /// them once every profile has a copy. Nothing reads them after that.
+    /// </summary>
     public string ResumeOutputRoot { get; set; } = "";
 
     /// <summary>Must match the Word macro's FILE_BASE constant.</summary>

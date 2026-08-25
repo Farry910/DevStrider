@@ -51,6 +51,13 @@ public partial class App : Application
                 await SettingsBootstrap.ApplyAsync(settings);
             }).GetAwaiter().GetResult();
 
+            // Word left running by an earlier session belongs to nobody and needs no account to
+            // clear, so it happens before the login gate. Resolving the service is what starts its
+            // COM thread and its sweep; leaving it to the first resume meant a machine could sit
+            // with dozens of stranded Word processes for days without anything looking.
+            Services.GetRequiredService<WordMacroService>()
+                .EnsureSingleWordInstance("DevStrider started");
+
             // Nothing below this line runs without an account. Every repository scopes its queries
             // to SessionContext, and a query issued before login throws rather than quietly
             // reading the whole team's rows.

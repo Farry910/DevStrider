@@ -124,8 +124,9 @@
                 <RowDefinition Height="Auto"/>   <!-- 6  macro label -->
                 <RowDefinition Height="Auto"/>   <!-- 7  macro box -->
                 <RowDefinition Height="Auto"/>   <!-- 8  macro help -->
-                <RowDefinition Height="Auto"/>   <!-- 9  personal info -->
-                <RowDefinition Height="*" MinHeight="60"/>   <!-- 10 resume prompt expander -->
+                <RowDefinition Height="Auto"/>   <!-- 9  output root, file base, salary -->
+                <RowDefinition Height="Auto"/>   <!-- 10 personal info -->
+                <RowDefinition Height="*" MinHeight="60"/>   <!-- 11 resume prompt expander -->
               </Grid.RowDefinitions>
 
               <TextBlock Grid.Row="0" Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -165,12 +166,39 @@
                          Text="Leave blank to use UpdateResumeAndSwitchOriginal. Run headless over COM with the resume text as its one argument, so it must be declared as: Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)"/>
 
               <!--
+                Where that macro writes, and what this person answers about pay. These were machine
+                settings until they were not: the macro above is this profile s macro, so the folder
+                it writes into and the name it saves under describe this document, not the machine.
+                Salary is an answer a person gives, which is the same argument.
+              -->
+              <StackPanel Grid.Row="9" Margin="0,0,0,12">
+                <TextBlock Text="Word macro output root"/>
+                <TextBox Text="{Binding Selected.ResumeOutputRoot, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="Consolas" Margin="0,2,0,4"
+                         Tag="Must match OUTPUT_ROOT in this profile s macro"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                           Text="Automatic upload looks for the newest folder here and takes the PDF from it. Leave empty to pick the generated file by hand at review time."/>
+
+                <TextBlock Text="Generated resume file base"/>
+                <TextBox Text="{Binding Selected.ResumeOutputFileBase, UpdateSourceTrigger=PropertyChanged}"
+                         Width="220" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="Resume"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                           Text="Must match FILE_BASE in the macro. Only a tie-break: the folder holds one PDF, so the extension usually decides it."/>
+
+                <TextBlock Text="Salary / compensation expectation"/>
+                <TextBox Text="{Binding Selected.SalaryExpectation, UpdateSourceTrigger=PropertyChanged}"
+                         Margin="0,2,0,4" Tag="Example: USD 140,000-160,000 per year"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                           Text="Include the currency and the period. Leave blank to keep salary questions unanswered for review."/>
+              </StackPanel>
+
+              <!--
                 Personal info: the reference data ChatGPT is given when it writes the resume and
                 then answers the application's questions. Contact details are absent on purpose —
                 they are columns on ds_profiles above, which the company portal reads too, so there
                 is exactly one copy of them.
               -->
-              <StackPanel Grid.Row="9" Margin="0,0,0,12">
+              <StackPanel Grid.Row="10" Margin="0,0,0,12">
                 <TextBlock Text="Personal info" FontWeight="SemiBold" Margin="0,0,0,2"/>
                 <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"
                            Text="Everything ChatGPT is told about this person beyond the fields above. It writes the rest of the resume from here, then answers each application's questions from the finished resume plus this data."/>
@@ -296,7 +324,7 @@
                 Collapsed by default. The prompt is long, rarely edited once it works, and used to
                 eat every spare pixel of the editor — which is the space Personal info now needs.
               -->
-              <Expander Grid.Row="10" IsExpanded="False" VerticalAlignment="Top">
+              <Expander Grid.Row="11" IsExpanded="False" VerticalAlignment="Top">
                 <Expander.Header>
                   <TextBlock Text="Resume prompt (sent to ChatGPT before each job description)"
                              FontWeight="SemiBold" TextWrapping="Wrap"/>

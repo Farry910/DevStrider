@@ -480,8 +480,108 @@
          happen, and the run reads as stuck. Nothing depended on it. Every operation that follows
          navigates somewhere explicit first - the next resume request to its conversation or a fresh
          chat, a correction to the answer conversation - so where the pane is left is not an input to
-         anything, and the handoff to Word now happens immediately. -->
-    <Version>9.11.7</Version>
+         anything, and the handoff to Word now happens immediately.
+
+         9.11.8 sends the prompt instead of only typing it. Submitting depended entirely on finding
+         an enabled send button; when ChatGPT presented none - which is what happens in the answers
+         conversation - the prompt sat in the composer, nothing was ever sent, and the run waited its
+         full three minutes for a reply to a question it had not asked. Placing the text and sending
+         it are now separate steps. The host presses Enter through the browser input pipeline, the
+         way a person does, and treats the composer emptying as the proof it went. The send button is
+         consulted only if Enter did not take, and is never assumed to exist. A prompt that does not
+         land in the composer at all is retried rather than sent blind, and the failure message now
+         says the prompt was never sent rather than blaming the input.
+
+         9.11.9 makes the Word step visible and stops it misreporting why it failed. It was one trace
+         line - "running macro" - and then up to ninety seconds of nothing, so every Word problem
+         looked identical and none could be told apart from a hang. It now traces opening the
+         document, invoking the macro, and returning, with the elapsed time.
+
+         The timeout was also wrong in a way that mattered. Everything runs on one COM thread, so a
+         request can sit behind an earlier one - a prewarm has its own minute - and a single timer
+         covered the queue wait and the run together. A macro could be reported as "Word did not
+         answer" having never reached Word at all. Starting and running are now waited on and named
+         separately, and the budget for the macro is measured from when it actually begins.
+
+         9.11.10 recovers the COM thread, which is what was actually stuck. The tracing added in
+         9.11.9 answered it on the first run: a prewarm queued when resume generation began never
+         reached the thread in sixty seconds, and the macro queued behind it never started either.
+         Word was not slow - the thread was already inside a COM call from an earlier run and was
+         never coming back.
+
+         Recovery only ever killed Word. If the thread stayed blocked, every later request queued
+         behind a thread that would never run them, waited out its own timeout, failed, and the link
+         was retried into the same dead queue - which is how a queue item reached eight attempts
+         without Word being asked to do anything. The thread is now replaced as well, in both timeout
+         paths, and a work item that never starts is treated as proof of a blocked thread rather than
+         a slow one, because nothing else explains it. The abandoned thread is left blocked; it is a
+         background thread nothing can free, it costs one thread until exit, and a generation check
+         stops its backlog running if it ever wakes. The permanent-wedge state is gone with it: there
+         is no longer a condition the service cannot come back from without a restart.
+
+         9.11.11 makes Stop stick. It set a flag saying whether a next link should be opened, and
+         three places set that flag straight back - a fill finishing and parking its tab, a tab being
+         closed, an application being marked submitted. Any step already in flight when Stop was
+         pressed therefore restarted the queue the moment it completed, so the run carried on as
+         though nothing had been asked. An intention outlives the step that was running when it was
+         expressed: Stop is now remembered until the operator starts something themselves, and every
+         continuation point checks it. Opening the next link is refused at the one funnel they all
+         go through. A resume that finishes after Stop is kept - it is generated and saved either way
+         - but it no longer starts filling a form; that link goes back to the queue instead.
+
+         9.12.0 moves the resume output root, the generated file base and the salary answer off the
+         machine and onto the profile. They were global, which was wrong in the same way a global
+         macro name would be: the macro that writes the file is this profile s macro, so the folder
+         it writes into and the name it saves under describe that document. Salary is an answer a
+         person gives, which is the same argument. All three now sit on ds_profiles beside
+         word_doc_path and macro_name, and are edited on the profile rather than in Settings.
+
+         Moving a setting without moving its value would have quietly emptied a working
+         configuration, so the old machine-wide values are handed to every profile that has none and
+         then cleared, leaving one home for each. A profile that already had its own keeps them.
+
+         Requires: ALTER TABLE ds_profiles ADD COLUMN resume_output_root text NOT NULL DEFAULT , 
+         resume_output_file_base text NOT NULL DEFAULT Resume, salary_expectation text NOT NULL
+         DEFAULT .
+
+         9.12.1 keeps one Word running instead of one per attempt. Word launched for automation is
+         invisible for its whole life and only ever quits through CloseWord, which needs a working
+         COM channel and a live COM thread; every route that loses either - a wedged call, a
+         recycled thread, a crash - left a fully grown Word behind holding its document open, and
+         nothing ever collected them. Twenty-seven were running when this was found, the oldest two
+         days old, about four gigabytes between them. That is also why the COM thread wedged: the
+         next run had to get its call answered by a machine in that state.
+
+         EnsureSingleWordInstance ends every hidden Word the app is not currently using, and runs at
+         startup, before a new instance is launched, and whenever the COM thread is abandoned - which
+         now takes its Word with it rather than orphaning one more. A Word somebody is using has a
+         window and is never touched; that test is what makes the sweep safe, so it is checked first
+         and anything that will not answer is left alone.
+
+         9.12.2 stops a continued chat timing out where a fresh one succeeds. Waiting for a reply
+         tested whether the number of assistant messages had grown, which holds on an empty
+         conversation and does not hold on one being continued: ChatGPT drops older turns out of the
+         DOM as the transcript grows, so the count can stay level or fall while a good reply streams
+         in below it. The wait now watches the last message text change instead, which is the part
+         always mounted, and keeps the count only as a second signal.
+
+         The wait also says what it is waiting for every fifteen seconds, and on giving up says which
+         of the two happened - nothing ever arrived, or something arrived and was refused each time
+         for its shape. Three minutes of silence ending in a failure explained neither.
+
+         9.12.3 stops a handoff between the two workspaces failing in silence. Every one of them was
+         "_ = SomeAsync(...)": started, never awaited, never looked at again. A task that faults
+         there disappears completely - no log, no status, no failed work item, nothing to retry - and
+         the run stops where it stood, which is indistinguishable from a hang. That is what happened
+         after the corrected answers came back: the corrections arrived, the handoff threw, and the
+         exception went into a task nobody held. All six now report what broke and leave the link
+         alone so it can be retried.
+
+         One cause is fixed outright. Answers were collected with ToDictionary over a case-insensitive
+         comparer, which throws when two keys collide - and those keys are question text written back
+         by ChatGPT, so a collision is something the model can hand us at any time. The dictionary is
+         built by assignment now and the later value wins: losing one answer beats losing the set. -->
+    <Version>9.12.3</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

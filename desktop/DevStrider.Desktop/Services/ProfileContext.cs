@@ -39,6 +39,7 @@ public sealed class ProfileContext
     {
         var list = await _profiles.ListAsync();
         var s = await _settings.GetAsync();
+        await MigrateResumeOutputSettingsAsync(list, s);
 
         var active = list.FirstOrDefault(p => p.Id == s.ActiveProfileId)
                   ?? list.FirstOrDefault();
@@ -54,6 +55,61 @@ public sealed class ProfileContext
     }
 
     /// <summary>Switch active profile. Persists <see cref="AppSettings.ActiveProfileId"/> and broadcasts.</summary>
+
+    /// <summary>
+    /// Hands the resume output root, file base and salary answer over to the profiles that now own
+    /// them, once.
+    ///
+    /// <para>
+    /// They used to be machine-wide, which was wrong: each profile drives its own Word document, so
+    /// the folder that document writes into and the file base it saves under belong to that profile,
+    /// as its macro name and .docm already did. Moving the setting without moving the value would
+    /// have quietly emptied a working configuration, so the old values are copied to every profile
+    /// that has none and then cleared, leaving exactly one home for each.
+    /// </para>
+    /// </summary>
+    private async Task MigrateResumeOutputSettingsAsync(IReadOnlyList<Profile> profiles, AppSettings settings)
+    {
+        var root = (settings.ResumeOutputRoot ?? "").Trim();
+        var fileBase = (settings.ResumeOutputFileBase ?? "").Trim();
+        var salary = (settings.SalaryExpectation ?? "").Trim();
+        if (root.Length == 0 && fileBase.Length == 0 && salary.Length == 0) return;
+
+        var moved = 0;
+        foreach (var profile in profiles)
+        {
+            var changed = false;
+            if (root.Length > 0 && string.IsNullOrWhiteSpace(profile.ResumeOutputRoot))
+            {
+                profile.ResumeOutputRoot = root;
+                changed = true;
+            }
+            if (fileBase.Length > 0 && string.IsNullOrWhiteSpace(profile.ResumeOutputFileBase))
+            {
+                profile.ResumeOutputFileBase = fileBase;
+                changed = true;
+            }
+            if (salary.Length > 0 && string.IsNullOrWhiteSpace(profile.SalaryExpectation))
+            {
+                profile.SalaryExpectation = salary;
+                changed = true;
+            }
+            if (!changed) continue;
+            await _profiles.UpdateAsync(profile);
+            moved++;
+        }
+
+        // Cleared whether or not anything took them, so this runs once. A profile that already had
+        // its own values keeps them; that is why each field is only filled when empty.
+        var edit = await _settings.GetForEditAsync();
+        edit.ResumeOutputRoot = "";
+        edit.ResumeOutputFileBase = "";
+        edit.SalaryExpectation = "";
+        await _settings.SaveAsync(edit);
+        if (moved > 0)
+            System.Diagnostics.Debug.WriteLine($"[ProfileContext] resume output settings moved onto {moved} profile(s)");
+    }
+
     public async Task SwitchAsync(ObjectId profileId)
     {
         if (Current?.Id == profileId) return;

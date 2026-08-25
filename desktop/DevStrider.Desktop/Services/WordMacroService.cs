@@ -68,12 +68,24 @@ public sealed class WordMacroService : IDisposable
     private readonly ActivityLogService _activity;
 
     /// <summary>
+    /// The run trace. Word was a single line followed by up to ninety seconds of nothing, so every
+    /// Word problem looked identical from the outside and none of them could be told apart.
+    /// </summary>
+    private readonly BidTraceService _trace;
+
+    /// <summary>
     /// Every COM call in this class runs here. A single thread is both the apartment COM wants
     /// and the serialization the macro needs — Word reuses one instance of an already-open
     /// document, so two overlapping runs would stomp each other.
     /// </summary>
-    private readonly BlockingCollection<Action> _queue = new();
-    private readonly Thread _sta;
+    private BlockingCollection<Action> _queue = new();
+    private Thread _sta;
+
+    /// <summary>
+    /// Bumped when the COM thread is abandoned. Work queued against an older generation must not run
+    /// if that thread ever unblocks - it would drive a Word the service has already replaced.
+    /// </summary>
+    private int _generation;
     private readonly Timer _idleTimer;
 
     // ---- STA-thread-only state. Never touch these from anywhere else. -----------------------
@@ -86,16 +98,10 @@ public sealed class WordMacroService : IDisposable
     private long _lastUseTicks = DateTime.UtcNow.Ticks;
     private volatile bool _disposed;
 
-    /// <summary>
-    /// Set when a run times out against a Word we do not own and therefore may not kill. The STA
-    /// thread is stuck inside that COM call forever, so every later request would queue behind it
-    /// and time out too — failing fast with the real reason beats 90 seconds of silence each time.
-    /// </summary>
-    private volatile bool _wedged;
-
-    public WordMacroService(ActivityLogService activity)
+    public WordMacroService(ActivityLogService activity, BidTraceService trace)
     {
         _activity = activity;
+        _trace = trace;
 
         _sta = new Thread(PumpQueue)
         {
@@ -103,7 +109,11 @@ public sealed class WordMacroService : IDisposable
             Name = "DevStrider Word COM",
         };
         _sta.SetApartmentState(ApartmentState.STA);
-        _sta.Start();
+        _sta.Start(_queue);
+
+        // Anything still running belongs to a session that is over. Off the UI thread: ending a
+        // couple of dozen Word processes is not instant and startup should not wait for it.
+        _ = Task.Run(() => EnsureSingleWordInstance("DevStrider started"));
 
         _idleTimer = new Timer(_ => CloseIfIdle(), null, IdleShutdown, IdleShutdown);
     }
@@ -124,7 +134,7 @@ public sealed class WordMacroService : IDisposable
     /// </summary>
     public async Task PrewarmAsync(string documentPath)
     {
-        if (_disposed || _wedged) return;
+        if (_disposed) return;
         if (string.IsNullOrWhiteSpace(documentPath) || !File.Exists(documentPath)) return;
 
         try
@@ -137,7 +147,7 @@ public sealed class WordMacroService : IDisposable
                 if (_word == null && ForeignWordIsRunning()) return false;
                 EnsureDocumentOpen(full);
                 return true;
-            }, PrewarmTimeout).ConfigureAwait(false);
+            }, PrewarmTimeout, "prewarm").ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -157,8 +167,6 @@ public sealed class WordMacroService : IDisposable
             return new Result(false, "No resume text to place into the template.");
         if (_disposed)
             return new Result(false, "DevStrider is shutting down.");
-        if (_wedged)
-            return new Result(false, "Word is not responding — restart DevStrider (and close Word) to recover.");
 
         var macro = string.IsNullOrWhiteSpace(macroName) ? DefaultMacroName : macroName.Trim();
         var full = Path.GetFullPath(documentPath);
@@ -166,19 +174,25 @@ public sealed class WordMacroService : IDisposable
         try
         {
             return await RunOnStaAsync(
-                () => RunOnSta(resumeText, full, macro, profileName), RunTimeout).ConfigureAwait(false);
+                () => RunOnSta(resumeText, full, macro, profileName), RunTimeout, "macro").ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
             // The STA thread is still inside the COM call. Killing the Word we launched is what
             // unblocks it; if it isn't ours we may not kill it, and we're stuck for good.
             var owned = KillOurWordFromAnyThread();
+            // Either way the thread is still inside that COM call. Killing our Word usually frees
+            // it, but "usually" is what left the service dead for eight attempts in a row, so the
+            // thread is replaced regardless and the next run starts against a clean one.
+            RecycleComThread(owned
+                ? "a macro run hung inside a Word we owned and killed"
+                : "a macro run hung inside a Word we do not own");
             if (!owned)
             {
-                _wedged = true;
                 _activity.Error("Resume", "Word wedged",
-                    "A macro run hung inside Word. Close Word and restart DevStrider.");
-                return new Result(false, "Word stopped responding and it isn't ours to kill — close Word, then restart DevStrider.");
+                    "A macro run hung inside a Word DevStrider did not start. Close Word before retrying.");
+                return new Result(false,
+                    "Word stopped responding and it is not ours to kill — close Word, then try the link again.");
             }
             return new Result(false, $"Macro timed out after {RunTimeout.TotalSeconds:0}s and Word was closed.");
         }
@@ -221,9 +235,10 @@ public sealed class WordMacroService : IDisposable
     // The STA thread
     // =========================================================================================
 
-    private void PumpQueue()
+    private void PumpQueue(object? state)
     {
-        foreach (var work in _queue.GetConsumingEnumerable())
+        var queue = (BlockingCollection<Action>)state!;
+        foreach (var work in queue.GetConsumingEnumerable())
         {
             try { work(); }
             catch (Exception ex) { Debug.WriteLine($"[WordMacro] queue item threw: {ex.Message}"); }
@@ -231,18 +246,69 @@ public sealed class WordMacroService : IDisposable
     }
 
     /// <summary>
+    /// Abandons a COM thread that is never coming back, and starts a new one.
+    ///
+    /// <para>
+    /// Killing Word was the only recovery there was, and it is not enough: if the thread stays
+    /// inside its COM call, every later request queues behind a thread that will never run them.
+    /// Each one then waits out its own timeout and fails, the link is retried, and it queues behind
+    /// the same dead thread again - which is how a queue item reaches eight attempts without Word
+    /// ever being asked to do anything.
+    /// </para>
+    ///
+    /// <para>
+    /// The old thread is left where it is. It is a background thread blocked in an RPC call, so
+    /// nothing can free it and nothing needs to: it costs one thread until the process exits, and
+    /// the generation check stops its backlog running if it ever does wake up.
+    /// </para>
+    /// </summary>
+    private void RecycleComThread(string reason)
+    {
+        Interlocked.Increment(ref _generation);
+        _trace.Warn("Word", "abandoning the COM thread", reason);
+        _activity.Warning("Resume", "Word thread restarted", reason);
+
+        var abandoned = _queue;
+        _queue = new BlockingCollection<Action>();
+        // Stop the old pump if its thread ever unblocks, so it exits instead of draining a backlog.
+        try { abandoned.CompleteAdding(); } catch (ObjectDisposedException) { }
+
+        // The COM state belonged to the abandoned thread; the new one starts with nothing. The Word
+        // behind it cannot be quit through a channel nobody can reach, so it is ended outright -
+        // otherwise every recycle leaves one more running.
+        KillOurWordFromAnyThread();
+        _word = null;
+        _doc = null;
+        Volatile.Write(ref _ourWordPid, 0);
+        EnsureSingleWordInstance("the COM thread was abandoned");
+
+        _sta = new Thread(PumpQueue)
+        {
+            IsBackground = true,
+            Name = "DevStrider Word COM",
+        };
+        _sta.SetApartmentState(ApartmentState.STA);
+        _sta.Start(_queue);
+    }
+
+    /// <summary>
     /// Queue <paramref name="work"/> onto the COM thread and await it with a ceiling. On timeout
     /// the work item is abandoned, not cancelled — it is sitting in a blocking COM call and only
     /// the server going away will release it, which is the caller's job to arrange.
     /// </summary>
-    private async Task<T> RunOnStaAsync<T>(Func<T> work, TimeSpan timeout)
+    private async Task<T> RunOnStaAsync<T>(Func<T> work, TimeSpan timeout, string label = "work")
     {
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var startedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var queuedAt = Stopwatch.GetTimestamp();
+        var generation = Volatile.Read(ref _generation);
 
         try
         {
             _queue.Add(() =>
             {
+                if (generation != Volatile.Read(ref _generation)) return;
+                startedTcs.TrySetResult();
                 try
                 {
                     Interlocked.Exchange(ref _lastUseTicks, DateTime.UtcNow.Ticks);
@@ -257,6 +323,29 @@ public sealed class WordMacroService : IDisposable
             throw new InvalidOperationException("Word service is shut down.");
         }
 
+        // One STA thread runs everything, so a request can sit behind an earlier one - a prewarm has
+        // its own minute - and the old single timer covered both waits at once. A run could then be
+        // reported as "Word did not answer" having never reached Word at all. The two waits are now
+        // measured and named separately.
+        if (await Task.WhenAny(startedTcs.Task, Task.Delay(timeout)).ConfigureAwait(false) != startedTcs.Task)
+        {
+            _ = tcs.Task.ContinueWith(t => _ = t.Exception,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            _trace.Fail("Word", $"{label} never reached the COM thread", $"waited {timeout.TotalSeconds:0}s in the queue");
+            // Never starting is different from Word being slow: the thread is stuck in an earlier
+            // call and will not come back on its own. Recover it now rather than making every later
+            // request queue behind it and time out in turn.
+            KillOurWordFromAnyThread();
+            RecycleComThread($"a queued {label} never started within {timeout.TotalSeconds:0}s");
+            throw new TimeoutException(
+                $"Word never started this {label} within {timeout.TotalSeconds:0}s - the COM thread " +
+                "was stuck on earlier work and has been restarted. Try the link again.");
+        }
+
+        var queued = Stopwatch.GetElapsedTime(queuedAt);
+        _trace.Step("Word", $"{label} started on the COM thread",
+            queued.TotalSeconds < 0.5 ? "no queue wait" : $"after {queued.TotalSeconds:0.0}s waiting in the queue");
+
         var finished = await Task.WhenAny(tcs.Task, Task.Delay(timeout)).ConfigureAwait(false);
         if (finished != tcs.Task)
         {
@@ -264,9 +353,11 @@ public sealed class WordMacroService : IDisposable
             // abandoned task must have its eventual failure read by someone.
             _ = tcs.Task.ContinueWith(t => _ = t.Exception,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            _trace.Fail("Word", $"{label} did not answer", $"{timeout.TotalSeconds:0}s inside Word");
             throw new TimeoutException($"Word did not answer within {timeout.TotalSeconds:0}s.");
         }
 
+        _trace.Ok("Word", $"{label} returned", $"{Stopwatch.GetElapsedTime(queuedAt).TotalSeconds:0.0}s total");
         return await tcs.Task.ConfigureAwait(false);
     }
 
@@ -276,7 +367,9 @@ public sealed class WordMacroService : IDisposable
 
     private Result RunOnSta(string resumeText, string documentPath, string macroName, string profileName)
     {
+        _trace.Step("Word", "opening the document", documentPath);
         EnsureDocumentOpen(documentPath);
+        _trace.Step("Word", "document open", $"invoking {macroName}");
 
         // Baseline the macro's log so we only ever read entries from *this* run.
         var logBefore = SafeLogLength();
@@ -425,6 +518,10 @@ public sealed class WordMacroService : IDisposable
         // Word reads Resiliency at startup, so this has to happen before the instance exists.
         ClearWordResiliency();
 
+        // Whatever is left from an earlier run cannot be reached any more and would only compete
+        // for the automation server. Clear it before asking for a new instance.
+        EnsureSingleWordInstance("about to start a new Word instance");
+
         var before = WinwordPids();
         _word = Activator.CreateInstance(type)
             ?? throw new InvalidOperationException("Word.Application could not be created.");
@@ -502,7 +599,7 @@ public sealed class WordMacroService : IDisposable
 
     private void CloseIfIdle()
     {
-        if (_disposed || _wedged) return;
+        if (_disposed) return;
         var idleFor = DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastUseTicks), DateTimeKind.Utc);
         if (idleFor < IdleShutdown) return;
 
@@ -636,6 +733,68 @@ public sealed class WordMacroService : IDisposable
         return Regex.IsMatch(ex.Message,
             "Number of parameters|does not match the expected|member not found|DISP_E_MEMBERNOTFOUND|cannot be found|has been disabled",
             RegexOptions.IgnoreCase);
+    }
+
+
+    /// <summary>
+    /// Ends every hidden Word this app is not currently using, so exactly one automation instance
+    /// can exist at a time.
+    ///
+    /// <para>
+    /// Word launched for automation is invisible for its whole life and only ever quits through
+    /// <see cref="CloseWord"/> — which needs a working COM channel and a live COM thread. Every
+    /// route that loses either one, a wedged call, a recycled thread, a crash, leaves a fully
+    /// grown Word process behind holding its document open. They accumulate silently: twenty-seven
+    /// of them, the oldest two days old, roughly four gigabytes, before anybody noticed. The next
+    /// run then has to get its COM call answered by a machine in that state, which is how the
+    /// thread came to wedge in the first place.
+    /// </para>
+    ///
+    /// <para>
+    /// A Word somebody is actually using has a window, and this never touches those: their unsaved
+    /// documents are not ours to discard. That single test is what makes sweeping safe, so it is
+    /// checked before anything else and a process that fails to answer is left alone.
+    /// </para>
+    /// </summary>
+    /// <returns>How many were ended.</returns>
+    public int EnsureSingleWordInstance(string reason)
+    {
+        var keep = Volatile.Read(ref _ourWordPid);
+        // A Word that has only just started may not have created its window yet, and one we launch
+        // never will. Leave the very recent alone rather than racing them.
+        var cutoff = DateTime.Now.AddSeconds(-20);
+
+        Process[] running;
+        try { running = Process.GetProcessesByName("WINWORD"); }
+        catch { return 0; }
+
+        var ended = 0;
+        var kept = 0;
+        foreach (var proc in running)
+        {
+            using (proc)
+            {
+                try
+                {
+                    if (proc.Id == keep || proc.HasExited) continue;
+                    // Somebody is using this one.
+                    if (proc.MainWindowHandle != IntPtr.Zero) { kept++; continue; }
+                    if (proc.StartTime > cutoff) continue;
+                    proc.Kill(entireProcessTree: true);
+                    ended++;
+                }
+                catch { /* gone, or not ours to inspect — either way leave it */ }
+            }
+        }
+
+        if (ended > 0)
+        {
+            _trace.Warn("Word", $"closed {ended} stranded Word process(es)", reason);
+            _activity.Info("Resume", "Stranded Word processes closed",
+                $"{ended} hidden instance(s) left over from earlier runs — {reason}" +
+                (kept > 0 ? $". {kept} with a window were left alone." : ""));
+        }
+        return ended;
     }
 
     private static HashSet<int> WinwordPids()

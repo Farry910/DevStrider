@@ -137,6 +137,20 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowManualTools));
     }
 
+    /// <summary>
+    /// The operator pressed Stop and has not started anything since.
+    ///
+    /// <para>
+    /// Stop used to be a single flag that said whether a next link should be opened, and three
+    /// places set that flag back to true on their own - a fill finishing, a tab closing, an
+    /// application being marked submitted. Any step already in flight when Stop was pressed
+    /// therefore restarted the queue the moment it finished, and the run carried on as though
+    /// nothing had been asked. An intention outlives the step that was running when it was
+    /// expressed, so this stays set until the operator starts something themselves.
+    /// </para>
+    /// </summary>
+    private bool _stopRequested;
+
     private const int ConsecutiveFailureLimit = 3;
     private int _consecutiveFailures;
     private int _submittedCount;
@@ -285,6 +299,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private async Task StartAutomaticQueueAsync()
     {
         if (IsAutomaticQueueRunning) return;
+        _stopRequested = false;
         _consecutiveFailures = 0;
         IsAutomaticQueueRunning = true;
         StatusMessage = "Automatic application flow approved. DevStrider will stop before final submission.";
@@ -307,6 +322,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     [RelayCommand]
     private void StopAutomaticQueue()
     {
+        _stopRequested = true;
         IsAutomaticQueueRunning = false;
         IsManualJobDescriptionPhase = false;
         RunCancellationRequested?.Invoke();
@@ -318,12 +334,22 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     [RelayCommand]
     private async Task OpenNextQueuedLinkAsync()
     {
+        _stopRequested = false;
         IsAutomaticQueueRunning = false;
         await OpenNextWorkItemAsync();
     }
 
     private async Task OpenNextWorkItemAsync()
     {
+        if (_stopRequested)
+        {
+            IsAutomaticQueueRunning = false;
+            CurrentQueueItem = null;
+            _trace.Warn("Queue", "not opening the next link", "the operator stopped the run");
+            StatusMessage = "Automation is stopped. Use Approve & start to continue.";
+            return;
+        }
+
         var item = CurrentQueueItem;
         if (item == null || item.Status is JobLinkQueueStatuses.Submitted or JobLinkQueueStatuses.Skipped or JobLinkQueueStatuses.Failed)
             item = JobQueue.FirstOrDefault(candidate => candidate.Status == JobLinkQueueStatuses.Queued);
@@ -515,7 +541,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         await SaveQueueAsync();
 
         var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
-        if (!moreWork || IsAutomaticQueueRunning || IsReviewCapacityFull)
+        if (_stopRequested || !moreWork || IsAutomaticQueueRunning || IsReviewCapacityFull)
         {
             if (!moreWork && ParkedReviewCount == 0) StatusMessage = "Everything is reviewed and the queue is empty.";
             return;
@@ -560,6 +586,12 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
 
+        if (_stopRequested)
+        {
+            IsAutomaticQueueRunning = false;
+            StatusMessage = "Marked submitted. Automation is stopped; nothing further was started.";
+            return;
+        }
         IsAutomaticQueueRunning = true;
         await OpenNextWorkItemAsync();
     }
@@ -584,6 +616,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private async Task RetryCurrentAsync()
     {
         if (CurrentQueueItem == null) return;
+        _stopRequested = false;
         SetStatus(CurrentQueueItem, JobLinkQueueStatuses.Queued);
         CurrentQueueItem.Error = "";
         _consecutiveFailures = 0;
@@ -709,6 +742,12 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
 
+        if (_stopRequested)
+        {
+            IsAutomaticQueueRunning = false;
+            StatusMessage = "Stopped. This application is parked for review; nothing further was started.";
+            return;
+        }
         IsAutomaticQueueRunning = true;
         StatusMessage = $"{parked.Url} is ready for review. Starting the next link; review it whenever you like.";
         await OpenNextWorkItemAsync();
@@ -724,6 +763,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             JobQueue.Add(item);
         }
         CurrentQueueItem = item;
+        _stopRequested = false;
         IsAutomaticQueueRunning = true;
         await StartResumeGenerationAsync(item, jobDescription, questionsJson);
     }
@@ -804,6 +844,19 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         // Again before filling: an answer saved in Quick answers mid-run is a new personal fact,
         // and the fill script reads this cache synchronously.
         await LoadSavedAnswersAsync();
+
+        // A resume that lands after Stop must not start filling a form. The generation is finished
+        // and saved either way, so the link goes back to the queue rather than being lost.
+        if (_stopRequested)
+        {
+            SetStatus(item, JobLinkQueueStatuses.Queued);
+            _trace.Warn("Fill", "not filling", "the run was stopped while the resume was generating");
+            StatusMessage = "Stopped. The resume finished and was saved, but no form was filled. " +
+                            "That link is back in the queue.";
+            await SaveQueueAsync();
+            return;
+        }
+
         SetStatus(item, JobLinkQueueStatuses.FillingApplication);
         await SaveQueueAsync();
         StatusMessage = "Resume ready. Filling the application and uploading the resume...";
@@ -1108,7 +1161,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private Dictionary<string, string> BuildKnownValues()
     {
         var values = new Dictionary<string, string>(_reference, StringComparer.OrdinalIgnoreCase);
-        var salary = _settings.Current?.SalaryExpectation?.Trim() ?? "";
+        var salary = _profiles.Current?.SalaryExpectation?.Trim() ?? "";
         if (salary.Length > 0) values["Salary expectation"] = salary;
         return values;
     }
@@ -1225,9 +1278,20 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var root = document.RootElement;
         if (root.TryGetProperty("answers", out var wrapped)) root = wrapped;
         if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a JSON object.");
-        return root.EnumerateObject()
-            .Where(p => p.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
-            .ToDictionary(p => p.Name, p => p.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+
+        // Built by assignment rather than ToDictionary, which throws on a duplicate key. The keys
+        // here are question text written back by ChatGPT and compared case-insensitively, so two of
+        // them colliding is a thing the model can do to us at any time - and it did so where nobody
+        // was watching the exception. The later value wins; there is no better rule, and losing one
+        // answer beats losing the whole set.
+        var answers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Number
+                or JsonValueKind.True or JsonValueKind.False)) continue;
+            answers[property.Name] = property.Value.ToString();
+        }
+        return answers;
     }
 
     /// <summary>

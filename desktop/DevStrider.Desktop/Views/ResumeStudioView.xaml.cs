@@ -219,7 +219,7 @@ public partial class ResumeStudioView : UserControl
             }
 
             vm.StatusMessage = "ChatGPT is generating the resume...";
-            var resumeReply = await WaitForNewAssistantReplyAsync(before.Count, token, FastFeed.HasSectionLabels);
+            var resumeReply = await WaitForNewAssistantReplyAsync(before, token, FastFeed.HasSectionLabels);
             Trace?.Payload("ChatGPT", "resume reply", resumeReply, 900);
             if (!FastFeed.HasSectionLabels(resumeReply))
             {
@@ -253,7 +253,7 @@ public partial class ResumeStudioView : UserControl
                 // Hold out for something that actually parses. Without a shape to wait for, the first
                 // text that stopped changing for two seconds was accepted — a pause mid-stream was
                 // enough to capture half an object, which then silently became no answers at all.
-                answersJson = await WaitForNewAssistantReplyAsync(questionBefore.Count, token, LooksLikeAnswerJson);
+                answersJson = await WaitForNewAssistantReplyAsync(questionBefore, token, LooksLikeAnswerJson);
                 Trace?.Payload("ChatGPT", "answers reply", answersJson, 900);
                 if (!LooksLikeAnswerJson(answersJson))
                 {
@@ -318,7 +318,7 @@ public partial class ResumeStudioView : UserControl
             var submitted = await SubmitPromptAsync(prompt, token);
             if (!submitted.Ok) throw new InvalidOperationException(submitted.Error);
             vm.StatusMessage = "ChatGPT is choosing exact values for the dynamic fields...";
-            var reply = await WaitForNewAssistantReplyAsync(before.Count, token, LooksLikeAnswerJson);
+            var reply = await WaitForNewAssistantReplyAsync(before, token, LooksLikeAnswerJson);
             Trace?.Payload("ChatGPT", "answer correction reply", reply, 1200);
             var conversationUrl = await WaitForConversationUrlAsync(token);
             if (string.IsNullOrWhiteSpace(conversationUrl)) conversationUrl = request.ConversationUrl;
@@ -353,6 +353,86 @@ public partial class ResumeStudioView : UserControl
         core.Navigate(url);
         try { await completion.Task.WaitAsync(TimeSpan.FromSeconds(45), token); }
         finally { core.NavigationCompleted -= Handler; }
+    }
+
+
+    /// <summary>
+    /// Presses Enter in ChatGPT through the browser input pipeline.
+    ///
+    /// <para>
+    /// Real key events rather than a synthetic KeyboardEvent, for the same reason the job browser
+    /// uses them: ChatGPT's composer is a controlled editor, and a dispatched event that never went
+    /// through the browser is not always treated as a keystroke.
+    /// </para>
+    /// </summary>
+    private async Task DispatchChatGptEnterAsync()
+    {
+        var core = ChatGptBrowser.CoreWebView2 ?? throw new InvalidOperationException("ChatGPT browser is unavailable.");
+        async Task KeyAsync(string type) =>
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", JsonSerializer.Serialize(new
+            {
+                type,
+                key = "Enter",
+                code = "Enter",
+                windowsVirtualKeyCode = 13,
+                nativeVirtualKeyCode = 13,
+                text = "\r",
+                unmodifiedText = "\r",
+            }));
+
+        await KeyAsync("rawKeyDown");
+        await KeyAsync("char");
+        await KeyAsync("keyUp");
+    }
+
+    /// <summary>
+    /// Whether the composer emptied, which is how ChatGPT shows a message actually went.
+    /// </summary>
+    private async Task<bool> ComposerEmptiedAsync()
+    {
+        const string script = """
+(() => {
+  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const inMessage = e => !!(e.closest && e.closest(
+    '[data-message-author-role],[data-testid^="conversation-turn"],article'));
+  const usable = e => !!e && visible(e) && !e.disabled && !e.readOnly && !inMessage(e);
+  const composer = document.querySelector('#prompt-textarea');
+  let input = usable(composer) ? composer : null;
+  if (!input) {
+    const candidates = Array.from(document.querySelectorAll(
+      'form textarea,form [contenteditable="true"],textarea,[contenteditable="true"],[role="textbox"]'))
+      .filter(usable);
+    input = candidates[candidates.length - 1] || null;
+  }
+  if (!input) return true;
+  return ((input.value !== undefined ? input.value : input.textContent) || '').trim().length === 0;
+})()
+""";
+        var json = await ChatGptBrowser.ExecuteScriptAsync(script);
+        return bool.TryParse(json, out var empty) && empty;
+    }
+
+    /// <summary>Clicks ChatGPT's own send control, for when Enter did not take.</summary>
+    private async Task<bool> ClickSendButtonAsync()
+    {
+        const string script = """
+(() => {
+  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const inMessage = e => !!(e.closest && e.closest(
+    '[data-message-author-role],[data-testid^="conversation-turn"],article'));
+  const send = Array.from(document.querySelectorAll('button')).find(button => {
+    const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '') +
+                   ' ' + (button.title || '')).toLowerCase();
+    return visible(button) && !button.disabled && !inMessage(button) &&
+      (label.includes('send') || label.includes('submit') || button.getAttribute('data-testid') === 'send-button');
+  });
+  if (!send) return false;
+  send.click();
+  return true;
+})()
+""";
+        var json = await ChatGptBrowser.ExecuteScriptAsync(script);
+        return bool.TryParse(json, out var clicked) && clicked;
     }
 
     private async Task<(bool Ok, string Error)> SubmitPromptAsync(string prompt, CancellationToken token)
@@ -403,30 +483,76 @@ public partial class ResumeStudioView : UserControl
  }
  input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:prompt}));
  input.dispatchEvent(new Event('change',{bubbles:true}));
+ // Placing the text is as far as this goes. Sending used to depend entirely on finding an enabled
+ // send button, and when ChatGPT did not present one the prompt just sat in the composer: text in,
+ // nothing sent, and the run waiting three minutes for a reply to something never asked. The host
+ // presses Enter instead, which is what a person does, and keeps the button as a fallback.
  const send = Array.from(document.querySelectorAll('button')).find(button => {
    const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '') + ' ' + (button.title || '')).toLowerCase();
    // Same rule as the input: a Send inside a message belongs to that message s editor.
    return visible(button) && !button.disabled && !inMessage(button) &&
      (label.includes('send') || label.includes('submit') || button.getAttribute('data-testid') === 'send-button');
  });
- if (!send) return { ok:false, waiting:true, error:'ChatGPT send button was not found.' };
- send.click();
- return { ok:true, waiting:false, error:'' };
+ const rect = input.getBoundingClientRect();
+ return { ok:true, waiting:false, error:'', hasSend:!!send,
+   placed:((input.value !== undefined ? input.value : input.textContent) || '').trim().length,
+   x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
 })()
 """.Replace("__PROMPT__", payload);
 
             var json = await ChatGptBrowser.ExecuteScriptAsync(script);
             using var result = JsonDocument.Parse(json);
             var root = result.RootElement;
-            if (root.TryGetProperty("ok", out var ok) && ok.GetBoolean()) return (true, "");
-            var waiting = root.TryGetProperty("waiting", out var waitingValue) && waitingValue.GetBoolean();
-            var error = root.TryGetProperty("error", out var errorValue)
-                ? errorValue.GetString() ?? "ChatGPT input is unavailable."
-                : "ChatGPT input is unavailable.";
-            if (!waiting) return (false, error);
+            if (!root.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+            {
+                var waiting = root.TryGetProperty("waiting", out var waitingValue) && waitingValue.GetBoolean();
+                var error = root.TryGetProperty("error", out var errorValue)
+                    ? errorValue.GetString() ?? "ChatGPT input is unavailable."
+                    : "ChatGPT input is unavailable.";
+                if (!waiting) return (false, error);
+                await Task.Delay(TimeSpan.FromSeconds(1), token);
+                continue;
+            }
+
+            var placed = root.TryGetProperty("placed", out var placedValue) ? placedValue.GetInt32() : 0;
+            if (placed == 0)
+            {
+                Trace?.Warn("ChatGPT", "prompt did not land in the composer", "retrying");
+                await Task.Delay(TimeSpan.FromSeconds(1), token);
+                continue;
+            }
+
+            // Send it the way a person does. The composer emptying is the proof it went; a send
+            // button is only consulted when Enter did not take, and never assumed to exist.
+            await DispatchChatGptEnterAsync();
+            for (var settle = 0; settle < 6; settle++)
+            {
+                await Task.Delay(300, token);
+                if (await ComposerEmptiedAsync())
+                {
+                    Trace?.Step("ChatGPT", "prompt sent", $"Enter, {placed} chars");
+                    return (true, "");
+                }
+            }
+
+            if (root.TryGetProperty("hasSend", out var hasSend) && hasSend.GetBoolean() &&
+                await ClickSendButtonAsync())
+            {
+                for (var settle = 0; settle < 6; settle++)
+                {
+                    await Task.Delay(300, token);
+                    if (await ComposerEmptiedAsync())
+                    {
+                        Trace?.Step("ChatGPT", "prompt sent", $"send button, {placed} chars");
+                        return (true, "");
+                    }
+                }
+            }
+
+            Trace?.Warn("ChatGPT", "prompt stayed in the composer", $"attempt {attempt + 1}, {placed} chars");
             await Task.Delay(TimeSpan.FromSeconds(1), token);
         }
-        return (false, "ChatGPT did not become ready. Sign in, dismiss any dialog, and retry.");
+        return (false, "ChatGPT accepted the prompt but never sent it. Check the composer in Resume Studio.");
     }
 
     private async Task<AssistantSnapshot> GetAssistantSnapshotAsync()
@@ -476,17 +602,35 @@ public partial class ResumeStudioView : UserControl
     /// settling for one of those is what sends junk to Word. The last stable text is returned on
     /// timeout regardless, so the caller can report what ChatGPT actually said.
     /// </summary>
-    private async Task<string> WaitForNewAssistantReplyAsync(int previousCount, CancellationToken token,
+    private async Task<string> WaitForNewAssistantReplyAsync(AssistantSnapshot before, CancellationToken token,
         Func<string, bool>? accept = null)
     {
         var priorText = "";
         var lastStable = "";
         var stableChecks = 0;
+        var arrived = false;
         for (var attempt = 0; attempt < 180; attempt++)
         {
             await Task.Delay(TimeSpan.FromSeconds(1), token);
             var snapshot = await GetAssistantSnapshotAsync();
-            if (snapshot.Count <= previousCount || snapshot.Generating || string.IsNullOrWhiteSpace(snapshot.Text))
+
+            // Every fifteen seconds, say what is being waited for. A wait that ends in a three-
+            // minute timeout used to leave nothing behind explaining which part never happened.
+            if (attempt > 0 && attempt % 15 == 0)
+                Trace?.Step("ChatGPT", $"still waiting, {attempt}s",
+                    $"messages={snapshot.Count} (was {before.Count}), generating={snapshot.Generating}, " +
+                    $"reply={snapshot.Text.Length} chars, changed={snapshot.Text != before.Text}");
+
+            // A new reply is one whose text differs from the one that was last on screen. Counting
+            // messages was the only test before, and it fails on a conversation being continued:
+            // ChatGPT drops older turns out of the DOM as the transcript grows, so the count can
+            // stay level or fall while a perfectly good reply is streaming in below it. That is why
+            // continuing a chat timed out where a fresh one succeeded.
+            var isNew = snapshot.Count > before.Count ||
+                        (snapshot.Text.Length > 0 && snapshot.Text != before.Text);
+            if (!arrived && isNew) arrived = true;
+
+            if (!arrived || snapshot.Generating || string.IsNullOrWhiteSpace(snapshot.Text))
             {
                 stableChecks = 0;
                 continue;
@@ -509,6 +653,12 @@ public partial class ResumeStudioView : UserControl
             }
             if (accepted) return snapshot.Text;
         }
+
+        // Three minutes gone. Which of the two happened matters: nothing ever arrived, or something
+        // arrived and was refused every time for its shape.
+        Trace?.Fail("ChatGPT", "gave up waiting for a reply", arrived
+            ? $"a reply arrived ({lastStable.Length} chars) but never satisfied the shape check"
+            : $"no new reply ever appeared; still showing the same {before.Text.Length} chars as before the prompt");
         return lastStable;
     }
 
