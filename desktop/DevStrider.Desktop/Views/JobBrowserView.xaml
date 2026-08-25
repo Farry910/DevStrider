@@ -20,15 +20,25 @@
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate>
-            <Button Click="OnSelectTab" Tag="{Binding}" Margin="0,0,6,6" Padding="10,5"
-                    Style="{StaticResource GhostButton}">
-              <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="●" Margin="0,0,6,0" Foreground="{DynamicResource AccentBrush}"
-                             Visibility="{Binding IsAutomation, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+            <!-- One line, capped and trimmed. The status is a tooltip rather than a second line:
+                 several of these sit side by side and only the selected one is being read, and a
+                 posting URL can carry sixty characters of slug - which is what made these span
+                 the pane. -->
+            <Button Click="OnSelectTab" Tag="{Binding}" Style="{StaticResource ApplicationTab}"
+                    Margin="0,0,6,6">
+              <Button.ToolTip>
+                <StackPanel MaxWidth="420">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding Status}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                  <TextBlock Text="{Binding Url}" Margin="0,4,0,0" FontSize="11" Opacity="0.7"
+                             TextWrapping="Wrap"/>
                 </StackPanel>
-                <TextBlock Text="{Binding Status}" Style="{StaticResource MutedText}" FontSize="11"/>
+              </Button.ToolTip>
+              <StackPanel Orientation="Horizontal">
+                <Ellipse Style="{StaticResource ApplicationTabDot}"/>
+                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
+                           MaxWidth="150" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
               </StackPanel>
             </Button>
           </DataTemplate>

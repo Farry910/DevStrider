@@ -580,8 +580,25 @@
          One cause is fixed outright. Answers were collected with ToDictionary over a case-insensitive
          comparer, which throws when two keys collide - and those keys are question text written back
          by ChatGPT, so a collision is something the model can hand us at any time. The dictionary is
-         built by assignment now and the later value wins: losing one answer beats losing the set. -->
-    <Version>9.12.3</Version>
+         built by assignment now and the later value wins: losing one answer beats losing the set.
+
+         9.13.0 reworks the application tabs and refines the theme.
+
+         A tab was a full-width button carrying a title, a dot and a status line, and the title was
+         the host plus the last path segment - which on Ashby is the posting UUID. Sixty characters
+         saying nothing is what made a row of tabs span the pane. Tabs are chips now: one line, a
+         capped and trimmed title, the status moved to a tooltip, and the selected one filled with
+         the primary blue in white text while the rest stay on surface white. Titles name the
+         employer, taken from the first real path segment or a Greenhouse "for" parameter, and are
+         title-cased - "Absci", "Empirical Security" - with the host only as a last resort.
+
+         The theme itself: the window now sits a shade warmer than the cards so a card reads as
+         raised without a shadow, which is deliberate on a page hosting two browsers. Text has three
+         deliberate levels, the primary is a deeper and less electric blue that can carry white text
+         on a chip, status colours are pulled back from their pure hues, and body copy has a real
+         line height. Segoe UI Variable is used where Windows 11 has it, named once so a change lands
+         everywhere rather than in twenty views. -->
+    <Version>9.13.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

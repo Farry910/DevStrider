@@ -5,20 +5,32 @@
        Palette — light, modern, Win11-ish.
        Edit these brushes to retheme the whole app.
        ============================================================ -->
-  <SolidColorBrush x:Key="Bg"          Color="#F8FAFC"/>  <!-- window -->
+  <!-- The window sits a shade warmer than the cards, so a white card reads as raised without a
+       shadow. That is deliberate: a DropShadowEffect on every card is rendered in software and is
+       felt on a page that also hosts two browsers. -->
+  <SolidColorBrush x:Key="Bg"          Color="#F6F7F9"/>  <!-- window -->
   <SolidColorBrush x:Key="Surface"     Color="#FFFFFF"/>  <!-- card -->
-  <SolidColorBrush x:Key="SurfaceAlt"  Color="#F1F5F9"/>  <!-- hover / subtle row -->
-  <SolidColorBrush x:Key="Border"      Color="#E5E7EB"/>
-  <SolidColorBrush x:Key="BorderSoft"  Color="#EEF2F6"/>
-  <SolidColorBrush x:Key="Text"        Color="#0F172A"/>
-  <SolidColorBrush x:Key="Muted"       Color="#64748B"/>
-  <SolidColorBrush x:Key="Primary"     Color="#2563EB"/>
-  <SolidColorBrush x:Key="PrimaryHv"   Color="#1D4ED8"/>
-  <SolidColorBrush x:Key="PrimaryPr"   Color="#1E40AF"/>
-  <SolidColorBrush x:Key="PrimarySoft" Color="#DBEAFE"/>  <!-- selected nav bg -->
-  <SolidColorBrush x:Key="Warning"     Color="#F59E0B"/>
-  <SolidColorBrush x:Key="Danger"      Color="#DC2626"/>
-  <SolidColorBrush x:Key="OK"          Color="#16A34A"/>
+  <SolidColorBrush x:Key="SurfaceAlt"  Color="#F0F2F6"/>  <!-- hover / subtle row -->
+  <SolidColorBrush x:Key="Border"      Color="#DFE3E9"/>
+  <SolidColorBrush x:Key="BorderSoft"  Color="#EBEEF3"/>
+
+  <!-- Three levels of text, meant to be told apart at a glance: near-black for what you read,
+       mid grey for what supports it, and the border greys for what merely separates. -->
+  <SolidColorBrush x:Key="Text"        Color="#101828"/>
+  <SolidColorBrush x:Key="Muted"       Color="#667085"/>
+
+  <!-- A deeper, less electric blue than the stock 600. It has to carry white text on a chip the
+       size of the selected application tab and still sit calmly beside a page of near-black. -->
+  <SolidColorBrush x:Key="Primary"     Color="#2456C7"/>
+  <SolidColorBrush x:Key="PrimaryHv"   Color="#1D48A8"/>
+  <SolidColorBrush x:Key="PrimaryPr"   Color="#173986"/>
+  <SolidColorBrush x:Key="PrimarySoft" Color="#E3EAFB"/>  <!-- selected nav bg -->
+
+  <!-- Status colours pulled back from their pure hues: at 12px on white the stock amber and red
+       vibrate, and nothing here needs to shout. -->
+  <SolidColorBrush x:Key="Warning"     Color="#B7791F"/>
+  <SolidColorBrush x:Key="Danger"      Color="#C4342B"/>
+  <SolidColorBrush x:Key="OK"          Color="#12855A"/>
 
   <!-- Title-bar control colour scheme (subtle, only colour on hover). -->
   <SolidColorBrush x:Key="ChromeHv"     Color="#E5E7EB"/>
@@ -27,31 +39,47 @@
   <!-- ============================================================
        Typography
        ============================================================ -->
+  <!-- Windows 11 ships Segoe UI Variable, which is drawn for the size it is set at: Text for body,
+       Display for headings, where the letterforms tighten and open up respectively. Windows 10
+       falls through to plain Segoe UI and nothing looks wrong. Named once here so a change lands
+       everywhere rather than in twenty views. -->
+  <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI, sans-serif</FontFamily>
+  <FontFamily x:Key="UiFontDisplay">Segoe UI Variable Display, Segoe UI, sans-serif</FontFamily>
+  <FontFamily x:Key="UiFontMono">Cascadia Mono, Consolas, monospace</FontFamily>
+
   <Style TargetType="TextBlock">
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
   </Style>
 
+  <!-- 20 rather than 22, and paired with a real line height. A page title does not need to be
+       large to be first; it needs to be the only thing at its weight. -->
   <Style x:Key="H1" TargetType="TextBlock">
-    <Setter Property="FontSize" Value="22"/>
+    <Setter Property="FontSize" Value="20"/>
+    <Setter Property="LineHeight" Value="26"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFontDisplay}"/>
   </Style>
 
   <Style x:Key="H2" TargetType="TextBlock">
     <Setter Property="FontSize" Value="15"/>
+    <Setter Property="LineHeight" Value="20"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFontDisplay}"/>
   </Style>
 
+  <!-- Explanatory copy, and there is a lot of it in this app. 17px of line height on 12px type is
+       what makes a wrapped paragraph readable rather than a block. -->
   <Style x:Key="MutedText" TargetType="TextBlock">
     <Setter Property="Foreground" Value="{StaticResource Muted}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="12"/>
+    <Setter Property="LineHeight" Value="17"/>
   </Style>
 
   <!-- ============================================================
@@ -67,7 +95,7 @@
     <Setter Property="MinHeight" Value="30"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="FontSize" Value="13"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
     <Setter Property="HorizontalContentAlignment" Value="Center"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -337,7 +365,7 @@
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="Padding" Value="8,5"/>
     <Setter Property="MinHeight" Value="30"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
     <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -391,7 +419,7 @@
     <Setter Property="MinHeight" Value="30"/>
     <Setter Property="Background" Value="{StaticResource Surface}"/>
     <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
   </Style>
 
@@ -400,12 +428,12 @@
     <Setter Property="MinHeight" Value="30"/>
     <Setter Property="Background" Value="{StaticResource Surface}"/>
     <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
   </Style>
 
   <Style TargetType="CheckBox">
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="Foreground" Value="{StaticResource Text}"/>
   </Style>
@@ -414,13 +442,90 @@
        Card — Border preset to give every section a soft surface.
        Apply with Style="{StaticResource Card}".
        ============================================================ -->
+<!-- ============================================================
+       Application tab — one open job application.
+
+       These are chips, not buttons. There can be five of them across
+       the top of the browser and only one is being looked at, so the
+       job is to say which at a glance and otherwise stay out of the
+       way. Selected takes the primary fill and white text; the rest
+       are plain surface with a hairline border. The title is capped
+       and trimmed because a posting URL can be sixty characters of
+       slug, which is what made these span the pane.
+       ============================================================ -->
+  <Style x:Key="ApplicationTab" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+    <Setter Property="Background" Value="{StaticResource Surface}"/>
+    <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding" Value="10,4"/>
+    <Setter Property="Margin" Value="0,0,6,0"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6"
+                  Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <ContentPresenter VerticalAlignment="Center"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource SurfaceAlt}"/>
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Muted}"/>
+            </Trigger>
+            <!-- Selected wins over hover, so the current tab does not flicker
+                 to grey as the pointer crosses it. -->
+            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource Primary}"/>
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource PrimaryHv}"/>
+              <Setter Property="Foreground" Value="White"/>
+            </DataTrigger>
+            <MultiDataTrigger>
+              <MultiDataTrigger.Conditions>
+                <Condition Binding="{Binding IsSelected}" Value="True"/>
+                <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True"/>
+              </MultiDataTrigger.Conditions>
+              <Setter TargetName="Bd" Property="Background" Value="{StaticResource PrimaryHv}"/>
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource PrimaryPr}"/>
+            </MultiDataTrigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- The dot on a tab: accent while the run is driving it, transparent
+       otherwise, so the row reads as "this one is working" without a
+       second line of text per tab. -->
+  <Style x:Key="ApplicationTabDot" TargetType="Ellipse">
+    <Setter Property="Width" Value="6"/>
+    <Setter Property="Height" Value="6"/>
+    <Setter Property="Margin" Value="0,0,6,0"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Setter Property="Fill" Value="{StaticResource OK}"/>
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding IsAutomation}" Value="False">
+        <Setter Property="Fill" Value="{StaticResource Warning}"/>
+      </DataTrigger>
+      <DataTrigger Binding="{Binding IsSelected}" Value="True">
+        <Setter Property="Fill" Value="White"/>
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+
   <Style x:Key="Card" TargetType="Border">
     <Setter Property="Background" Value="{StaticResource Surface}"/>
-    <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
+    <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
     <Setter Property="BorderThickness" Value="1"/>
-    <Setter Property="CornerRadius" Value="10"/>
-    <Setter Property="Padding" Value="16"/>
-    <Setter Property="Margin" Value="0,0,0,12"/>
+    <Setter Property="CornerRadius" Value="12"/>
+    <Setter Property="Padding" Value="18"/>
+    <Setter Property="Margin" Value="0,0,0,14"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
   </Style>
 
@@ -446,7 +551,7 @@
     <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="RowHeight" Value="32"/>
-    <Setter Property="FontFamily" Value="Segoe UI, sans-serif"/>
+    <Setter Property="FontFamily" Value="{StaticResource UiFont}"/>
     <Setter Property="FontSize" Value="13"/>
     <Setter Property="SelectionUnit" Value="FullRow"/>
   </Style>

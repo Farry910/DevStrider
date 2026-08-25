@@ -435,15 +435,54 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         if (AutomationTabRequested != null) await AutomationTabRequested(item.Id);
     }
 
-    /// <summary>A tab needs a short name; the host and the last path segment carry the most.</summary>
-    private static string TabTitleFor(JobLinkQueueItem item)
+    /// <summary>
+    /// A short name for a tab: the employer, wherever the URL happens to keep it.
+    ///
+    /// <para>
+    /// This used to be the host plus the last path segment, which on Ashby is the posting's UUID -
+    /// "jobs.ashbyhq.com · e976ca86-4a93-449f-8f9c-882679988473", sixty characters saying nothing,
+    /// and the reason a row of tabs spanned the pane. The employer is almost always the first path
+    /// segment instead (ashbyhq.com/absci, lever.co/acme), and on a Greenhouse embed it is the
+    /// "for" parameter. The host is the last resort rather than the first thing shown.
+    /// </para>
+    /// </summary>
+    private static string TabTitleFor(JobLinkQueueItem item) => TabTitleForUrl(item.Url);
+
+    /// <summary>The URL half of <see cref="TabTitleFor"/>, separated so it can be exercised alone.</summary>
+    public static string TabTitleForUrl(string url)
     {
-        if (!Uri.TryCreate(item.Url, UriKind.Absolute, out var uri)) return "Application";
-        var host = uri.Host.Replace("www.", "", StringComparison.OrdinalIgnoreCase);
-        var slug = uri.Segments.Select(segment => segment.Trim('/'))
-            .LastOrDefault(segment => segment.Length is > 2 and < 40 &&
-                                      !segment.Equals("application", StringComparison.OrdinalIgnoreCase)) ?? "";
-        return slug.Length == 0 ? host : $"{host} · {slug}";
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return "Application";
+
+        // Path words that belong to the board rather than to an employer.
+        string[] boilerplate =
+        [
+            "embed", "job_app", "jobs", "job", "careers", "career", "application", "apply",
+            "o", "p", "postings", "positions", "vacancy", "en", "us",
+        ];
+        static bool IsIdentifier(string value) =>
+            value.Length >= 16 && value.Count(char.IsDigit) + value.Count(c => c == '-') > value.Length / 3
+            || value.All(char.IsDigit);
+
+        var owner = uri.Segments
+            .Select(segment => Uri.UnescapeDataString(segment.Trim('/')))
+            .FirstOrDefault(segment => segment.Length is > 1 and < 40 && !IsIdentifier(segment) &&
+                                       !boilerplate.Contains(segment, StringComparer.OrdinalIgnoreCase))
+            ?? "";
+
+        if (owner.Length == 0)
+        {
+            // Greenhouse embeds name the board here and nowhere else.
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            owner = (query["for"] ?? query["company"] ?? "").Trim();
+        }
+        if (owner.Length == 0)
+            return uri.Host.Replace("www.", "", StringComparison.OrdinalIgnoreCase);
+
+        // "empirical-security" reads as a slug; "Empirical Security" reads as a company.
+        var words = owner.Replace('_', ' ').Replace('-', ' ').Split(' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Join(" ", words.Select(word =>
+            word.Length == 1 ? word.ToUpperInvariant() : char.ToUpperInvariant(word[0]) + word[1..]));
     }
 
     private async Task BeginManualJobDescriptionPassAsync()
