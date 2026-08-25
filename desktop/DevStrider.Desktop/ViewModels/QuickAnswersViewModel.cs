@@ -60,7 +60,7 @@ public sealed partial class QuickAnswersViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = "Couldn't save that answer: " + SharedDbCredentials.Redact(ex.Message);
+            StatusMessage = "Couldn't save that answer: " + Safe.Redact(ex.Message);
         }
     }
 

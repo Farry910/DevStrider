@@ -1,6 +1,6 @@
 using System.Windows;
 using DevStrider.Desktop.Data;
-using DevStrider.Desktop.Data.Postgres;
+using DevStrider.Desktop.Data.Http;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
 using DevStrider.Desktop.Views;
@@ -41,14 +41,21 @@ public partial class App : Application
             Services = BuildServices();
 
             // Settings come off disk before anything else, because the login window needs the
-            // database credentials that live on them and there is nowhere else to read them from.
+            // portal address that lives on them and there is nowhere else to read it from.
             // Run on the pool: blocking the UI thread on an awaited continuation that wants the
             // UI thread back is the classic way to hang before the first window ever appears.
             var settings = Services.GetRequiredService<SettingsService>();
-            Task.Run(async () =>
+            var auth = Services.GetRequiredService<AuthService>();
+
+            // …and then the saved session, if last week's sign-in is still good. This is the whole
+            // of what the token bought: the app opens on the bid board rather than on a password
+            // box, every day for a week. A portal that can't be reached is not a rejected session
+            // — see AuthService.RestoreAsync.
+            var restored = Task.Run(async () =>
             {
                 await settings.LoadAsync();
                 await SettingsBootstrap.ApplyAsync(settings);
+                return await auth.RestoreAsync();
             }).GetAwaiter().GetResult();
 
             // Word left running by an earlier session belongs to nobody and needs no account to
@@ -58,15 +65,18 @@ public partial class App : Application
             Services.GetRequiredService<WordMacroService>()
                 .EnsureSingleWordInstance("DevStrider started");
 
-            // Nothing below this line runs without an account. Every repository scopes its queries
-            // to SessionContext, and a query issued before login throws rather than quietly
-            // reading the whole team's rows.
-            var login = new LoginWindow(Services.GetRequiredService<LoginViewModel>());
-            MainWindow = login;
-            if (login.ShowDialog() != true)
+            // Nothing below this line runs without an account. Every repository scopes its calls
+            // to SessionContext, and one issued before login throws rather than quietly asking the
+            // portal for whatever an unauthenticated request would return.
+            if (!restored)
             {
-                Shutdown(0);
-                return;
+                var login = new LoginWindow(Services.GetRequiredService<LoginViewModel>());
+                MainWindow = login;
+                if (login.ShowDialog() != true)
+                {
+                    Shutdown(0);
+                    return;
+                }
             }
 
             var window = new MainWindow
@@ -117,20 +127,24 @@ public partial class App : Application
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<SettingsService>();
 
-        // ── the shared database ─────────────────────────────────────────────
-        services.AddSingleton<SharedDbCredentials>();
-        services.AddSingleton<SharedDbContext>();
+        // ── the company portal ──────────────────────────────────────────────
+        // The app's only store, reached over HTTP. It used to be a PostgreSQL connection opened
+        // from here with a password held on this machine; there is no database credential in this
+        // process any more, and no SQL either.
+        services.AddSingleton<PortalApi>();
         services.AddSingleton<SessionContext>();
+        services.AddSingleton<SessionStore>();
         services.AddSingleton<AuthService>();
 
-        // Repositories are the only thing that talks SQL. Each one reads the account id from
-        // SessionContext, so no caller can ask for someone else's rows.
-        services.AddSingleton<IAccountRepository, PgAccountRepository>();
-        services.AddSingleton<IProfileRepository, PgProfileRepository>();
-        services.AddSingleton<IBidRepository, PgBidRepository>();
-        services.AddSingleton<IInterviewRepository, PgInterviewRepository>();
-        services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
-        services.AddSingleton<IPersonFactRepository, PgPersonFactRepository>();
+        // Repositories are the only thing that calls the portal's data endpoints. Each reads the
+        // account from SessionContext to fail fast when nothing is signed in; the server pins
+        // every row to the token's own user id, so no caller can ask for someone else's.
+        services.AddSingleton<IAccountRepository, ApiAccountRepository>();
+        services.AddSingleton<IProfileRepository, ApiProfileRepository>();
+        services.AddSingleton<IBidRepository, ApiBidRepository>();
+        services.AddSingleton<IInterviewRepository, ApiInterviewRepository>();
+        services.AddSingleton<IPeerDirectory, ApiPeerDirectory>();
+        services.AddSingleton<IPersonFactRepository, ApiPersonFactRepository>();
 
         // ── services ────────────────────────────────────────────────────────
         services.AddSingleton<ProfileService>();      // the ds_users row: the account name
@@ -180,7 +194,9 @@ public partial class App : Application
             var profiles = Services.GetRequiredService<ProfilesService>();
             var settings = await Services.GetRequiredService<SettingsService>().GetAsync();
 
-            // Login already wrote this row. Checking again costs one statement and covers the gap
+            StartSessionRenewal();
+
+            // Login already wrote this row. Checking again costs one request and covers the gap
             // where the schema was re-applied between the sign-in and here — without it, the first
             // symptom is a foreign-key violation on whatever the user touches first.
             await Services.GetRequiredService<ProfileService>().EnsureRowAsync();
@@ -214,8 +230,46 @@ public partial class App : Application
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine("Post-login boot failed: " + ex.Message);
-            activity.Error("Startup", "Post-login boot crashed", SharedDbCredentials.Redact(ex.Message));
+            activity.Error("Startup", "Post-login boot crashed", Safe.Redact(ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Keep the week from running out under a window that never closes.
+    ///
+    /// <para>
+    /// Startup renews a token that is inside its last day, which covers everybody who quits the
+    /// app at some point. It does not cover the machine that is never restarted — and that is the
+    /// one where a token quietly reaching its expiry turns the next ordinary save into a 401 for
+    /// no reason the user can see. Six hours is often enough that the last-day window can never be
+    /// missed, and rare enough to be free.
+    /// </para>
+    ///
+    /// <para>
+    /// A refresh that fails is not reported: the machine is offline, or the portal is down, and
+    /// the token in hand is still good until it isn't. The next tick tries again.
+    /// </para>
+    /// </summary>
+    private static void StartSessionRenewal()
+    {
+        var session = Services.GetRequiredService<SessionContext>();
+        var auth = Services.GetRequiredService<AuthService>();
+
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromHours(6));
+                try
+                {
+                    if (session.NeedsRefresh) await auth.RefreshAsync();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"session renewal: {Safe.Redact(ex.Message)}");
+                }
+            }
+        });
     }
 
     private static void ShowFatal(Exception ex, string title)
@@ -267,7 +321,7 @@ public partial class App : Application
         base.OnExit(e);
 
         // Hard-kill instead of Environment.Exit — the latter waits on managed finalizers
-        // (SkiaSharp's GL context, Npgsql's TCP pool, native COM teardown) and can hang
+        // (SkiaSharp's GL context, HttpClient's connection pool, native COM teardown) and can hang
         // indefinitely. Kill() terminates the process immediately, no finalizer wait.
         // This is the normal path; the watchdog above is the safety net for the unhappy one.
         System.Diagnostics.Process.GetCurrentProcess().Kill();

@@ -153,8 +153,8 @@ Only propose a data-changing action when company and role are explicit. Include 
         }
         catch (Exception ex)
         {
-            StatusMessage = "Couldn't apply actions: " + SharedDbCredentials.Redact(ex.Message);
-            _activity.Error("Assisted automation", "Action apply failed", SharedDbCredentials.Redact(ex.Message));
+            StatusMessage = "Couldn't apply actions: " + Safe.Redact(ex.Message);
+            _activity.Error("Assisted automation", "Action apply failed", Safe.Redact(ex.Message));
         }
         finally { IsBusy = false; }
     }

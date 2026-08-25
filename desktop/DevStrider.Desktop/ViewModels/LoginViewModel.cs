@@ -9,31 +9,39 @@ namespace DevStrider.Desktop.ViewModels;
 /// account into <see cref="SessionContext"/>.
 ///
 /// <para>
-/// It also carries the shared-database connection form, which looks like scope creep and isn't:
-/// signing in <i>is</i> a database query, and the connection details live behind the Settings tab,
-/// which is behind the main window, which is behind this form. On a fresh install that circle has
-/// to be broken somewhere, and here is the only place where it can be.
+/// It also carries the portal-address field, which looks like scope creep and isn't: signing in
+/// <i>is</i> a call to the portal, and the address lives behind the Settings tab, which is behind
+/// the main window, which is behind this form. On a fresh install that circle has to be broken
+/// somewhere, and here is the only place it can be.
 /// </para>
 ///
 /// <para>
-/// There is no "remember me". The password is asked for on every start of the app and nothing
-/// about the session reaches disk — see <see cref="SessionContext"/>.
+/// This form used to carry a whole database connection panel — host, port, database, user,
+/// password, an SSL toggle and two credential modes — because the app opened its own PostgreSQL
+/// connection and could not sign anyone in without one. All of that is one URL now, and the URL is
+/// not a secret.
+/// </para>
+///
+/// <para>
+/// There is a "remember me", and it isn't optional: the portal answers a sign-in with a token good
+/// for a week, and <see cref="SessionStore"/> keeps it. This window is what somebody sees on the
+/// first launch of the week, not on every launch.
 /// </para>
 /// </summary>
 public partial class LoginViewModel : ViewModelBase
 {
     private readonly AuthService _auth;
     private readonly SettingsService _settings;
-    private readonly SharedDbContext _shared;
+    private readonly PortalApi _api;
 
     /// <summary>Raised once, on the UI thread, after the session has been established.</summary>
     public event Action? SignedIn;
 
-    public LoginViewModel(AuthService auth, SettingsService settings, SharedDbContext shared)
+    public LoginViewModel(AuthService auth, SettingsService settings, PortalApi api)
     {
         _auth = auth;
         _settings = settings;
-        _shared = shared;
+        _api = api;
     }
 
     private string _email = "";
@@ -42,7 +50,8 @@ public partial class LoginViewModel : ViewModelBase
     /// <summary>
     /// Pushed from the view's <c>PasswordChanged</c> handler. A <c>PasswordBox</c> can't be bound
     /// — WPF deliberately keeps the plaintext out of the binding engine — so this is the seam.
-    /// Cleared after every attempt, successful or not.
+    /// Cleared after every attempt, successful or not; it goes to the portal and nowhere else,
+    /// and in particular it is never written to disk.
     /// </summary>
     public string Password { get; set; } = "";
 
@@ -52,66 +61,33 @@ public partial class LoginViewModel : ViewModelBase
 
     private bool _showConnection;
     /// <summary>
-    /// Whether the connection panel is open. Starts open when the app has no usable connection
-    /// details, because in that state the credential fields cannot do anything.
+    /// Whether the address panel is open. Starts open when the app has no portal address, because
+    /// in that state the credential fields cannot do anything.
     /// </summary>
     public bool ShowConnection { get => _showConnection; set => SetProperty(ref _showConnection, value); }
 
     private bool _isConfigured;
-    /// <summary>False until the settings file has enough to attempt a connection.</summary>
+    /// <summary>False until the settings file names a portal to sign in against.</summary>
     public bool IsConfigured { get => _isConfigured; private set => SetProperty(ref _isConfigured, value); }
 
     private AppSettings _connection = new();
     /// <summary>
-    /// An editable copy of the settings — never the cached instance, so a half-typed host doesn't
-    /// become live for the rest of the app before Save.
+    /// An editable copy of the settings — never the cached instance, so a half-typed address
+    /// doesn't become live for the rest of the app before Save.
     /// </summary>
     public AppSettings Connection { get => _connection; set => SetProperty(ref _connection, value); }
-
-    /// <summary>Same "blank means keep what's saved" contract as the Settings tab.</summary>
-    public string SharedDbPasswordEntry { get; set; } = "";
 
     private string _connectionMessage = "";
     public string ConnectionMessage { get => _connectionMessage; private set => SetProperty(ref _connectionMessage, value); }
 
-    /// <summary>
-    /// Radio state for the credential mode. Two bools rather than the raw string, because WPF
-    /// radio buttons want booleans and the persisted value stays a readable "uri"/"parts".
-    /// </summary>
-    public bool IsUriMode
-    {
-        get => !string.Equals(Connection.SharedDbMode, SharedDbCredentials.ModeParts, StringComparison.OrdinalIgnoreCase);
-        set
-        {
-            if (!value) return;                          // only the checked radio drives the change
-            Connection.SharedDbMode = SharedDbCredentials.ModeUri;
-            OnPropertyChanged(nameof(IsUriMode));
-            OnPropertyChanged(nameof(IsPartsMode));
-        }
-    }
-
-    public bool IsPartsMode
-    {
-        get => !IsUriMode;
-        set
-        {
-            if (!value) return;
-            Connection.SharedDbMode = SharedDbCredentials.ModeParts;
-            OnPropertyChanged(nameof(IsUriMode));
-            OnPropertyChanged(nameof(IsPartsMode));
-        }
-    }
-
-    /// <summary>Load the connection form and decide whether to open it. Call once, on window load.</summary>
+    /// <summary>Load the address form and decide whether to open it. Call once, on window load.</summary>
     public async Task InitializeAsync()
     {
         Connection = await _settings.GetForEditAsync();
-        IsConfigured = await _shared.IsConfiguredAsync();
+        IsConfigured = await _api.IsConfiguredAsync();
         ShowConnection = !IsConfigured;
-        OnPropertyChanged(nameof(IsUriMode));
-        OnPropertyChanged(nameof(IsPartsMode));
         if (!IsConfigured)
-            ConnectionMessage = "No database configured yet. Fill this in, test it, then sign in.";
+            ConnectionMessage = "No portal address yet. Fill this in, test it, then sign in.";
     }
 
     [RelayCommand]
@@ -126,9 +102,9 @@ public partial class LoginViewModel : ViewModelBase
             if (!result.Ok)
             {
                 Error = result.Message;
-                // A failure that is really about the connection should land the user on the panel
-                // that fixes it rather than on a form they will retype correctly and fail again.
-                if (!await _shared.IsConfiguredAsync()) ShowConnection = true;
+                // A failure that is really about the address should land the user on the panel
+                // that fixes it, rather than on a form they will retype correctly and fail again.
+                if (!await _api.IsConfiguredAsync()) ShowConnection = true;
                 return;
             }
             SignedIn?.Invoke();
@@ -137,7 +113,7 @@ public partial class LoginViewModel : ViewModelBase
         {
             // SignInAsync converts everything it expects into a message; anything reaching here is
             // a genuine surprise and still must not take the window down.
-            Error = SharedDbCredentials.Redact(ex.Message);
+            Error = Safe.Redact(ex.Message);
         }
         finally
         {
@@ -147,28 +123,21 @@ public partial class LoginViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Persist the connection form. Shared with Test, which has to save before it probes.</summary>
+    /// <summary>Persist the address. Shared with Test, which has to save before it probes.</summary>
     [RelayCommand]
     public async Task SaveConnectionAsync()
     {
-        if (!string.IsNullOrEmpty(SharedDbPasswordEntry))
-        {
-            Connection.SharedDbPassword = SharedDbPasswordEntry;
-            SharedDbPasswordEntry = "";
-        }
         await _settings.SaveAsync(Connection);
         // SaveAsync installed this instance as the shared cache; take a fresh copy so continued
         // editing doesn't mutate what everything else is now reading.
         Connection = await _settings.GetForEditAsync();
-        IsConfigured = await _shared.IsConfiguredAsync();
-        OnPropertyChanged(nameof(IsUriMode));
-        OnPropertyChanged(nameof(IsPartsMode));
+        IsConfigured = await _api.IsConfiguredAsync();
     }
 
     /// <summary>
-    /// Save the form, then ping the server. Saving first is not optional: the password sits in
-    /// <see cref="SharedDbPasswordEntry"/> until Save copies it across, so a test that skipped it
-    /// would probe with no password and report a failure the user cannot explain.
+    /// Save the form, then ping the portal. Saving first is not optional: <see cref="PortalApi"/>
+    /// reads the address out of the settings file, so a test that skipped the save would probe
+    /// whatever was there before and report on an address the user is no longer looking at.
     /// </summary>
     [RelayCommand]
     public async Task TestConnectionAsync()
@@ -179,12 +148,12 @@ public partial class LoginViewModel : ViewModelBase
         {
             ConnectionMessage = "Testing…";
             await SaveConnectionAsync();
-            var (ok, message) = await _shared.TestConnectionAsync();
+            var (ok, message) = await _api.TestAsync();
             ConnectionMessage = ok ? $"Connected — {message}" : message;
         }
         catch (Exception ex)
         {
-            ConnectionMessage = SharedDbCredentials.Redact(ex.Message);
+            ConnectionMessage = Safe.Redact(ex.Message);
         }
         finally { IsBusy = false; }
     }

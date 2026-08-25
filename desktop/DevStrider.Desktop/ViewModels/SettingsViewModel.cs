@@ -10,7 +10,8 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly SessionContext _session;
     private readonly LocalApiServer _localApi;
     private readonly ActivityLogService _activity;
-    private readonly SharedDbContext _shared;
+    private readonly PortalApi _api;
+    private readonly AuthService _auth;
     private readonly R2StorageService _storage;
 
     public LocalApiServer LocalApi => _localApi;
@@ -20,14 +21,16 @@ public partial class SettingsViewModel : ViewModelBase
         SessionContext session,
         LocalApiServer localApi,
         ActivityLogService activity,
-        SharedDbContext shared,
+        PortalApi api,
+        AuthService auth,
         R2StorageService storage)
     {
         _settings = settings;
         _session = session;
         _localApi = localApi;
         _activity = activity;
-        _shared = shared;
+        _api = api;
+        _auth = auth;
         _storage = storage;
     }
 
@@ -65,21 +68,13 @@ public partial class SettingsViewModel : ViewModelBase
     private AppSettings _model = new();
     public AppSettings Model { get => _model; set => SetProperty(ref _model, value); }
 
-    /// <summary>
-    /// Buffer for the shared database password, fed by the <c>PasswordBox</c>'s
-    /// <c>PasswordChanged</c> handler and applied to <see cref="Model"/> in
-    /// <see cref="SaveAsync"/>. Empty means "leave the saved password alone" — the box always
-    /// renders blank on load, so an untouched box must not wipe a working password.
-    /// </summary>
-    public string SharedDbPasswordEntry { get; set; } = "";
+    private string _portalHint = "";
+    /// <summary>Whether the typed address is one this app could reach, before anyone presses Test.</summary>
+    public string PortalHint { get => _portalHint; private set => SetProperty(ref _portalHint, value); }
 
-    private string _sharedDbHint = "";
-    /// <summary>Whether a password is currently saved, without rendering it into the UI.</summary>
-    public string SharedDbHint
-    {
-        get => _sharedDbHint;
-        private set => SetProperty(ref _sharedDbHint, value);
-    }
+    private string _sessionHint = "";
+    /// <summary>How much of the week is left. The one place the session's lifetime is visible.</summary>
+    public string SessionHint { get => _sessionHint; private set => SetProperty(ref _sessionHint, value); }
 
     /// <summary>Same "blank means keep" contract as <see cref="SharedDbPasswordEntry"/>.</summary>
     public string R2SecretEntry { get; set; } = "";
@@ -101,72 +96,44 @@ public partial class SettingsViewModel : ViewModelBase
             : $"Endpoint: {Model.R2Endpoint}/{Model.R2Bucket}";
     }
 
-    /// <summary>
-    /// Radio-button state for the credential mode. Two bools rather than binding the raw string,
-    /// because WPF radio buttons want booleans and the persisted value stays a readable
-    /// <c>"uri"</c>/<c>"parts"</c> in the settings file.
-    /// </summary>
-    public bool IsUriMode
+    private void RefreshPortalHint()
     {
-        get => !string.Equals(Model.SharedDbMode, SharedDbCredentials.ModeParts, StringComparison.OrdinalIgnoreCase);
-        set
-        {
-            if (!value) return;                          // only the checked radio drives the change
-            Model.SharedDbMode = SharedDbCredentials.ModeUri;
-            OnPropertyChanged(nameof(IsUriMode));
-            OnPropertyChanged(nameof(IsPartsMode));
-            RefreshSharedDbHint();
-        }
-    }
+        var (baseUrl, error) = PortalApi.ParseBaseUrl(Model.PortalBaseUrl);
+        PortalHint = string.IsNullOrWhiteSpace(Model.PortalBaseUrl)
+            ? "Nothing works until this is set. It's the same address you open the portal at in a browser."
+            : baseUrl != null
+                ? $"Requests will go to {baseUrl}/api/… — use Test connection to confirm the portal answers."
+                : $"Can't use that address: {error}";
 
-    public bool IsPartsMode
-    {
-        get => !IsUriMode;
-        set
-        {
-            if (!value) return;
-            Model.SharedDbMode = SharedDbCredentials.ModeParts;
-            OnPropertyChanged(nameof(IsUriMode));
-            OnPropertyChanged(nameof(IsPartsMode));
-            RefreshSharedDbHint();
-        }
-    }
-
-    private void RefreshSharedDbHint()
-    {
-        if (IsUriMode)
-        {
-            var (ok, error) = SharedDbCredentials.ValidateUri(Model.SharedDbUri);
-            SharedDbHint = string.IsNullOrEmpty(Model.SharedDbUri)
-                ? "Paste the service URI your provider gave you — nothing works until this is set."
-                : ok ? "URI looks valid. Use Test connection to confirm the server answers."
-                     : $"Can't parse that URI: {error}";
-            return;
-        }
-
-        SharedDbHint = string.IsNullOrEmpty(Model.SharedDbPassword)
-            ? "No password saved — the app can't reach the database until you set one."
-            : "A password is saved. Leave blank to keep it; type to replace it.";
+        SessionHint = _session.IsAuthenticated
+            ? $"Signed in as {_session.Email}. This machine stays signed in until "
+              + $"{_session.ExpiresAt.ToLocalTime():dddd d MMMM, HH:mm} — {(int)Math.Ceiling(_session.Remaining.TotalDays)} day(s) away. "
+              + "It renews itself whenever you open DevStrider inside the last day, so in ordinary use you are never asked again."
+            : "Not signed in on this machine.";
     }
 
     /// <summary>
-    /// Clear the saved shared database password.
+    /// Forget the session on this machine.
     ///
     /// <para>
-    /// This disconnects the app from its only store, so the next launch stops at the login window
-    /// with nothing to sign in against. That is the point of the button — it exists to get a
-    /// credential off a machine — but it is not a small thing to click.
+    /// This is what "clear the saved password" used to be, and it is a much smaller thing than it
+    /// was: the token it deletes is scoped to DevStrider, dies on its own within a week, and can
+    /// be declined by the portal at any point. What it does not do is remove a credential that
+    /// could reach the whole team's database directly — there is no longer one on this machine to
+    /// remove.
+    /// </para>
+    ///
+    /// <para>
+    /// Takes effect at the next launch, which then stops at the sign-in window. The current
+    /// session stays usable so nobody loses a half-finished bid to a mis-click.
     /// </para>
     /// </summary>
     [RelayCommand]
-    public async Task ClearSharedPasswordAsync()
+    public void SignOut()
     {
-        Model.SharedDbPassword = "";
-        SharedDbPasswordEntry = "";
-        await _settings.SaveAsync(Model);
-        Model = await _settings.GetForEditAsync();
-        RefreshSharedDbHint();
-        StatusMessage = "Shared database password cleared — you'll have to re-enter it at the next sign-in.";
+        _auth.SignOut();
+        RefreshPortalHint();
+        StatusMessage = "Signed out on this machine — you'll be asked for your password at the next launch.";
     }
 
     [RelayCommand]
@@ -179,10 +146,7 @@ public partial class SettingsViewModel : ViewModelBase
             // would be live for the listener and every other service before the user hits Save.
             Model = await _settings.GetForEditAsync();
             OnPropertyChanged(nameof(SignedInAs));
-            // Model was replaced wholesale, so the mode radios have to be told to re-read it.
-            OnPropertyChanged(nameof(IsUriMode));
-            OnPropertyChanged(nameof(IsPartsMode));
-            RefreshSharedDbHint();
+            RefreshPortalHint();
             RefreshR2Hints();
         }
         finally { IsBusy = false; }
@@ -196,14 +160,8 @@ public partial class SettingsViewModel : ViewModelBase
         {
             Model.ResumeGenerationsPerChat = Math.Clamp(Model.ResumeGenerationsPerChat, 1, 50);
             Model.MaxReviewTabs = Math.Clamp(Model.MaxReviewTabs, 1, 8);
-            // Apply the typed password before the save. Blank means "keep what's there" — the
-            // box renders empty on every load, so treating blank as "clear it" would silently
-            // disconnect anyone who saved an unrelated setting.
-            if (!string.IsNullOrEmpty(SharedDbPasswordEntry))
-            {
-                Model.SharedDbPassword = SharedDbPasswordEntry;
-                SharedDbPasswordEntry = "";
-            }
+            // Blank means "keep what's there" — the box renders empty on every load, so treating
+            // blank as "clear it" would silently disconnect anyone who saved an unrelated setting.
             if (!string.IsNullOrEmpty(R2SecretEntry))
             {
                 Model.R2SecretAccessKey = R2SecretEntry;
@@ -213,7 +171,7 @@ public partial class SettingsViewModel : ViewModelBase
             // Saving installed Model as the shared cache; take a fresh copy so continued
             // editing doesn't mutate what every other service is now reading.
             Model = await _settings.GetForEditAsync();
-            RefreshSharedDbHint();
+            RefreshPortalHint();
             RefreshR2Hints();
 
             // Always ensure the listener is running on the (possibly new) saved port.
@@ -239,25 +197,28 @@ public partial class SettingsViewModel : ViewModelBase
         _localApi.Start(Model.ListenerPort);
     }
 
-    /// <summary>Save the form, then ping the database — surfaces TLS / auth / firewall errors fast.</summary>
+    /// <summary>
+    /// Save the form, then ping the portal — surfaces a typo, a DNS failure or a proxy sitting in
+    /// front of the app while the person is still looking at the field they changed.
+    ///
+    /// <para>
+    /// This must be the view-model's <see cref="SaveAsync"/> rather than
+    /// <c>_settings.SaveAsync(Model)</c>: <see cref="PortalApi"/> reads the address out of the
+    /// settings file, so a test that skipped the save would probe the previous address and report
+    /// on something the user is no longer looking at.
+    /// </para>
+    /// </summary>
     [RelayCommand]
-    public async Task TestSharedConnectionAsync()
+    public async Task TestPortalAsync()
     {
         IsBusy = true;
         try
         {
-            // This must be the view-model's SaveAsync, not _settings.SaveAsync(Model).
-            //
-            // A PasswordBox can't be data-bound — the plaintext never enters the binding engine
-            // — so a typed password sits in SharedDbPasswordEntry until SaveAsync copies it onto
-            // Model. Saving Model directly skipped that: the test ran with no password ("No
-            // password has been provided but the backend requires one") and, worse, persisted
-            // the empty one over a working password.
             await SaveAsync();
-            var (ok, message) = await _shared.TestConnectionAsync();
-            StatusMessage = ok ? $"Shared database reachable — {message}" : $"Shared database unreachable — {message}";
-            if (ok) _activity.Success("Database", "Connection test passed", message);
-            else _activity.Error("Database", "Connection test failed", message);
+            var (ok, message) = await _api.TestAsync();
+            StatusMessage = ok ? $"Portal reachable — {message}" : $"Portal unreachable — {message}";
+            if (ok) _activity.Success("Portal", "Connection test passed", message);
+            else _activity.Error("Portal", "Connection test failed", message);
         }
         finally { IsBusy = false; }
     }

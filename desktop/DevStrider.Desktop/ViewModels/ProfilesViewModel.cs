@@ -75,8 +75,8 @@ public partial class ProfilesViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't create '{name}': {SharedDbCredentials.Redact(ex.Message)}";
-            _activity.Error("Profiles", "Profile create failed", SharedDbCredentials.Redact(ex.Message));
+            StatusMessage = $"Couldn't create '{name}': {Safe.Redact(ex.Message)}";
+            _activity.Error("Profiles", "Profile create failed", Safe.Redact(ex.Message));
             return;
         }
 
@@ -109,9 +109,9 @@ public partial class ProfilesViewModel : ViewModelBase
         var savedId = saved.Id;
         var savedName = saved.Name;
 
-        // A database error here used to escape into the dispatcher and come back as the fatal
-        // "Dispatcher exception" box with a raw Npgsql stack in it — for a save, which is the most
-        // ordinary thing this tab does. Failures belong in the status line.
+        // A failure here used to escape into the dispatcher and come back as the fatal "Dispatcher
+        // exception" box with a raw driver stack in it — for a save, which is the most ordinary
+        // thing this tab does. Failures belong in the status line.
         try
         {
             await _service.UpdateAsync(saved);
@@ -120,8 +120,8 @@ public partial class ProfilesViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't save '{savedName}': {SharedDbCredentials.Redact(ex.Message)}";
-            _activity.Error("Profiles", "Profile save failed", SharedDbCredentials.Redact(ex.Message));
+            StatusMessage = $"Couldn't save '{savedName}': {Safe.Redact(ex.Message)}";
+            _activity.Error("Profiles", "Profile save failed", Safe.Redact(ex.Message));
             return;
         }
 
@@ -152,7 +152,7 @@ public partial class ProfilesViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = "Couldn't load personal info: " + SharedDbCredentials.Redact(ex.Message);
+            StatusMessage = "Couldn't load personal info: " + Safe.Redact(ex.Message);
         }
         NotifyPersonalData();
     }

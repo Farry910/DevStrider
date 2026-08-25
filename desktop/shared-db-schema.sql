@@ -1,4 +1,20 @@
 -- =====================================================================================
+--  ⚠ SUPERSEDED. DO NOT RUN THIS FILE.
+--
+--  These tables belong to the company portal now. It creates and migrates them itself,
+--  from hr-system/migrations/postgres/011_devstrider_api.sql, which runs on every boot and
+--  is written to be safe on a database that already has them.
+--
+--  DevStrider no longer connects to PostgreSQL at all. It signs in at
+--  /api/devstrider/auth/login and reads and writes everything through /api/devstrider/*,
+--  which is why nobody needs a database credential — or this file — to set up a machine.
+--
+--  ⚠ THE DROP STATEMENTS BELOW ARE STILL LIVE, AND THESE TABLES ARE STILL THE ONLY COPY.
+--  Running this file against the production database destroys every bid and interview the
+--  team has recorded. It is kept only as the historical record of the schema.
+-- =====================================================================================
+
+-- =====================================================================================
 --  DevStrider — shared PostgreSQL schema
 --
 --  Complete, current, and self-contained. Run this whole file in your SQL editor, once.

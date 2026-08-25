@@ -1,3 +1,12 @@
+-- ⚠ SUPERSEDED, and read-only, so harmless to run.
+--
+-- The portal owns these tables now and migrates them itself; DevStrider reaches them over
+-- HTTP and never issues SQL. This is still a usable drift check against the live database,
+-- but the schema it checks against is hr-system/migrations/postgres/011_devstrider_api.sql
+-- rather than shared-db-schema.sql, and it has not been updated for the three ds_profiles
+-- columns (resume_output_root, resume_output_file_base, salary_expectation) that migration
+-- adds — expect it to report those as extra.
+
 -- Drift check for the DevStrider tables in the shared PostgreSQL database.
 --
 -- Run this after any schema change, and any time the app fails with SQLSTATE 42703

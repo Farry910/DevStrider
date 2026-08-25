@@ -3,7 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 9.13.0
+- **Desktop app version:** 10.0.0
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 The repo root's [README](../README.md) is the project overview and setup guide. This file is the
@@ -16,9 +16,9 @@ reference for the desktop app itself.
 DevStrider is the hub of a three-part system:
 
 ```
- Chrome extension  ──HTTP(127.0.0.1:8765)──►  DevStrider desktop  ──►  PostgreSQL
- (job pages +                                  (WPF app + tray)         (the company
-  ChatGPT tab)                                        │                  portal's)
+ Chrome extension  ──HTTP(127.0.0.1:8765)──►  DevStrider desktop  ──HTTPS──►  the company
+ (job pages +                                  (WPF app + tray)     bearer      portal
+  ChatGPT tab)                                        │             token     (owns the DB)
                                                       └──►  Word, over COM
 ```
 
@@ -30,9 +30,11 @@ DevStrider is the hub of a three-part system:
 4. **See the team** — everyone reads and writes the same tables, so a teammate's bid shows up the
    moment they save it.
 
-**There is no local database.** The shared PostgreSQL database is the only store, and it belongs to
-the company portal — DevStrider adds four `ds_*` tables to it and reads the portal's `app_user`
-for sign-in. It issues no DDL.
+**There is no local database, and since 10.0 no database connection either.** The company portal is
+the only store and the only way in: this app signs in at `/api/devstrider/auth/login`, holds a
+week-long bearer token, and reads and writes through `/api/devstrider/*`. It contains no SQL, no
+database driver, and no database credential — the portal owns the `ds_*` tables and migrates them
+itself.
 
 ---
 
@@ -41,7 +43,7 @@ for sign-in. It issues no DDL.
 - Windows 10 or 11
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) to build (or the Desktop Runtime
   to run a framework-dependent build; the self-contained build bundles it)
-- Access to the portal's **PostgreSQL** database, with `shared-db-schema.sql` already applied
+- The portal's **address** — a URL, not a credential
 - **Microsoft Word** (for the resume macro feature)
 - **Google Chrome** + the Bid Assistant extension (in `../extension`)
 - A **ChatGPT** account (free tier is fine) for resume generation
@@ -84,28 +86,44 @@ locks `DevStrider.exe` for the next build.
 
 ## Sign-in
 
-Credentials are checked against the portal's `app_user`: email, `password_hash`, and
-`email_verified`. DevStrider never creates an account, never sets a password, and has no sign-up or
-reset — being a portal user is the only way to become a DevStrider user.
+**This app does not check passwords.** The email and password go to
+`POST /api/devstrider/auth/login` and the portal answers with a token. DevStrider never creates an
+account, never sets a password, and has no sign-up or reset — being a portal user is the only way
+to become a DevStrider user.
 
-**The hash is scrypt, not bcrypt.** `password_hash` stores `<saltHex>:<keyHex>` — a 16-byte salt
-and a 64-byte derived key, 161 characters in total, which is what Node's
-`crypto.scryptSync(password, salt, 64)` produces. Verification uses BouncyCastle's scrypt at
-Node's defaults (N=16384, r=8, p=1). Two of this app's columns are also the portal's types, not
-ours: `app_user.id` is `integer` and `email_verified` is `integer`-as-flag, so both are read
-through a widening coercion rather than `GetInt64`/`GetBoolean`, which throw on them.
+Until 10.0 it did check them, here, in C#: it read `app_user.password_hash` off a direct database
+connection and re-derived the portal's scrypt with BouncyCastle at Node's defaults, including a
+guess at which of two readings of the salt the portal had meant. That is one authentication rule
+implemented twice, in two languages, shipped to every laptop, with nothing to notice when the two
+drifted — and a database credential sitting beside it to make the read possible. Both are gone. The
+one place that can decide whether a password is right is the one that owns the account.
 
 - Your portal email **is** your identity here. It is what `ds_users.username` holds and what
   teammates see on the Peers tab; there is no separate name to pick.
-- Every login re-asserts it, so a rename in the portal follows you here.
-- A wrong address and a wrong password give the same message on purpose. Distinguishing them would
-  tell anyone holding the database credential who has a portal account.
+- Every sign-in re-asserts it, so a rename in the portal follows you here.
+- A wrong address and a wrong password give the same message — now because the portal answers both
+  the same way, rather than because this app chose not to look.
 - Verification is checked *after* the password, for the same reason.
-- There is no persisted session: the password is asked for on every start and nothing about it
-  reaches disk.
 
-The sign-in window also carries the **database connection** form. That looks like scope creep and
-isn't — signing in *is* a database query, and the connection details otherwise live behind Settings,
+### The week
+
+The token is good for **seven days** and is kept in `%LOCALAPPDATA%\DevStrider\session.dat`,
+encrypted with DPAPI under your Windows account — it does not decrypt on another machine, or for
+another Windows user on this one. On launch the app puts the session back and asks the portal
+whether it is still valid; if the portal cannot be reached, the session is used anyway and the
+first real call will say so, because being on a train is not the same as being signed out. Inside
+the last day it trades the token for a fresh week, at startup and again every six hours for a
+window nobody ever closes.
+
+So there is a persisted session now, where there deliberately wasn't one before. The reason there
+wasn't is worth stating: the only thing that could have been persisted was a database password with
+rights over everyone's data, and asking for it on every start was the lesser evil. What is kept
+instead is scoped to DevStrider, expires on its own, is re-checked at every launch, and can be
+revoked server-side — changing `DEVSTRIDER_JWT_SECRET` on the portal invalidates every outstanding
+token at once. Settings → **Sign out on this machine** deletes the local copy.
+
+The sign-in window also carries the **portal address** field. That looks like scope creep and
+isn't — signing in *is* a call to the portal, and the address otherwise lives behind Settings,
 which is behind the login. On a fresh install that circle has to be broken somewhere.
 
 ---
@@ -239,8 +257,8 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
 
 ### Settings (Account)
 - **Identity** — read-only: the portal account you are signed in as
-- **Shared database (PostgreSQL)** — service URI or host / port / database / user / password, with
-  **Test connection** and **Clear password**. See [Credentials](#credentials).
+- **Company portal** — the address, with **Test connection**, plus how long this machine's session
+  has left and **Sign out on this machine**. See [Credentials](#credentials).
 - **Cloud storage (Cloudflare R2)** — account ID, bucket, access key ID, secret access key
 - **Bid-Assistant listener** — port (default 8765) + status
 - **Word macro hotkey** — shared fallback when a profile has no macro name
@@ -288,7 +306,9 @@ hide that you bid the same job twice.
 
 ## Data model
 
-Four tables, defined by [`shared-db-schema.sql`](shared-db-schema.sql) and created by hand.
+Five tables, owned and migrated by the portal
+(`hr-system/migrations/postgres/011_devstrider_api.sql`). This app never sees them: it sees
+`/api/devstrider/*`, whose payloads are these rows in camelCase.
 
 | Table | Holds |
 |-------|-------|
@@ -296,8 +316,9 @@ Four tables, defined by [`shared-db-schema.sql`](shared-db-schema.sql) and creat
 | `ds_profiles` | Bidding identities |
 | `ds_bids` | Job postings and the bids made against them — one row each |
 | `ds_interviews` | Interviews |
+| `ds_person_facts` | Education, career history and custom fields — what ChatGPT is told |
 
-`app_user` belongs to the portal. DevStrider only ever `SELECT`s from it.
+`app_user` belongs to the portal, and since 10.0 so do these.
 
 **Four and not eight.** `ds_education`, `ds_certifications`, `ds_experiences` and
 `ds_achievements` were dropped in 8.1.0. The first three held a CV that the profile's `.docm`
@@ -305,14 +326,15 @@ already held — and the .docm was the copy people actually edited, so the datab
 day it was written. `ds_achievements` had no reader at all: the goal counters it fed lost their UI
 with the web client and never got another one. Nothing of the CV survives in the database — a
 `highest_education` column was added in 8.1.0 and dropped again in 8.2.0, on the
-grounds that nothing read it either. Re-running `shared-db-schema.sql` drops all four tables.
+grounds that nothing read it either.
 
 Row ids are 24-character hex strings in the MongoDB ObjectId format, carried over from the local databases these
 tables replaced — keeping the original identity is what made the one-time import an idempotent
 upsert. `user_id` is `app_user.id`, a BIGINT, and every query DevStrider issues filters on it.
 
-[`shared-db-verify.sql`](shared-db-verify.sql) is the drift check — run it after any schema change,
-or when the app reports SQLSTATE 42703.
+[`shared-db-schema.sql`](shared-db-schema.sql) and [`shared-db-verify.sql`](shared-db-verify.sql)
+are the retired hand-run schema and its drift check, kept as the historical record. **Do not run
+the schema file** — its `DROP`s are still live and these tables are still the only copy.
 
 ---
 
@@ -320,8 +342,12 @@ or when the app reports SQLSTATE 42703.
 
 Empty/default settings are seeded once at first launch from `DEVSTRIDER_*` variables (set with
 `setx`, then restart). See the **About** tab for the full list — e.g.
-`DEVSTRIDER_SHARED_DB_URI`, `DEVSTRIDER_SHARED_DB_HOST`, `DEVSTRIDER_LISTENER_PORT`,
-`DEVSTRIDER_WORD_DOC_PATH`, `DEVSTRIDER_WORD_HOTKEY`.
+`DEVSTRIDER_PORTAL_URL`, `DEVSTRIDER_LISTENER_PORT`, `DEVSTRIDER_WORD_DOC_PATH`,
+`DEVSTRIDER_WORD_HOTKEY`.
+
+The six `DEVSTRIDER_SHARED_DB_*` variables went with the direct database connection, one of them a
+password. `DEVSTRIDER_PORTAL_URL` replaces all of them and is not a secret, which is what makes
+provisioning a machine something you can put in a script.
 
 There is no username variable: the account name comes from `app_user`.
 
@@ -329,64 +355,73 @@ There is no username variable: the account name comes from `app_user`.
 
 ## Credentials
 
-Every credential the app holds — the shared-database password and the Cloudflare R2 token — lives
-in `%LOCALAPPDATA%\DevStrider\settings.json`, in cleartext. There is no second store: no registry,
-no keychain, no encrypted file.
+`%LOCALAPPDATA%\DevStrider\settings.json` holds **no database credential any more**. It used to
+hold the shared PostgreSQL password in cleartext — one login, shared by the whole team, with rights
+over everyone's data, on every laptop — and that went with the direct connection in 10.0. What is
+left there is the portal's address, a listener port, Word paths, and the Cloudflare R2 token, which
+is still in cleartext.
 
-It is a file rather than a table because it holds the credentials needed to *reach* the database,
-so reading it from the database would be circular. Writes go to a temp file and are then moved over
-the target, so a crash mid-write leaves the previous settings intact rather than a half-written
-file that fails to parse on next launch.
+Beside it sits `session.dat`: the week-long bearer token, encrypted with DPAPI under the Windows
+account that wrote it, so it does not decrypt on another machine or for another user here. It is a
+separate file on purpose — settings describe this machine and are worth reading in an editor, this
+is a credential, and signing out has to be able to delete it without taking a listener port and a
+Word path with it.
 
-[`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads it **once at startup** and
-serves every later read from memory. Before that, each of ~16 call sites re-queried the database —
-`/refresh-word` hit it on every click just to read a hotkey.
+Settings are a file rather than a row because they say how to *reach* the store, so reading them
+from the store would be circular. Writes go to a temp file and are then moved over the target, so a
+crash mid-write leaves the previous file intact rather than a half-written one that fails to parse
+on next launch. `session.dat` is written the same way, for the same reason: a truncated token costs
+a sign-in.
+
+[`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads settings **once at
+startup** and serves every later read from memory. Before that, each of ~16 call sites re-queried
+the store — `/refresh-word` hit it on every click just to read a hotkey.
 
 Because reads share one instance, the rule is: `GetAsync()` returns the **cached object and must
 not be mutated**; anything that edits settings takes `GetForEditAsync()` (a copy) and hands the
 result to `SaveAsync`, which persists it and installs it as the new cache.
 
-Consequence worth being explicit about: anything able to read that file — a backup, a synced
-folder, another account on this machine — gets the database password *and* the R2 token. An R2
-token with object-write permission can also delete objects, so any install holding it can empty the
-bucket.
+Consequence worth being explicit about: anything able to read `settings.json` — a backup, a synced
+folder, another account on this machine — gets the R2 token. A token with object-write permission
+can also delete objects, so any install holding it can empty the bucket. That used to be true of
+the database password too, and is the single largest thing 10.0 removed.
 
-### The shared database
+### What the token can and can't do
 
-One database login, shared by every install. That is a deliberate trade for a small trusted team,
-and it has consequences worth stating plainly:
+The portal takes the account off the signature on every request and pins every write to it, so a
+token is authority over **your own rows and nothing else**. What it does not narrow is reading:
 
-- **Everything is visible to everyone.** These tables are not a stripped projection of something
-  more private: `ds_bids.url`, `job_description`, `gpt_resume_content` and `comment` are the full
-  values that used to stay on the author's machine.
-- Every user can read *and delete* everyone else's rows — no row-level security is configured. The
-  app scopes its own queries by `user_id`, but that is the app being well-behaved, not the database
-  enforcing anything.
-- One leaked password means rotating it for every installed client at once.
-- Authorship is **identification, not authentication**: `user_id` is whoever was signed in to the
-  app that wrote the row. Nothing downstream should treat it as proof.
-- These tables are the only copy. Once a machine has been migrated off its local MongoDB, nothing
-  else holds that person's bids and interviews.
+- **Everything stored is visible to everyone on the team.** These tables are not a stripped
+  projection of something more private — `ds_bids.url`, `job_description`, `gpt_resume_content` and
+  `comment` are the full values that used to stay on the author's machine, and
+  `/api/devstrider/peers/*` returns them. That is the Peers tab working as intended.
+- What changed is writes. Under the old direct connection every install could read *and delete*
+  everyone else's rows; the app scoped its own SQL by `user_id`, but that was the app being
+  well-behaved, not anything enforcing it. There is now no peer write route at all, and no request
+  can name a user id.
+- **Revocation is possible now.** A leaked token expires within a week on its own, and changing
+  `DEVSTRIDER_JWT_SECRET` on the portal invalidates every outstanding token at once. A leaked
+  database password meant rotating it on every installed client by hand.
+- Authorship is still **identification, not authentication**: `user_id` is whoever was signed in
+  when the row was written. Nothing downstream should treat it as proof.
+- These tables are still the only copy of anyone's bids and interviews.
 
-Two ways to describe the same server, chosen by a radio button on the sign-in window and in
-Settings:
+### The portal address
 
-1. **Service URI** — `postgresql://user:pass@host:5432/devstrider?sslmode=require`, what hosted
-   providers hand you. `postgres://` is accepted too.
-2. **Parts** — host, port, database, user, password, for anything self-hosted.
+One field, on the sign-in window and in Settings.
+[`PortalApi.ParseBaseUrl`](DevStrider.Desktop/Services/PortalApi.cs) normalises it: a bare host gets
+`https://` (defaulting to plain HTTP would put a password on the wire), a trailing slash is
+trimmed, and a trailing `/api` is stripped because that is what people paste when they have seen an
+endpoint rather than the site.
 
-Whichever is selected is the one used; the other keeps what you typed, so switching back and forth
-loses nothing. Both end up as one Npgsql connection string built by
-[`SharedDbCredentials`](DevStrider.Desktop/Services/SharedDbCredentials.cs), which percent-decodes
-the credentials out of a URI — generated Postgres passwords routinely contain `@`, `:`, `/` and
-`?`, and arrive encoded.
+It is kept as a **string** and never as a `Uri`. `new Uri("https://host").ToString()` hands back
+`https://host/`, so joining it to a path that starts with `/` produced `https://host//api/me` —
+which is a different number of path segments, matches no route, falls through to the portal's
+static handler, and redirects. Every call in 10.0's first build came back 302. Keeping the joined
+form as text is what makes that unrepresentable.
 
-**SSL** defaults to on (`Require`: encrypt, don't demand a chain the machine can verify — hosted
-providers commonly present one it can't). Unchecking gives `Prefer`, so a local server without TLS
-still works. An explicit `sslmode` in the URI overrides the checkbox.
-
-Driver errors pass through `SharedDbCredentials.Redact` before reaching the Activity log, since a
-service URI carries the password inline.
+Errors pass through [`Safe.Redact`](DevStrider.Desktop/Services/Safe.cs) before reaching the
+Activity log, which strips bearer tokens and any credentials inline in a URL.
 
 ---
 
@@ -396,10 +431,12 @@ service URI carries the password inline.
 |---------|-----|
 | `MSB3027: DevStrider.exe locked` on build | The app is still running — tray → **Quit** (or `taskkill /F /IM DevStrider.exe`). |
 | "That email and password don't match an account" | Check the address against the portal. The message is deliberately the same for an unknown address and a wrong password. |
-| "The database is reachable but has no app_user table" | The connection points at some database other than the portal's. |
-| "these tables are missing: ds_…" | Run `shared-db-schema.sql` against that database — DevStrider does not create them. |
+| "The portal has no such endpoint" | The address points at a portal build without `/api/devstrider/*` — deploy the server side of 10.0 first. |
+| "answered with something that isn't JSON" | The address lands on a proxy or a login page in front of the portal, not the portal. |
 | "This account's email address hasn't been verified" | Confirm the address in the portal, then sign in here. |
-| Shared database "unreachable / timeout" | Check host and port; allow this machine's IP in the provider's firewall; confirm the SSL setting matches what the server expects. |
+| "Your DevStrider session has expired" | The week ran out, or the portal's `DEVSTRIDER_JWT_SECRET` was changed. Sign in again. |
+| "didn't answer in time" / "Couldn't reach the portal" | Check the address; confirm the portal is up and reachable from this machine (open it in a browser). |
+| Asked for a password on every launch | `session.dat` isn't being written — DPAPI needs a loaded user profile, so a service account or a sandboxed session won't keep one. Check the Activity tab. |
 | Every screen empty after signing in | No active profile — create one in the **Profiles** tab. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
 | Resume generates but no file | The Word macro must fill the bookmarks from the `[Section]:` labels and finish with `Application.Quit`. |
@@ -409,9 +446,10 @@ service URI carries the password inline.
 
 ## Notes
 
-- **One account per running app**, with multiple **profiles** (identities) under it. The password
-  is asked for on every start.
-- The database connection runs over TLS, but the database's own access control is the protection.
+- **One account per running app**, with multiple **profiles** (identities) under it. The password is
+  asked for about once a week — see [The week](#the-week).
+- Requests run over TLS, and the portal's own authorization is the protection: it takes the account
+  off the token's signature and pins every write to it.
 - Resume generation uses the **ChatGPT web session** (free tier), not an API — hence the
   keep-a-tab-open requirement and the inherent fragility to ChatGPT UI changes.
 
@@ -425,11 +463,18 @@ snapshots, to a shared **MongoDB/Atlas** cluster, to a shared **PostgreSQL** dat
 each machine still keeping its real data in a local MongoDB and pushing stripped `peer_*` summaries
 up on an hourly schedule.
 
-**8.0.0 ended that.** There is one database now, shared with the company portal, and every machine
-reads and writes it directly. The local MongoDB, the `peer_*` mirror, the sync scheduler, the
+**8.0.0 ended that.** There was one database from then on, shared with the company portal, and every
+machine read and wrote it directly. The local MongoDB, the `peer_*` mirror, the sync scheduler, the
 Sharing tab, and the web client and API server all went with it. Sign-in against the portal's
 `app_user` arrived in the same release — with one database holding the whole team, "my rows" became
 a predicate rather than a given, and that predicate needs an account behind it.
+
+**10.0.0 finished the job it started.** 8.0 was right that there should be one store and no mirror;
+what it left in place was every laptop holding the database password and checking passwords for
+itself. The store is still one, but the app reaches it the way anything else would — over HTTP,
+with a token, through a server that owns the schema and decides who anyone is. So the API server
+8.0 deleted is back, in the sense that matters: it is the portal, it was always there, and it was
+the thing this app should have been talking to all along.
 
 The standalone Python "ResumeAuto" tool was folded in as a batch **Resume auto-gen** tab, then
 removed again in 4.0.0 — resume generation is the one-button extension flow only.

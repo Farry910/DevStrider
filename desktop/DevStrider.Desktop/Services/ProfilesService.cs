@@ -1,6 +1,5 @@
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Models;
-using Npgsql;
 
 namespace DevStrider.Desktop.Services;
 
@@ -28,14 +27,18 @@ public class ProfilesService
     }
 
     /// <summary>
-    /// Run a write that depends on the account row, and repair that row once if it turns out to be
-    /// missing.
+    /// Run a write that depends on the account row, repairing that row once if the portal says it
+    /// is missing.
     ///
     /// <para>
-    /// <c>ds_profiles.user_id</c> references <c>ds_users</c>, so a vanished account row surfaces as
-    /// SQLSTATE 23503 on a save the user had every reason to expect to work. Re-applying the
-    /// schema mid-session is how it happens. Retrying costs one extra statement on a path that is
-    /// already broken, and nothing at all on the normal one.
+    /// This used to catch SQLSTATE 23503 from the driver: <c>ds_profiles.user_id</c> references
+    /// <c>ds_users</c>, and a vanished account row surfaced as a foreign-key violation on a save
+    /// the user had every reason to expect to work. The portal repairs that itself now — it holds
+    /// the account the token names, so it can re-seat the row and retry without asking anyone.
+    /// This is the belt to that server-side braces: a 409 or 500 that survives the server's own
+    /// retry gets one attempt at putting the row back from here, which also covers a portal old
+    /// enough not to do it. It costs one request on a path that is already broken and nothing at
+    /// all on the normal one.
     /// </para>
     /// </summary>
     private async Task WithAccountRowAsync(Func<Task> write)
@@ -44,7 +47,7 @@ public class ProfilesService
         {
             await write();
         }
-        catch (PostgresException ex) when (ex.SqlState == "23503")
+        catch (PortalApiException ex) when (ex.Status is 409 or 500)
         {
             await _account.EnsureRowAsync();
             await write();

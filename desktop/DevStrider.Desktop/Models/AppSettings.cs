@@ -4,42 +4,34 @@ namespace DevStrider.Desktop.Models;
 
 /// <summary>
 /// Machine-level settings. Persisted as JSON on this machine by
-/// <see cref="Services.SettingsStore"/> — <b>not</b> in the database, because it carries the
-/// credentials needed to reach the database and so has to be readable before any connection
-/// exists. Unknown fields are tolerated so removed fields from older installs deserialize quietly.
+/// <see cref="Services.SettingsStore"/>, because it says how to reach the portal and so has to be
+/// readable before any request is made. Unknown fields are tolerated, so a settings file written
+/// by an older install still deserializes — which is what happens to the six <c>SharedDb*</c>
+/// fields this used to carry.
 ///
 /// <para>
-/// Nothing here identifies the logged-in user: there is no persisted session, and the password is
-/// asked for on every start of the app. What is stored is only what is true of this machine — how
-/// to reach the database, which port the listener binds, which profile was last open.
+/// Nothing here is a secret any more. The one credential this app held was the shared PostgreSQL
+/// password, sitting in cleartext in this file on every machine, and it went with the direct
+/// database connection it opened. What is stored now is only what is true of this machine — the
+/// portal's address, which port the listener binds, which profile was last open. The one thing
+/// that is neither a setting nor public, the session token, has its own encrypted file
+/// (<see cref="Services.SessionStore"/>).
 /// </para>
 /// </summary>
 public class AppSettings
 {
-    // ── Shared PostgreSQL — the store ───────────────────────────────────────
-    // Two ways to say the same thing. Providers hand out a service URI; a self-hosted box is
-    // easier to describe in parts. SharedDbMode decides which set is authoritative — the other
-    // is kept, not cleared, so switching back and forth doesn't lose what you typed.
-
-    /// <summary><c>uri</c> or <c>parts</c>. See <see cref="Services.SharedDbCredentials"/>.</summary>
-    public string SharedDbMode { get; set; } = Services.SharedDbCredentials.ModeUri;
-
-    /// <summary>Service URI, e.g. <c>postgresql://user:pass@host:5432/devstrider?sslmode=require</c>.</summary>
-    public string SharedDbUri { get; set; } = "";
-
-    public string SharedDbHost { get; set; } = "";
-    public int SharedDbPort { get; set; } = 5432;
-    public string SharedDbName { get; set; } = "devstrider";
-    public string SharedDbUser { get; set; } = "";
-
-    /// <summary>Cleartext, like every other credential here — the shared cluster is one login the whole team shares.</summary>
-    public string SharedDbPassword { get; set; } = "";
-
     /// <summary>
-    /// Require TLS. On for hosted Postgres (Supabase, Neon, Railway, Aiven all mandate it); turn
-    /// off only for a local box that isn't listening on TLS at all.
+    /// The company portal, e.g. <c>https://triospace.org/hr</c>. Everything this app reads and
+    /// writes goes through it: there is no second way in, and no database credential on this
+    /// machine to be one.
+    ///
+    /// <para>
+    /// Kept as typed and normalised at the point of use — see
+    /// <see cref="Services.PortalApi.ParseBaseUrl"/> — so what comes back out of the Settings form
+    /// is what the user put into it.
+    /// </para>
     /// </summary>
-    public bool SharedDbRequireSsl { get; set; } = true;
+    public string PortalBaseUrl { get; set; } = "";
 
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in

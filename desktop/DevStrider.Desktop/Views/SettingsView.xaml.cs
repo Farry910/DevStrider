@@ -14,18 +14,16 @@ public partial class SettingsView : UserControl
     }
 
     /// <summary>
-    /// Hand the typed password to the view-model. <see cref="PasswordBox.Password"/> isn't a
+    /// Hand the typed R2 secret to the view-model. <see cref="PasswordBox.Password"/> isn't a
     /// DependencyProperty — by design, so the plaintext never enters the binding engine — which
     /// is why this has to be code-behind rather than a binding. The view-model holds it until
-    /// Save writes it to the settings row.
+    /// Save writes it to the settings file.
+    ///
+    /// <para>
+    /// This is the last of these handlers. The other was the shared PostgreSQL password, and it
+    /// went when the app stopped opening its own database connection.
+    /// </para>
     /// </summary>
-    private void SharedDbPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is SettingsViewModel vm && sender is PasswordBox box)
-            vm.SharedDbPasswordEntry = box.Password;
-    }
-
-    /// <summary>Same contract as above, for the R2 secret access key.</summary>
     private void R2SecretBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsViewModel vm && sender is PasswordBox box)

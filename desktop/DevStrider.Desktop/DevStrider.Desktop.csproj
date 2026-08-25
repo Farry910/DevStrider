@@ -597,8 +597,37 @@
          deliberate levels, the primary is a deeper and less electric blue that can carry white text
          on a chip, status colours are pulled back from their pure hues, and body copy has a real
          line height. Segoe UI Variable is used where Windows 11 has it, named once so a change lands
-         everywhere rather than in twenty views. -->
-    <Version>9.13.0</Version>
+         everywhere rather than in twenty views.
+
+         10.0.0 takes the database out of this app.
+
+         Every install used to hold the portal's PostgreSQL password, open its own connection, and
+         issue its own SQL - including verifying app_user.password_hash here, in C#, a hand-port of
+         the portal's scrypt that nothing kept in step with the original. One app was doing the
+         server's job, and it cost three things at once: a credential with rights over the whole
+         team's data sitting in cleartext on every laptop; an authentication rule implemented twice,
+         so a change made in the portal never reached here; and the ds_* tables owned by nobody,
+         created by hand from a .sql file this app shipped but refused to run.
+
+         The app now signs in at /api/devstrider/auth/login and reads and writes everything through
+         /api/devstrider/*. Gone from this project: Npgsql, BouncyCastle, Data/Postgres,
+         SharedDbContext, SharedDbCredentials, the six DEVSTRIDER_SHARED_DB_* variables, and the
+         database panel on the login window and in Settings - one URL replaces all of it, and the URL
+         is not a secret.
+
+         Sign-in returns a token good for a week, kept in %LOCALAPPDATA%\DevStrider\session.dat
+         under DPAPI. So there IS a persisted session now, where there deliberately wasn't before:
+         the reason there wasn't is that the only thing worth persisting was a database password.
+         What is kept instead is scoped to DevStrider, expires on its own, is re-checked against the
+         portal at every launch, and renews itself inside its last day - so the sign-in window is
+         something you see when you set a machine up, and about once a week after that.
+
+         One bug worth naming, because it broke every single call and was invisible in review:
+         PortalApi joined its base address to a path as Uri + string, and Uri.ToString() re-adds the
+         trailing slash - "https://host" + "/api/me" came out "https://host//api/me", which is a
+         different number of path segments, matches no route, falls through to the static handler and
+         redirects. The joined form is text now, and never carries a trailing slash. -->
+    <Version>10.0.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -619,14 +648,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- PostgreSQL â€” the shared database, which is now the only store -->
-    <PackageReference Include="Npgsql" Version="8.0.5" />
+    <!--
+      No database driver, and no crypto library.
 
-    <!-- scrypt, for verifying app_user.password_hash. The portal stores salt:key hex, which is
-         what Node's crypto.scryptSync produces; .NET has no in-box scrypt (only PBKDF2), hence
-         BouncyCastle. Verify only — DevStrider never creates accounts or sets passwords, and it
-         has never been bcrypt whatever this file used to say. -->
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+      Npgsql went with the direct connection to the portal's PostgreSQL: this app holds no
+      database credential any more and issues no SQL. It calls /api/devstrider/* over HTTP with a
+      bearer token, and HttpClient is in the box.
+
+      BouncyCastle went with it. It was here for one thing - scrypt, so this app could verify
+      app_user.password_hash itself. That was a second implementation of the portal's
+      authentication rule, in a different language, on every laptop, with nothing keeping the two
+      in step. The portal checks passwords now, which is the only place that can.
+    -->
 
     <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
          https://<account>.r2.cloudflarestorage.com with region "auto" and path-style

@@ -27,31 +27,31 @@ public class AboutViewModel : ViewModelBase
 
     public string Summary =>
         "Job-application workspace for the team. Persistent ChatGPT and job-site browsers " +
-        "generate tailored resumes, fill reviewed application values, and write directly to " +
-        "the company portal's PostgreSQL database. There is no local data copy or sync.";
+        "generate tailored resumes, fill reviewed application values, and save them through the " +
+        "company portal's API. There is no local data copy and no sync.";
 
     public string DataLocation =>
-        "PostgreSQL (shared with the company portal) · configured in Settings";
+        "The company portal, over HTTPS · address configured in Settings";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
     public string SharedClusterLocation =>
-        "Sign-in reads app_user; everything DevStrider stores lives in the ds_* tables";
+        "Sign-in is /api/devstrider/auth/login; everything DevStrider stores goes through " +
+        "/api/devstrider/*. This machine holds no database credential — signing in returns a " +
+        "token good for a week, kept encrypted under your Windows account.";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
         "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
-        "(setx DEVSTRIDER_SHARED_DB_URI \"postgresql://…\"), restart DevStrider, then " +
+        "(setx DEVSTRIDER_PORTAL_URL \"https://triospace.org/hr\"), restart DevStrider, then " +
         "clear the env var if you want — values are saved to settings.json after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
 
     public AboutViewModel()
     {
-        Add("DEVSTRIDER_SHARED_DB_URI",      "AppSettings.SharedDbUri",       "Shared PostgreSQL service URI, e.g. postgresql://user:pass@host:5432/devstrider?sslmode=require. Seeding it selects URI mode.", isSecret: true);
-        Add("DEVSTRIDER_SHARED_DB_HOST",     "AppSettings.SharedDbHost",      "Shared PostgreSQL host. Seeding it selects host/port mode.");
-        Add("DEVSTRIDER_SHARED_DB_PORT",     "AppSettings.SharedDbPort",      "Shared PostgreSQL port. Default 5432.");
-        Add("DEVSTRIDER_SHARED_DB_NAME",     "AppSettings.SharedDbName",      "Shared PostgreSQL database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_SHARED_DB_USER",     "AppSettings.SharedDbUser",      "Shared PostgreSQL user.");
-        Add("DEVSTRIDER_SHARED_DB_PASSWORD", "AppSettings.SharedDbPassword",  "Shared PostgreSQL password. Stored in cleartext with the other settings.", isSecret: true);
+        // The six DEVSTRIDER_SHARED_DB_* variables are gone. They configured a direct PostgreSQL
+        // connection from this machine, one of them a password; the app reaches its data through
+        // the portal now, and one URL that is not a secret replaces all of them.
+        Add("DEVSTRIDER_PORTAL_URL",         "AppSettings.PortalBaseUrl",     "The company portal, e.g. https://triospace.org/hr. Everything DevStrider reads and writes goes through it.");
         Add("DEVSTRIDER_R2_ACCOUNT_ID",      "AppSettings.R2AccountId",       "Cloudflare R2 account id — the hex prefix of the r2.cloudflarestorage.com endpoint.");
         Add("DEVSTRIDER_R2_BUCKET",          "AppSettings.R2Bucket",          "R2 bucket holding shared resume files.");
         Add("DEVSTRIDER_R2_ACCESS_KEY_ID",   "AppSettings.R2AccessKeyId",     "R2 API token access key id.");

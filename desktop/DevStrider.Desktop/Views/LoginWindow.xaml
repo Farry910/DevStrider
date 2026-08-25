@@ -52,13 +52,13 @@
               Margin="0,16,0,0"
               Padding="12,9"/>
 
-      <!-- ── Connection ─────────────────────────────────────────────────── -->
+      <!-- ── Portal ─────────────────────────────────────────────────────── -->
 
       <Border Background="{StaticResource BorderSoft}" Height="1" Margin="0,20,0,12" SnapsToDevicePixels="True"/>
 
       <DockPanel>
         <TextBlock DockPanel.Dock="Left"
-                   Text="Database connection"
+                   Text="Portal address"
                    FontWeight="SemiBold"
                    VerticalAlignment="Center"/>
         <Button DockPanel.Dock="Right"
@@ -87,52 +87,11 @@
         <TextBlock Style="{StaticResource MutedText}"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10"
-                   Text="The portal's PostgreSQL database. Everyone on the team uses the same one, and signing in reads your account from it."/>
+                   Text="The company portal. Everything DevStrider reads and writes goes through it, and this is the only thing it needs to know about your machine — no database, no password to store."/>
 
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-          <RadioButton Content="Service URI" IsChecked="{Binding IsUriMode, Mode=TwoWay}" Margin="0,0,16,0"/>
-          <RadioButton Content="Host and port" IsChecked="{Binding IsPartsMode, Mode=TwoWay}"/>
-        </StackPanel>
-
-        <!-- URI mode -->
-        <StackPanel Visibility="{Binding IsUriMode, Converter={StaticResource BooleanToVisibilityConverter}}">
-          <TextBox Text="{Binding Connection.SharedDbUri, UpdateSourceTrigger=PropertyChanged}"
-                   Tag="postgresql://user:password@host:5432/database?sslmode=require"
-                   Margin="0,0,0,8"/>
-        </StackPanel>
-
-        <!-- Parts mode -->
-        <StackPanel Visibility="{Binding IsPartsMode, Converter={StaticResource BooleanToVisibilityConverter}}">
-          <Grid Margin="0,0,0,8">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="90"/>
-            </Grid.ColumnDefinitions>
-            <TextBox Grid.Column="0"
-                     Text="{Binding Connection.SharedDbHost, UpdateSourceTrigger=PropertyChanged}"
-                     Tag="Host"
-                     Margin="0,0,8,0"/>
-            <TextBox Grid.Column="1"
-                     Text="{Binding Connection.SharedDbPort, UpdateSourceTrigger=PropertyChanged}"
-                     Tag="Port"/>
-          </Grid>
-          <TextBox Text="{Binding Connection.SharedDbName, UpdateSourceTrigger=PropertyChanged}"
-                   Tag="Database"
-                   Margin="0,0,0,8"/>
-          <TextBox Text="{Binding Connection.SharedDbUser, UpdateSourceTrigger=PropertyChanged}"
-                   Tag="User"
-                   Margin="0,0,0,8"/>
-          <!-- Blank means "keep the saved password"; the box always renders empty, so treating
-               blank as "clear it" would wipe a working credential on an unrelated edit. -->
-          <PasswordBox x:Name="DbPasswordBox"
-                       PasswordChanged="OnDbPasswordChanged"
-                       Padding="10,8"
-                       Margin="0,0,0,8"/>
-        </StackPanel>
-
-        <CheckBox Content="Require TLS"
-                  IsChecked="{Binding Connection.SharedDbRequireSsl, Mode=TwoWay}"
-                  Margin="0,0,0,10"/>
+        <TextBox Text="{Binding Connection.PortalBaseUrl, UpdateSourceTrigger=PropertyChanged}"
+                 Tag="https://triospace.org/hr"
+                 Margin="0,0,0,10"/>
 
         <StackPanel Orientation="Horizontal">
           <Button Content="Test connection"

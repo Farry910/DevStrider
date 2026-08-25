@@ -7,12 +7,7 @@ namespace DevStrider.Desktop.Services;
 /// mattering — clear them once you've launched at least once.
 ///
 /// Supported variables:
-///   DEVSTRIDER_SHARED_DB_URI      → SharedDbUri         (when empty)
-///   DEVSTRIDER_SHARED_DB_HOST     → SharedDbHost        (when empty)
-///   DEVSTRIDER_SHARED_DB_PORT     → SharedDbPort        (when default 5432)
-///   DEVSTRIDER_SHARED_DB_NAME     → SharedDbName        (when default "devstrider")
-///   DEVSTRIDER_SHARED_DB_USER     → SharedDbUser        (when empty)
-///   DEVSTRIDER_SHARED_DB_PASSWORD → SharedDbPassword    (when empty)
+///   DEVSTRIDER_PORTAL_URL         → PortalBaseUrl       (when empty)
 ///   DEVSTRIDER_R2_ACCOUNT_ID      → R2AccountId         (when empty)
 ///   DEVSTRIDER_R2_BUCKET          → R2Bucket            (when empty)
 ///   DEVSTRIDER_R2_ACCESS_KEY_ID   → R2AccessKeyId       (when empty)
@@ -21,12 +16,13 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_WORD_DOC_PATH      → WordDocPath         (when empty)
 ///   DEVSTRIDER_WORD_HOTKEY        → WordHotkey          (when default "F9")
 ///
-/// There is no username variable any more: the account name is the portal address on
-/// <c>app_user</c> and is written by <see cref="AuthService"/> at login. Nothing on this machine
-/// gets to name a user.
+/// The six DEVSTRIDER_SHARED_DB_* variables are gone with the direct database connection they
+/// configured. DEVSTRIDER_PORTAL_URL replaces all of them, and it is not a credential — which is
+/// the point: rolling this out to a machine is now a URL, not a password.
 ///
-/// The Mongo variables describe the legacy local database the one-time import reads, and nothing
-/// else — DevStrider's own store is the shared PostgreSQL cluster.
+/// There is no username variable either: the account name is the portal address on
+/// <c>app_user</c>, and the portal writes it at sign-in. Nothing on this machine gets to name a
+/// user, and nothing on this machine gets to authenticate one.
 /// </summary>
 public static class SettingsBootstrap
 {
@@ -36,30 +32,9 @@ public static class SettingsBootstrap
         var dirty = false;
 
 
-        // Shared PostgreSQL. Seeding the URI flips the mode to "uri" so the seeded value is the
-        // one actually used; seeding a host flips it to "parts" for the same reason.
-        if (SeedIfEmpty(settings.SharedDbUri, "DEVSTRIDER_SHARED_DB_URI", v => settings.SharedDbUri = v))
-        {
-            settings.SharedDbMode = SharedDbCredentials.ModeUri;
-            dirty = true;
-        }
-        if (SeedIfEmpty(settings.SharedDbHost, "DEVSTRIDER_SHARED_DB_HOST", v => settings.SharedDbHost = v))
-        {
-            settings.SharedDbMode = SharedDbCredentials.ModeParts;
-            dirty = true;
-        }
-        dirty |= SeedIfMatch(settings.SharedDbName, "devstrider", "DEVSTRIDER_SHARED_DB_NAME", v => settings.SharedDbName = v);
-        dirty |= SeedIfEmpty(settings.SharedDbUser,              "DEVSTRIDER_SHARED_DB_USER", v => settings.SharedDbUser = v);
-        dirty |= SeedIfEmpty(settings.SharedDbPassword,          "DEVSTRIDER_SHARED_DB_PASSWORD", v => settings.SharedDbPassword = v);
-        if (settings.SharedDbPort == 5432)
-        {
-            var portEnv = ReadEnv("DEVSTRIDER_SHARED_DB_PORT");
-            if (portEnv != null && int.TryParse(portEnv, out var pgPort) && pgPort > 0 && pgPort < 65536)
-            {
-                settings.SharedDbPort = pgPort;
-                dirty = true;
-            }
-        }
+        // The portal. One variable, and not a secret — which is what makes this the sane way to
+        // hand a new machine its configuration.
+        dirty |= SeedIfEmpty(settings.PortalBaseUrl, "DEVSTRIDER_PORTAL_URL", v => settings.PortalBaseUrl = v);
 
         // Cloud storage (R2) — same rule: seeded once into the local settings file, then the
         // Settings UI owns them.

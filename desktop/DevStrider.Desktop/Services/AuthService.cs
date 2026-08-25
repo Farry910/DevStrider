@@ -1,5 +1,3 @@
-using Npgsql;
-
 namespace DevStrider.Desktop.Services;
 
 /// <summary>Outcome of a sign-in attempt. <paramref name="Message"/> is shown as-is.</summary>
@@ -9,44 +7,65 @@ public readonly record struct SignInResult(bool Ok, string Message, long UserId)
     public static SignInResult Success(long userId) => new(true, "", userId);
 }
 
+/// <summary>What <c>/api/devstrider/auth/login</c> and <c>/refresh</c> answer with.</summary>
+public sealed class LoginResponse
+{
+    public string Token { get; set; } = "";
+    public DateTime ExpiresAt { get; set; }
+    public DateTime IssuedAt { get; set; }
+    public int ExpiresInSeconds { get; set; }
+    public long UserId { get; set; }
+    public string Email { get; set; } = "";
+    public string Username { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Role { get; set; } = "";
+}
+
 /// <summary>
-/// Sign-in against the company portal's <c>app_user</c> table.
+/// Sign-in, against the company portal's HTTP API.
 ///
 /// <para>
-/// DevStrider does not own accounts. It never inserts into <c>app_user</c>, never sets a password,
-/// never verifies an address, and offers no sign-up or reset — all of that is the portal's, and
-/// duplicating any of it here would mean two apps disagreeing about who someone is. This class
-/// reads one row and checks one hash.
+/// <b>This app does not check passwords.</b> It used to: it read <c>app_user.password_hash</c>
+/// straight out of the database and re-derived the portal's scrypt in C#, complete with a guess at
+/// which of two readings of the salt the portal had meant. That was a second implementation of an
+/// authentication rule, in a different language, on every laptop, with the database credential
+/// beside it — and nothing that would have told anyone if the portal changed the rule. The
+/// password now goes to the portal over TLS and the portal answers with a token.
 /// </para>
 ///
 /// <para>
-/// An address with no <c>app_user</c> row cannot sign in and cannot be created here: holding a
-/// portal account is the only way to become a DevStrider user. The <c>ds_users</c> row that
-/// records who someone is on the team is seeded from that account on first successful login, and
-/// its name is the portal's address rather than anything typed here — one account, one identity,
-/// and no second place for it to drift.
+/// DevStrider still does not own accounts. It never creates one, never sets a password, and offers
+/// no sign-up or reset: an address with no portal account cannot sign in here, which is the same
+/// contract as before and is now enforced in the one place that can enforce it.
+/// </para>
+///
+/// <para>
+/// The token is good for a week and is kept across restarts (<see cref="SessionStore"/>), so
+/// signing in is something that happens on Monday rather than every time the app opens.
 /// </para>
 /// </summary>
 public sealed class AuthService
 {
-    private readonly SharedDbContext _db;
+    private readonly PortalApi _api;
     private readonly SessionContext _session;
+    private readonly SessionStore _store;
     private readonly ActivityLogService _activity;
 
-    public AuthService(SharedDbContext db, SessionContext session, ActivityLogService activity)
+    public AuthService(PortalApi api, SessionContext session, SessionStore store, ActivityLogService activity)
     {
-        _db = db;
+        _api = api;
         _session = session;
+        _store = store;
         _activity = activity;
     }
 
     /// <summary>
-    /// Verify the credentials and, on success, install them in <see cref="SessionContext"/>.
+    /// Exchange a password for a week-long token and install it.
     ///
     /// <para>
-    /// A wrong address and a wrong password deliberately produce the same message. The portal is
-    /// where accounts are managed; a login form that distinguished "no such user" would report on
-    /// who has an account there to anyone holding the database credential.
+    /// A wrong address and a wrong password produce the same message, and they do so because the
+    /// portal answers both the same way — this app could not distinguish them if it wanted to,
+    /// which is the improvement over deciding not to.
     /// </para>
     /// </summary>
     public async Task<SignInResult> SignInAsync(string email, string password, CancellationToken ct = default)
@@ -55,233 +74,152 @@ public sealed class AuthService
         if (typed.Length == 0) return SignInResult.Fail("Enter your email address.");
         if (string.IsNullOrEmpty(password)) return SignInResult.Fail("Enter your password.");
 
-        if (!await _db.IsConfiguredAsync())
-            return SignInResult.Fail("The database isn't configured yet — fill in the connection details first.");
-
-        const string wrong = "That email and password don't match an account.";
+        if (!await _api.IsConfiguredAsync())
+            return SignInResult.Fail("The portal address isn't set yet — fill it in first.");
 
         try
         {
-            await using var conn = await _db.OpenAsync(ct);
+            var login = await _api.PostAsync<LoginResponse>("/api/devstrider/auth/login",
+                new { email = typed, password }, ct);
+            if (login == null || string.IsNullOrEmpty(login.Token))
+                return SignInResult.Fail("The portal accepted the sign-in but sent no token back.");
 
-            long id;
-            string address;
-            string hash;
-            bool verified;
-
-            await using (var cmd = new NpgsqlCommand(
-                "SELECT id, email, password_hash, email_verified FROM app_user WHERE lower(email) = lower(@e)", conn))
-            {
-                cmd.Parameters.AddWithValue("e", typed);
-                await using var r = await cmd.ExecuteReaderAsync(ct);
-
-                // No app_user row is the end of it. There is no sign-up here, and no way to become
-                // a DevStrider user without being a portal user first.
-                if (!await r.ReadAsync(ct)) return SignInResult.Fail(wrong);
-
-                // Widening reads, not exact ones. app_user is the portal's table and its column
-                // types are the portal's business: today `id` is integer and `email_verified` is
-                // integer-as-flag, and a strict r.GetInt64/r.GetBoolean throws InvalidCastException
-                // on those — which surfaced as "couldn't reach the database" and made every sign-in
-                // fail for a reason nobody could act on. Read the value, then coerce.
-                id = Convert.ToInt64(r.GetValue(0));
-                // The address as the portal stores it, not as it was typed. Case and spacing are
-                // whatever the account says, and that is what ds_users is keyed by below.
-                address = r.IsDBNull(1) ? typed : r.GetString(1);
-                hash = r.IsDBNull(2) ? "" : r.GetString(2);
-                verified = ReadFlag(r, 3);
-            }
-
-            // An account with no usable hash can only have been created by something that doesn't
-            // set passwords. It is not a wrong password, but it is not a way in either.
-            if (hash.Length == 0) return SignInResult.Fail(wrong);
-            if (!VerifyPortalPassword(password, hash)) return SignInResult.Fail(wrong);
-
-            // Checked after the password on purpose: answering this before verifying would tell an
-            // unauthenticated caller which addresses have accounts.
-            if (!verified)
-                return SignInResult.Fail(
-                    "This account's email address hasn't been verified yet. Confirm it in the portal, then sign in here.");
-
-            // Its own catch, not the outer one. Both this and the SELECT above can raise 42P01, but
-            // they mean opposite things: no app_user is the wrong database entirely, while no
-            // ds_users is the right database with the schema not yet applied. Letting the outer
-            // handler answer for both told people to fix a connection that was already correct.
-            try
-            {
-                await EnsureDsUserAsync(conn, id, address, ct);
-            }
-            catch (PostgresException ex) when (ex.SqlState == "42P01")
-            {
-                return SignInResult.Fail(
-                    "Your account is fine, but DevStrider's tables aren't in this database yet. "
-                    + "Run desktop/shared-db-schema.sql against it once — for the whole team, not "
-                    + "per machine — then sign in again.");
-            }
-
-            _session.SignIn(id, address);
-            _activity.Success("Login", "Signed in", address);
-            return SignInResult.Success(id);
+            Install(login);
+            _activity.Success("Login", "Signed in", $"{login.Email} · session valid until {login.ExpiresAt.ToLocalTime():g}");
+            return SignInResult.Success(login.UserId);
         }
-        catch (PostgresException ex) when (ex.SqlState == "42P01")
+        catch (PortalApiException ex)
         {
-            return SignInResult.Fail(
-                "The database is reachable but has no app_user table — this connection points somewhere "
-                + "other than the company portal's database.");
-        }
-        catch (PostgresException ex)
-        {
-            return SignInResult.Fail($"The database rejected the query: {ex.MessageText} (SQLSTATE {ex.SqlState})");
+            return SignInResult.Fail(ex.Message);
         }
         catch (Exception ex)
         {
-            return SignInResult.Fail($"Couldn't reach the database. {SharedDbCredentials.Redact(ex.Message)}");
+            return SignInResult.Fail($"Couldn't reach the portal. {Safe.Redact(ex.Message)}");
         }
     }
 
     /// <summary>
-    /// A truthy flag from a column whose type this app does not control. The portal stores
-    /// <c>email_verified</c> as an integer; a different deployment could just as easily use a
-    /// boolean or a text 't'. Anything unrecognised reads as not-verified, which fails closed.
-    /// </summary>
-    private static bool ReadFlag(NpgsqlDataReader r, int ordinal)
-    {
-        if (r.IsDBNull(ordinal)) return false;
-        return r.GetValue(ordinal) switch
-        {
-            bool b => b,
-            short n => n != 0,
-            int n => n != 0,
-            long n => n != 0,
-            decimal n => n != 0,
-            string t => t is "1" or "t" or "T" or "true" or "True" or "TRUE" or "y" or "yes",
-            _ => false,
-        };
-    }
-
-    /// <summary>
-    /// Create or refresh the <c>ds_users</c> row behind the account that just signed in.
+    /// Put a saved session back, if there is one that is still in date and that the portal still
+    /// honours. This is what makes the week mean anything: the app opens straight onto the bid
+    /// board rather than onto a password box.
     ///
     /// <para>
-    /// <c>ds_users.username</c> is the portal address. It could have been a name of its own, but
-    /// then two things would claim to say who someone is, and they would disagree the first time
-    /// one of them changed. Every login re-asserts it, so a rename in the portal arrives here
-    /// rather than leaving a stale label on the Peers tab for ever.
+    /// The stored token is checked against the portal rather than trusted on its expiry alone.
+    /// Nothing else would notice an account that has since been closed, or a signing key that was
+    /// rotated to revoke every outstanding token — both would otherwise surface as the first
+    /// ordinary action of the day failing with a 401.
     /// </para>
     ///
     /// <para>
-    /// There is nothing else on the row to write. Goals and achievement counters used to live here
-    /// and are gone — nothing read them.
+    /// A portal that cannot be reached is <b>not</b> a rejected session. The laptop is on a train;
+    /// the token is still good. The session is installed and the first real call will say so if it
+    /// isn't — throwing the token away here would mean needing a network to find out you still had
+    /// a valid one.
     /// </para>
     /// </summary>
-    private static async Task EnsureDsUserAsync(
-        NpgsqlConnection conn, long userId, string email, CancellationToken ct)
+    public async Task<bool> RestoreAsync(CancellationToken ct = default)
     {
-        const string sql =
-            "INSERT INTO ds_users (user_id, username, created_at, updated_at) " +
-            "VALUES (@uid, @un, now(), now()) " +
-            "ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username, updated_at = now()";
+        var saved = _store.Load();
+        if (saved == null) return false;
+
+        _session.SignIn(saved);
+
         try
         {
-            await using var cmd = new NpgsqlCommand(sql, conn);
-            cmd.Parameters.AddWithValue("uid", userId);
-            cmd.Parameters.AddWithValue("un", email);
-            await cmd.ExecuteNonQueryAsync(ct);
+            var identity = await _api.GetAsync<LoginResponse>("/api/devstrider/auth/session", ct);
+            if (identity != null && identity.UserId != 0)
+            {
+                // Names and roles change in the portal; the token does not carry them. Take the
+                // fresh copy and keep the token and its expiry.
+                saved.Email = identity.Email;
+                saved.Username = identity.Username;
+                saved.Name = identity.Name;
+                saved.Role = identity.Role;
+                _session.SignIn(saved);
+                _store.Save(saved);
+            }
+
+            if (_session.NeedsRefresh) await RefreshAsync(ct);
+            return true;
         }
-        catch (PostgresException ex) when (ex.SqlState == "23505")
+        catch (PortalApiException ex) when (ex.IsUnauthorized)
         {
-            // username is UNIQUE and somebody else already holds this address — only reachable if
-            // the portal moved an address between two accounts. The existing row keeps its name
-            // and the login proceeds: nothing downstream reads the name to decide what a user may
-            // see, so a stale label is a cosmetic problem and a blocked login would not be.
-            System.Diagnostics.Debug.WriteLine($"ds_users username collision for {userId}: {ex.MessageText}");
+            SignOut();
+            return false;
+        }
+        catch (PortalApiException ex)
+        {
+            _activity.Warning("Login", "Signed in from the saved session without reaching the portal", ex.Message);
+            return true;
         }
     }
-
-    // ── password verification ───────────────────────────────────────────────
-    //
-    // The portal stores `<saltHex>:<keyHex>` — a 16-byte salt and a 64-byte derived key, both
-    // lower-case hex, 161 characters in total. That is the shape produced by Node's
-    //
-    //     const salt = crypto.randomBytes(16).toString('hex');
-    //     const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-    //
-    // so scrypt at Node's default parameters is what this reproduces. It is emphatically NOT
-    // bcrypt, whatever earlier versions of this file claimed: no stored value starts with $2.
-
-    /// <summary>Node's <c>crypto.scrypt</c> defaults. Changing these invalidates every login.</summary>
-    private const int ScryptN = 16384;   // cost
-    private const int ScryptR = 8;       // block size
-    private const int ScryptP = 1;       // parallelisation
-    private const int ScryptKeyLength = 64;
 
     /// <summary>
-    /// Verify a password against the portal's stored value. Any malformed or unrecognised stored
-    /// value is a failed sign-in, never an exception — a crashed login window tells the user
-    /// nothing and loses the rest of the session with it.
+    /// Trade the current token for a fresh week. Called at startup when the saved one is inside
+    /// its last day, so somebody who opens DevStrider on any given weekday is never asked for a
+    /// password again.
     /// </summary>
-    private static bool VerifyPortalPassword(string password, string stored)
+    public async Task<bool> RefreshAsync(CancellationToken ct = default)
     {
-        var sep = stored.IndexOf(':');
-        if (sep <= 0 || sep >= stored.Length - 1) return false;
-
-        if (!TryParseHex(stored.AsSpan(sep + 1), out var expected)) return false;
-        if (expected.Length != ScryptKeyLength) return false;
-
-        var saltText = stored[..sep];
-
-        // Two readings of "the salt", tried in order.
-        //
-        // Node's snippet above passes the *hex string* to scryptSync, which encodes it as UTF-8 —
-        // so the salt fed to the KDF is 32 ASCII bytes, not the 16 bytes they spell. A portal that
-        // decoded the hex first would be equally reasonable and is indistinguishable from the
-        // stored value alone. Trying both costs one extra derivation on a failed login and nothing
-        // on a successful one, and it is not a security compromise: a wrong reading simply does not
-        // match. Collapse this to whichever branch wins once the portal's source is confirmed —
-        // the Debug line below names it.
-        if (Matches(password, System.Text.Encoding.UTF8.GetBytes(saltText), expected))
-        {
-            System.Diagnostics.Debug.WriteLine("[auth] scrypt matched with UTF-8 hex-string salt (Node default)");
-            return true;
-        }
-        if (TryParseHex(saltText.AsSpan(), out var saltBytes) && Matches(password, saltBytes, expected))
-        {
-            System.Diagnostics.Debug.WriteLine("[auth] scrypt matched with decoded 16-byte salt");
-            return true;
-        }
-        return false;
-    }
-
-    private static bool Matches(string password, byte[] salt, byte[] expected)
-    {
+        if (!_session.IsAuthenticated) return false;
         try
         {
-            var actual = Org.BouncyCastle.Crypto.Generators.SCrypt.Generate(
-                System.Text.Encoding.UTF8.GetBytes(password), salt,
-                ScryptN, ScryptR, ScryptP, ScryptKeyLength);
-            // Fixed-time compare: a length-or-first-difference exit leaks how much of the key was
-            // right, one byte at a time.
-            return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(actual, expected);
+            var login = await _api.PostAsync<LoginResponse>("/api/devstrider/auth/refresh", null, ct);
+            if (login == null || string.IsNullOrEmpty(login.Token)) return false;
+            Install(login);
+            _activity.Info("Login", "Session extended", $"Valid until {login.ExpiresAt.ToLocalTime():g}");
+            return true;
         }
-        catch (Exception ex)
+        catch (PortalApiException ex) when (ex.IsUnauthorized)
         {
-            System.Diagnostics.Debug.WriteLine($"[auth] scrypt derivation failed: {ex.Message}");
+            SignOut();
+            return false;
+        }
+        catch (PortalApiException)
+        {
+            // Offline. The current token is still valid until it isn't; try again next launch.
             return false;
         }
     }
 
-    private static bool TryParseHex(ReadOnlySpan<char> hex, out byte[] bytes)
+    /// <summary>
+    /// Drop the session, here and on disk.
+    ///
+    /// <para>
+    /// The portal is told as a courtesy and the answer is not waited on: these tokens are
+    /// stateless, so there is no server-side row to delete and nothing about the outcome changes
+    /// what happens on this machine. What actually ends the session is the file going away.
+    /// </para>
+    /// </summary>
+    public void SignOut()
     {
-        bytes = Array.Empty<byte>();
-        if (hex.Length == 0 || hex.Length % 2 != 0) return false;
-        var buffer = new byte[hex.Length / 2];
-        for (var i = 0; i < buffer.Length; i++)
+        if (_session.IsAuthenticated)
+            _ = _api.PostAsync<object>("/api/devstrider/auth/logout", null).ContinueWith(
+                t => System.Diagnostics.Debug.WriteLine($"logout: {t.Exception?.Message}"),
+                TaskContinuationOptions.OnlyOnFaulted);
+
+        _store.Clear();
+        _session.SignOut();
+        _activity.Info("Login", "Signed out", "The saved session was removed from this machine.");
+    }
+
+    private void Install(LoginResponse login)
+    {
+        var session = new PortalSession
         {
-            if (!byte.TryParse(hex.Slice(i * 2, 2), System.Globalization.NumberStyles.HexNumber,
-                               System.Globalization.CultureInfo.InvariantCulture, out buffer[i]))
-                return false;
-        }
-        bytes = buffer;
-        return true;
+            Token = login.Token,
+            // A server that sent no expiry would otherwise install a session that never ends. Fall
+            // back to the week the portal promises rather than to DateTime.MinValue, which would
+            // read as already expired and loop the user back to the login window.
+            ExpiresAt = login.ExpiresAt == default ? DateTime.UtcNow.AddDays(7) : login.ExpiresAt,
+            IssuedAt = login.IssuedAt == default ? DateTime.UtcNow : login.IssuedAt,
+            UserId = login.UserId,
+            Email = login.Email,
+            Username = string.IsNullOrEmpty(login.Username) ? login.Email : login.Username,
+            Name = login.Name,
+            Role = login.Role,
+        };
+        _session.SignIn(session);
+        _store.Save(session);
     }
 }

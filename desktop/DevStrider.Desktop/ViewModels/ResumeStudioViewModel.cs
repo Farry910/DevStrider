@@ -378,7 +378,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Fail(request.WorkItemId, SharedDbCredentials.Redact(ex.Message));
+            Fail(request.WorkItemId, Safe.Redact(ex.Message));
         }
     }
 
