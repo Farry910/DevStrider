@@ -52,67 +52,6 @@
               Margin="0,16,0,0"
               Padding="12,9"/>
 
-      <!-- ── Portal ─────────────────────────────────────────────────────── -->
-
-      <Border Background="{StaticResource BorderSoft}" Height="1" Margin="0,20,0,12" SnapsToDevicePixels="True"/>
-
-      <DockPanel>
-        <TextBlock DockPanel.Dock="Left"
-                   Text="Portal address"
-                   FontWeight="SemiBold"
-                   VerticalAlignment="Center"/>
-        <Button DockPanel.Dock="Right"
-                HorizontalAlignment="Right"
-                Style="{StaticResource GhostButton}"
-                Command="{Binding ToggleConnectionCommand}"
-                Padding="8,4">
-          <TextBlock>
-            <TextBlock.Style>
-              <Style TargetType="TextBlock">
-                <Setter Property="Text" Value="Show"/>
-                <Style.Triggers>
-                  <DataTrigger Binding="{Binding ShowConnection}" Value="True">
-                    <Setter Property="Text" Value="Hide"/>
-                  </DataTrigger>
-                </Style.Triggers>
-              </Style>
-            </TextBlock.Style>
-          </TextBlock>
-        </Button>
-      </DockPanel>
-
-      <StackPanel Margin="0,10,0,0"
-                  Visibility="{Binding ShowConnection, Converter={StaticResource BooleanToVisibilityConverter}}">
-
-        <TextBlock Style="{StaticResource MutedText}"
-                   TextWrapping="Wrap"
-                   Margin="0,0,0,10"
-                   Text="The company portal. Everything DevStrider reads and writes goes through it, and this is the only thing it needs to know about your machine — no database, no password to store."/>
-
-        <TextBox Text="{Binding Connection.PortalBaseUrl, UpdateSourceTrigger=PropertyChanged}"
-                 Tag="https://triospace.org/hr"
-                 Margin="0,0,0,10"/>
-
-        <StackPanel Orientation="Horizontal">
-          <Button Content="Test connection"
-                  Command="{Binding TestConnectionCommand}"
-                  IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolean}}"
-                  Style="{StaticResource GhostButton}"
-                  Padding="12,7"
-                  Margin="0,0,8,0"/>
-          <Button Content="Save"
-                  Command="{Binding SaveConnectionCommand}"
-                  Style="{StaticResource GhostButton}"
-                  Padding="12,7"/>
-        </StackPanel>
-
-        <TextBlock Text="{Binding ConnectionMessage}"
-                   Style="{StaticResource MutedText}"
-                   TextWrapping="Wrap"
-                   Margin="0,10,0,0"
-                   Visibility="{Binding ConnectionMessage, Converter={StaticResource NonEmptyToVisible}}"/>
-      </StackPanel>
-
     </StackPanel>
   </Border>
 </Window>

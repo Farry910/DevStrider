@@ -39,6 +39,9 @@ public sealed class PortalApiException : Exception
 /// </summary>
 public sealed class PortalApi
 {
+    /// <summary>The company portal. Hard-wired — this app connects to exactly one.</summary>
+    public const string Url = "https://triospace.org/hr";
+
     /// <summary>
     /// One client for the process. <see cref="HttpClient"/> is built to be shared: one per call
     /// leaks a socket per request into TIME_WAIT, and one per call also throws away the connection
@@ -57,60 +60,14 @@ public sealed class PortalApi
         Timeout = TimeSpan.FromSeconds(60),
     };
 
-    private readonly SettingsService _settings;
     private readonly SessionContext _session;
 
-    public PortalApi(SettingsService settings, SessionContext session)
+    public PortalApi(SessionContext session)
     {
-        _settings = settings;
         _session = session;
     }
 
-    /// <summary>True once the settings file names something this app could try to reach.</summary>
-    public async Task<bool> IsConfiguredAsync() =>
-        ParseBaseUrl((await _settings.GetAsync()).PortalBaseUrl).baseUrl != null;
-
-    /// <summary>
-    /// Normalise whatever was typed into the prefix every request is built on.
-    ///
-    /// <para>
-    /// A bare host gets <c>https://</c> — nobody types the scheme, and defaulting to plain HTTP
-    /// would silently put a password on the wire. A trailing <c>/api</c> is stripped because that
-    /// is what people paste when they have seen an endpoint rather than the site, and the paths
-    /// below already start with <c>/api</c>.
-    /// </para>
-    ///
-    /// <para>
-    /// A <b>string</b> and not a <see cref="Uri"/>, and never with a trailing slash. That is not
-    /// stylistic: <c>new Uri("https://host").ToString()</c> hands back <c>https://host/</c>, so
-    /// concatenating a path that starts with <c>/</c> produced <c>https://host//api/me</c> — which
-    /// the portal's router does not match, because it is a different number of path segments. It
-    /// fell through to the static handler, redirected, and the whole thing surfaced as a 302 on
-    /// every single call. Keeping the joined form as text is what makes that unrepresentable.
-    /// </para>
-    /// </summary>
-    public static (string? baseUrl, string? error) ParseBaseUrl(string? raw)
-    {
-        var text = (raw ?? "").Trim().TrimEnd('/');
-        if (text.Length == 0) return (null, "Enter the address of the company portal, e.g. https://triospace.org/hr");
-
-        if (!text.Contains("://", StringComparison.Ordinal)) text = "https://" + text;
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri))
-            return (null, "That isn't a valid address. Expected something like https://triospace.org/hr");
-        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            return (null, $"Address must be http:// or https:// — got '{uri.Scheme}://'.");
-
-        var path = uri.AbsolutePath.TrimEnd('/');
-        if (path.EndsWith("/api", StringComparison.OrdinalIgnoreCase)) path = path[..^4];
-        return ($"{uri.Scheme}://{uri.Authority}{path}", null);
-    }
-
-    private async Task<string> BaseAsync()
-    {
-        var (baseUrl, error) = ParseBaseUrl((await _settings.GetAsync()).PortalBaseUrl);
-        if (baseUrl == null) throw new PortalApiException(0, error ?? "The portal address isn't set.");
-        return baseUrl;
-    }
+    private static Task<string> BaseAsync() => Task.FromResult(Url);
 
     // ── verbs ───────────────────────────────────────────────────────────────
 
@@ -207,21 +164,16 @@ public sealed class PortalApi
     }
 
     /// <summary>
-    /// Reachability probe for the address panel on the sign-in window and in Settings, run before
-    /// there is any token to authenticate with. <c>/api/me</c> is public and answers <c>null</c>
-    /// to an anonymous caller, which is exactly the "you found the portal" signal wanted here —
-    /// and, because it is JSON rather than a page, it also rules out an address that lands on
-    /// something other than this server.
+    /// Reachability probe used by Settings. <c>/api/me</c> is public and answers <c>null</c>
+    /// to an anonymous caller — which is the "you found the portal" signal — and because it is
+    /// JSON rather than a page it also rules out a proxy sitting in front of the server.
     /// </summary>
     public async Task<(bool ok, string message)> TestAsync(CancellationToken ct = default)
     {
-        var (baseUrl, error) = ParseBaseUrl((await _settings.GetAsync()).PortalBaseUrl);
-        if (baseUrl == null) return (false, error!);
-
         try
         {
             await GetAsync<JsonElement?>("/api/me", ct);
-            return (true, $"{baseUrl} answered.");
+            return (true, $"{Url} answered.");
         }
         catch (PortalApiException ex)
         {

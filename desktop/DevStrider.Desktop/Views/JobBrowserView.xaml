@@ -70,6 +70,13 @@
                       IsEnabled="{Binding IsAutomaticQueueRunning, Converter={StaticResource InverseBoolean}}"/>
               <Button Command="{Binding StopAutomaticQueueCommand}" Content="Stop automation" Margin="0,0,8,8" Style="{StaticResource GhostButton}"
                       Visibility="{Binding IsAutomaticQueueRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+              <!--
+                Always available, including mid-run: dropping the rest of the backlog is exactly the
+                thing you want while a run is going badly. Links currently open keep their place.
+              -->
+              <Button Command="{Binding ClearQueuedLinksCommand}" Content="Clear list" Margin="0,0,8,8"
+                      Style="{StaticResource GhostButton}"
+                      ToolTip="Removes every queued link. Links open for review or being worked on right now are kept."/>
             </WrapPanel>
             <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
             <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,8,0,0">

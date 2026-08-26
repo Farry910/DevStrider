@@ -7,7 +7,6 @@ namespace DevStrider.Desktop.Services;
 /// mattering — clear them once you've launched at least once.
 ///
 /// Supported variables:
-///   DEVSTRIDER_PORTAL_URL         → PortalBaseUrl       (when empty)
 ///   DEVSTRIDER_R2_ACCOUNT_ID      → R2AccountId         (when empty)
 ///   DEVSTRIDER_R2_BUCKET          → R2Bucket            (when empty)
 ///   DEVSTRIDER_R2_ACCESS_KEY_ID   → R2AccessKeyId       (when empty)
@@ -16,13 +15,7 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_WORD_DOC_PATH      → WordDocPath         (when empty)
 ///   DEVSTRIDER_WORD_HOTKEY        → WordHotkey          (when default "F9")
 ///
-/// The six DEVSTRIDER_SHARED_DB_* variables are gone with the direct database connection they
-/// configured. DEVSTRIDER_PORTAL_URL replaces all of them, and it is not a credential — which is
-/// the point: rolling this out to a machine is now a URL, not a password.
-///
-/// There is no username variable either: the account name is the portal address on
-/// <c>app_user</c>, and the portal writes it at sign-in. Nothing on this machine gets to name a
-/// user, and nothing on this machine gets to authenticate one.
+/// There is no portal URL variable: the address is compiled in as <see cref="PortalApi.Url"/>.
 /// </summary>
 public static class SettingsBootstrap
 {
@@ -31,10 +24,6 @@ public static class SettingsBootstrap
         var settings = await settingsService.GetForEditAsync();
         var dirty = false;
 
-
-        // The portal. One variable, and not a secret — which is what makes this the sane way to
-        // hand a new machine its configuration.
-        dirty |= SeedIfEmpty(settings.PortalBaseUrl, "DEVSTRIDER_PORTAL_URL", v => settings.PortalBaseUrl = v);
 
         // Cloud storage (R2) — same rule: seeded once into the local settings file, then the
         // Settings UI owns them.

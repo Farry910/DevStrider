@@ -195,12 +195,14 @@ public static class JobSiteFormAdapters
 """;
 
     public static string BuildFillScript(Uri uri, IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null)
+        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null,
+        IReadOnlyCollection<string>? onlyLabels = null)
     {
         var payload = JsonSerializer.Serialize(new
         {
             adapter = NameFor(uri), values,
             forceLabels = forceLabels ?? [], settledLabels = settledLabels ?? [],
+            onlyLabels = onlyLabels ?? [],
         });
         return """
 (() => {
@@ -225,6 +227,21 @@ __PRELUDE__
    const key = fieldKey(labelFor(e) || textFor(e));
    return !!key && settledKeys.some(done => key === done
      || Math.min(key.length, done.length) >= 8 && (key.includes(done) || done.includes(key)));
+ };
+ // The scope of a correction pass. The site named the fields it rejected, and on a correction pass
+ // those are the only ones this is allowed to touch — everything else keeps whatever it holds.
+ // The settled ledger aims at the same thing but reaches it by inference: it survives only while
+ // the page key holds, and it defers to an "is this already answered?" probe that has to be right
+ // about every widget on the page. One radio group whose probe reads false is enough to retype a
+ // correct answer, and on a checkbox the retype clicks it back off. The scope is not inference —
+ // a field nobody complained about is not eligible, whatever the probes think. Empty on a primary
+ // pass, which does see the whole form.
+ const onlyKeys = (payload.onlyLabels || []).map(fieldKey).filter(Boolean);
+ const outOfScope = e => {
+   if (!onlyKeys.length) return false;
+   const key = fieldKey(labelFor(e) || textFor(e));
+   return !key || !onlyKeys.some(only => key === only
+     || Math.min(key.length, only.length) >= 8 && (key.includes(only) || only.includes(key)));
  };
  // Ashby persists controlled fields asynchronously. Sending every blur in one JS task starts
  // overlapping state updates and later responses can restore an older, partially-filled form.
@@ -308,7 +325,7 @@ __PRELUDE__
    const v = payload.values[key]; if (!v) continue;
    for (const selector of selectors) {
      const e = document.querySelector(selector);
-     if (!e || settledField(e) || groupAnswered(e) && !forceField(e)) continue;
+     if (!e || outOfScope(e) || settledField(e) || groupAnswered(e) && !forceField(e)) continue;
      if (write(e,v)) { filled++; touched.push(key); break; }
    }
  }
@@ -316,7 +333,7 @@ __PRELUDE__
    'input:not([type="hidden"]),textarea,select,' + choiceSelector))));
  for (const e of controls) {
    if (e.type === 'file' || comboInput(e) || mirroredChoice(e)
-       || (!visible(e) && !choiceVisible(e)) || e.disabled
+       || (!visible(e) && !choiceVisible(e)) || e.disabled || outOfScope(e)
        || groupAnswered(e) && !forceField(e) || settledField(e)
        || planned(e) || choicePlanned(e)) continue;
    const v=valueFor(e);
@@ -336,7 +353,15 @@ __PRELUDE__
    .map(e => { const l = labelFor(e); return l && e.tagName === 'SELECT' ? l + ' (dropdown)' : l; })
    .concat(custom.map(e => { const l = labelFor(e); return l ? l + ' (dropdown)' : ''; }))
    .filter(Boolean);
+ // Which visible controls the correction scope actually resolved to. A scope that matches nothing is
+ // a silent no-op otherwise: the pass reports zero fields filled and reads exactly like a form that
+ // needed nothing, when what really happened is that the site's error text named no field we can see.
+ const scopeMatched = !onlyKeys.length ? [] : Array.from(new Set(Array.from(document.querySelectorAll(
+   'input:not([type="hidden"]),textarea,select,' + choiceSelector))))
+   .filter(e => (visible(e) || choiceVisible(e)) && !e.disabled && !outOfScope(e))
+   .map(e => labelFor(e) || textFor(e)).filter(Boolean);
  return { adapter, filled, skipped, touched:Array.from(new Set(touched)), textPlanned:window.__dsTextPlan.length,
+   scoped:onlyKeys.length, scopeMatched:Array.from(new Set(scopeMatched)),
    textLabels:window.__dsTextPlan.map(item => item.label), choicePlanned:window.__dsChoicePlan.length,
    choiceLabels:window.__dsChoicePlan.map(item => item.label), unfilled:Array.from(new Set(outstanding)).slice(0,25) };
 })()
@@ -567,12 +592,14 @@ __PRELUDE__
     /// and returns what will be typed into each. Nothing is touched yet.
     /// </summary>
     public static string BuildComboboxPlanScript(IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null)
+        IReadOnlyCollection<string>? forceLabels = null, IReadOnlyCollection<string>? settledLabels = null,
+        IReadOnlyCollection<string>? onlyLabels = null)
     {
         var payload = JsonSerializer.Serialize(new
         {
             adapter = "", values,
             forceLabels = forceLabels ?? [], settledLabels = settledLabels ?? [],
+            onlyLabels = onlyLabels ?? [],
         });
         return """
 (() => {
@@ -596,9 +623,19 @@ __PRELUDE__
    return !!key && settledKeys.some(done => key === done
      || Math.min(key.length, done.length) >= 8 && (key.includes(done) || done.includes(key)));
  };
+ // Same scope rule as the fill script: on a correction pass only the fields the site named are
+ // eligible. Reopening a dropdown that already shows the right answer costs an overlay, a schema
+ // read and a verify poll, and the overlay covers whatever else still needs filling underneath.
+ const onlyKeys = (payload.onlyLabels || []).map(fieldKey).filter(Boolean);
+ const outOfScope = e => {
+   if (!onlyKeys.length) return false;
+   const key = fieldKey(labelFor(e) || labelFor(shell(e)));
+   return !key || !onlyKeys.some(only => key === only
+     || Math.min(key.length, only.length) >= 8 && (key.includes(only) || only.includes(key)));
+ };
  const controls = Array.from(document.querySelectorAll(comboSelector))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !e.disabled
-     && !settled(e) && (!answered(e) || forced(e)));
+     && !outOfScope(e) && !settled(e) && (!answered(e) || forced(e)));
  const plan = [];
  window.__dsCombos = [];
  for (const control of controls) {

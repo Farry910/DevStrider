@@ -74,9 +74,6 @@ public sealed class AuthService
         if (typed.Length == 0) return SignInResult.Fail("Enter your email address.");
         if (string.IsNullOrEmpty(password)) return SignInResult.Fail("Enter your password.");
 
-        if (!await _api.IsConfiguredAsync())
-            return SignInResult.Fail("The portal address isn't set yet — fill it in first.");
-
         try
         {
             var login = await _api.PostAsync<LoginResponse>("/api/devstrider/auth/login",

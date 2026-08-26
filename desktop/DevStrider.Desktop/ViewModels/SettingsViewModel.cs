@@ -68,10 +68,6 @@ public partial class SettingsViewModel : ViewModelBase
     private AppSettings _model = new();
     public AppSettings Model { get => _model; set => SetProperty(ref _model, value); }
 
-    private string _portalHint = "";
-    /// <summary>Whether the typed address is one this app could reach, before anyone presses Test.</summary>
-    public string PortalHint { get => _portalHint; private set => SetProperty(ref _portalHint, value); }
-
     private string _sessionHint = "";
     /// <summary>How much of the week is left. The one place the session's lifetime is visible.</summary>
     public string SessionHint { get => _sessionHint; private set => SetProperty(ref _sessionHint, value); }
@@ -96,15 +92,8 @@ public partial class SettingsViewModel : ViewModelBase
             : $"Endpoint: {Model.R2Endpoint}/{Model.R2Bucket}";
     }
 
-    private void RefreshPortalHint()
+    private void RefreshSessionHint()
     {
-        var (baseUrl, error) = PortalApi.ParseBaseUrl(Model.PortalBaseUrl);
-        PortalHint = string.IsNullOrWhiteSpace(Model.PortalBaseUrl)
-            ? "Nothing works until this is set. It's the same address you open the portal at in a browser."
-            : baseUrl != null
-                ? $"Requests will go to {baseUrl}/api/… — use Test connection to confirm the portal answers."
-                : $"Can't use that address: {error}";
-
         SessionHint = _session.IsAuthenticated
             ? $"Signed in as {_session.Email}. This machine stays signed in until "
               + $"{_session.ExpiresAt.ToLocalTime():dddd d MMMM, HH:mm} — {(int)Math.Ceiling(_session.Remaining.TotalDays)} day(s) away. "
@@ -174,7 +163,7 @@ public partial class SettingsViewModel : ViewModelBase
     public void SignOut()
     {
         _auth.SignOut();
-        RefreshPortalHint();
+        RefreshSessionHint();
         StatusMessage = "Signed out on this machine — you'll be asked for your password at the next launch.";
     }
 
@@ -188,7 +177,7 @@ public partial class SettingsViewModel : ViewModelBase
             // would be live for the listener and every other service before the user hits Save.
             Model = await _settings.GetForEditAsync();
             OnPropertyChanged(nameof(SignedInAs));
-            RefreshPortalHint();
+            RefreshSessionHint();
             RefreshR2Hints();
             RefreshProxyHint();
         }
@@ -214,7 +203,7 @@ public partial class SettingsViewModel : ViewModelBase
             // Saving installed Model as the shared cache; take a fresh copy so continued
             // editing doesn't mutate what every other service is now reading.
             Model = await _settings.GetForEditAsync();
-            RefreshPortalHint();
+            RefreshSessionHint();
             RefreshR2Hints();
             RefreshProxyHint();
 

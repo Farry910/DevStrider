@@ -616,7 +616,8 @@ public partial class JobBrowserView : UserControl
 
             // If the one correction pass was already consumed or no error could be mapped, make a
             // best-effort refill and return to review with the original site errors still recorded.
-            var fill = await FillFieldsAsync(vm, errors.Select(error => error.Question).ToArray());
+            var fill = await FillFieldsAsync(vm, errors.Select(error => error.Question).ToArray(),
+                correctionOnly: true);
             var validation = await ValidateAndAdvanceAsync(vm, fill);
             fill = validation.Fill;
             if (validation.Submitted)
@@ -1070,7 +1071,7 @@ public partial class JobBrowserView : UserControl
             await Dispatcher.Yield(DispatcherPriority.Loaded);
             var forceLabels = CorrectionQuestionLabels(vm.CurrentQueueItem.PendingCorrectionQuestionsJson);
             Trace?.Step("Fill", "forced correction fields", string.Join(" | ", forceLabels));
-            var fill = await FillFieldsAsync(vm, forceLabels);
+            var fill = await FillFieldsAsync(vm, forceLabels, correctionOnly: true);
             await vm.CompleteAnswerCorrectionRefillAsync(workItemId);
             var validation = await ValidateAndAdvanceAsync(vm, fill);
             fill = validation.Fill;
@@ -1408,8 +1409,16 @@ public partial class JobBrowserView : UserControl
         }).Where(error => error.Question.Length > 0 || error.Message.Length > 0).ToArray();
     }
 
+    /// <param name="correctionOnly">
+    /// Confines the pass to <paramref name="forceLabels"/> — the fields the site itself rejected.
+    /// The settled ledger aims at the same outcome but gets there by inference, and inference is
+    /// exactly what fails here: the ledger is dropped whenever the page key changes, and what it
+    /// does not cover falls back to an "already answered?" probe that has to be right about every
+    /// widget on the page. Either gap retypes an answer that was already correct, which costs the
+    /// run seconds per field and, on a checkbox, clicks the right answer back off.
+    /// </param>
     private async Task<FillOutcome> FillFieldsAsync(JobBrowserViewModel vm,
-        IReadOnlyCollection<string>? forceLabels = null)
+        IReadOnlyCollection<string>? forceLabels = null, bool correctionOnly = false)
     {
         if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var uri))
             throw new InvalidOperationException("No application page is open.");
@@ -1429,11 +1438,29 @@ public partial class JobBrowserView : UserControl
         if (settled.Length > 0)
             Trace?.Step("Fill", $"skipping {settled.Length} settled field(s)", string.Join(" | ", settled.Take(20)));
 
+        // A correction pass is scoped to what the site named, and to nothing else.
+        var scope = correctionOnly && forceLabels is { Count: > 0 } ? forceLabels : null;
+        if (scope != null)
+            Trace?.Step("Fill", $"correction pass scoped to {scope.Count} field(s)", string.Join(" | ", scope));
+        else if (correctionOnly)
+            Trace?.Warn("Fill", "correction pass has no named fields",
+                "nothing was scoped, so this pass falls back to the settled ledger");
+
         var json = await JobSiteBrowser.ExecuteScriptAsync(
-            JobSiteFormAdapters.BuildFillScript(uri, values, forceLabels, settled));
+            JobSiteFormAdapters.BuildFillScript(uri, values, forceLabels, settled, scope));
         Trace?.Payload("Fill", "fill script returned", json);
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
+        if (scope != null)
+        {
+            var matched = StringList(root, "scopeMatched").ToArray();
+            if (matched.Length > 0)
+                Trace?.Step("Fill", $"scope resolved to {matched.Length} control(s)", string.Join(" | ", matched));
+            else
+                Trace?.Warn("Fill", "the correction scope matched no visible control",
+                    "the site's error text named no field this page shows; " +
+                    "the corrected answers are recorded but nothing was retyped");
+        }
 
         // Text controls are deliberately driven one at a time. Ashby persists each blur through an
         // asynchronous form update; batching them allowed stale responses to erase random fields.
@@ -1445,7 +1472,7 @@ public partial class JobBrowserView : UserControl
 
         // Custom dropdowns are driven after the plain fields, because typing into one opens an
         // overlay that would sit on top of anything still to be filled.
-        var (comboFilled, comboTouched) = await FillCustomDropdownsAsync(values, forceLabels, settled);
+        var (comboFilled, comboTouched) = await FillCustomDropdownsAsync(values, forceLabels, settled, scope);
 
         await Task.Delay(800);
         var outstandingJson = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.OutstandingFieldsScript);
@@ -1629,11 +1656,12 @@ public partial class JobBrowserView : UserControl
     /// </summary>
     private async Task<(int Filled, List<string> Touched)> FillCustomDropdownsAsync(
         IReadOnlyDictionary<string, string> values,
-        IReadOnlyCollection<string>? forceLabels, IReadOnlyCollection<string>? settledLabels = null)
+        IReadOnlyCollection<string>? forceLabels, IReadOnlyCollection<string>? settledLabels = null,
+        IReadOnlyCollection<string>? onlyLabels = null)
     {
         var touched = new List<string>();
         var planJson = await JobSiteBrowser.ExecuteScriptAsync(
-            JobSiteFormAdapters.BuildComboboxPlanScript(values, forceLabels, settledLabels));
+            JobSiteFormAdapters.BuildComboboxPlanScript(values, forceLabels, settledLabels, onlyLabels));
         Trace?.Payload("Dropdown", "plan", planJson);
         using var plan = JsonDocument.Parse(planJson);
         if (plan.RootElement.ValueKind != JsonValueKind.Array) return (0, touched);

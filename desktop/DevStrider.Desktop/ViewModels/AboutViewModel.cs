@@ -40,18 +40,13 @@ public class AboutViewModel : ViewModelBase
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
-        "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
-        "(setx DEVSTRIDER_PORTAL_URL \"https://triospace.org/hr\"), restart DevStrider, then " +
-        "clear the env var if you want — values are saved to settings.json after first run.";
+        "variables on launch — useful when bootstrapping a fresh machine. Set them once, " +
+        "restart DevStrider, then clear the env vars if you want — values are saved to settings.json after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
 
     public AboutViewModel()
     {
-        // The six DEVSTRIDER_SHARED_DB_* variables are gone. They configured a direct PostgreSQL
-        // connection from this machine, one of them a password; the app reaches its data through
-        // the portal now, and one URL that is not a secret replaces all of them.
-        Add("DEVSTRIDER_PORTAL_URL",         "AppSettings.PortalBaseUrl",     "The company portal, e.g. https://triospace.org/hr. Everything DevStrider reads and writes goes through it.");
         Add("DEVSTRIDER_R2_ACCOUNT_ID",      "AppSettings.R2AccountId",       "Cloudflare R2 account id — the hex prefix of the r2.cloudflarestorage.com endpoint.");
         Add("DEVSTRIDER_R2_BUCKET",          "AppSettings.R2Bucket",          "R2 bucket holding shared resume files.");
         Add("DEVSTRIDER_R2_ACCESS_KEY_ID",   "AppSettings.R2AccessKeyId",     "R2 API token access key id.");

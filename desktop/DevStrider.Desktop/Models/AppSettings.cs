@@ -21,19 +21,6 @@ namespace DevStrider.Desktop.Models;
 public class AppSettings
 {
     /// <summary>
-    /// The company portal, e.g. <c>https://triospace.org/hr</c>. Everything this app reads and
-    /// writes goes through it: there is no second way in, and no database credential on this
-    /// machine to be one.
-    ///
-    /// <para>
-    /// Kept as typed and normalised at the point of use — see
-    /// <see cref="Services.PortalApi.ParseBaseUrl"/> — so what comes back out of the Settings form
-    /// is what the user put into it.
-    /// </para>
-    /// </summary>
-    public string PortalBaseUrl { get; set; } = "";
-
-    /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in
     /// sync with the Chrome extension's configured base URL. Localhost binding means no
     /// authentication is required.

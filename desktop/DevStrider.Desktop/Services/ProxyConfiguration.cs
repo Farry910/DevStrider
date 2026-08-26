@@ -108,7 +108,7 @@ public sealed class ProxyConfiguration(AppSettings? settings)
             .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
 
-        if (Uri.TryCreate(_settings.PortalBaseUrl, UriKind.Absolute, out var portal) &&
+        if (Uri.TryCreate(PortalApi.Url, UriKind.Absolute, out var portal) &&
             portal.Host.Length > 0 &&
             !entries.Contains(portal.Host, StringComparer.OrdinalIgnoreCase))
             entries.Add(portal.Host);

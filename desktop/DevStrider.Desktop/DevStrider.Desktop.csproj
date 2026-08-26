@@ -644,8 +644,41 @@
          that asks for a password is answered only when the challenge names a proxy, so a job board
          putting up a login box cannot collect it. Test asks the proxy for a ChatGPT URL rather than
          a neutral host, because a proxy that answers but still cannot reach ChatGPT is a different
-         problem and worth learning about before a run finds it. -->
-    <Version>10.1.0</Version>
+         problem and worth learning about before a run finds it.
+
+         10.1.2 confines the correction pass to the fields the site actually rejected, and adds a
+         Clear list button to the queue.
+
+         The correction pass was already meant to leave correct answers alone, and it had two
+         defences that were both inference. The settled ledger remembers what the first pass typed
+         and verified - but it is keyed to the page URL and is dropped the moment that key changes,
+         and the correction round asks ChatGPT in between, which is minutes. Whatever the ledger no
+         longer covers falls through to an "is this already answered?" probe, and that probe has to
+         be right about every widget on the page: a react-select whose chosen value lives in a
+         sibling div, a radio group whose selected option does not report as selected, a select whose
+         real first option sits at index 0. Any one of those reads as unanswered, and the pass
+         retypes an answer that was already correct - seconds each, another chance for a controlled
+         input to drop the value it held, and on a checkbox the retype clicks the right answer back
+         off. Against the saved Greenhouse page, with the ledger gone and one field rejected, the old
+         pass planned three fields.
+
+         So the pass is now scoped rather than inferred: the correction round already knows exactly
+         which fields it asked about, that list is handed to the fill and dropdown scripts, and a
+         control that is not on it is not eligible - whatever the ledger says, whatever the probes
+         say. The harness proves the hard case: clear every value on the form so every probe reports
+         unanswered, scope to one rejected field, and exactly one field is planned. The ledger stays,
+         because it still saves the primary pass from redoing an intermediate step; it is just no
+         longer the only thing standing between a correct answer and a retype.
+
+         A scope that resolves to no visible control is now a warning naming what it looked for. That
+         case is a real one - a site whose error text names no field the page shows - and it used to
+         report zero fields filled, which reads exactly like a form that needed nothing.
+
+         Clear list empties the queue, including mid-run, which is when you want it. Links open for
+         review or being worked on right now are kept: the automation is inside one of them, a parked
+         tab is a filled application waiting on a person, and dropping either would leave a browser
+         tab pointing at a queue entry that no longer exists. -->
+    <Version>10.1.2</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

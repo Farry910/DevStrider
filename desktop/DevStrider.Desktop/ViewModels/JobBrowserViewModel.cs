@@ -710,6 +710,33 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         _activity.Info("Job Browser", "Failed links removed", $"{failed.Count} link(s)");
     }
 
+    /// <summary>
+    /// Empties the working list. Links that are being worked on right now are kept: the automation
+    /// is inside one of them, and a parked tab is a filled application waiting on a person. Dropping
+    /// either would leave an open browser tab pointing at a queue entry that no longer exists, and
+    /// the review that tab is holding would have nowhere to be recorded.
+    /// </summary>
+    [RelayCommand]
+    private async Task ClearQueuedLinksAsync()
+    {
+        var busy = Tabs.Select(tab => tab.WorkItemId).ToHashSet();
+        if (CurrentQueueItem != null) busy.Add(CurrentQueueItem.Id);
+        var removable = JobQueue.Where(item => !busy.Contains(item.Id)).ToList();
+        if (removable.Count == 0)
+        {
+            StatusMessage = JobQueue.Count == 0
+                ? "The queue is already empty."
+                : "Every link left in the queue is open for review or being worked on right now.";
+            return;
+        }
+        foreach (var item in removable) JobQueue.Remove(item);
+        await SaveQueueAsync();
+        NotifyQueueState();
+        StatusMessage = $"Cleared {removable.Count} link(s) from the queue." +
+                        (JobQueue.Count > 0 ? $" {JobQueue.Count} still in progress." : "");
+        _activity.Info("Job Browser", "Queue cleared", $"{removable.Count} link(s)");
+    }
+
     public void BeginPageExtraction()
     {
         if (CurrentQueueItem == null) return;

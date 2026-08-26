@@ -118,18 +118,7 @@
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
                      Text="Where DevStrider signs in and where every bid and interview is stored. There is no local copy and no database credential on this machine — the portal holds that, and this app holds a session token instead. Everything you save is visible to everyone on the team, job URLs, job descriptions, resume text and comments included."/>
 
-          <TextBlock Text="Portal address"/>
-          <TextBox Text="{Binding Model.PortalBaseUrl, UpdateSourceTrigger=PropertyChanged}"
-                   FontFamily="Consolas"
-                   TextWrapping="Wrap"
-                   AcceptsReturn="False"
-                   Margin="0,2,0,8"
-                   Tag="https://triospace.org/hr"/>
-
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="{Binding PortalHint}"/>
-
-          <TextBlock Text="Session" FontWeight="SemiBold" Margin="0,8,0,4"/>
+          <TextBlock Text="Session" FontWeight="SemiBold" Margin="0,0,0,4"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
                      Text="{Binding SessionHint}"/>
 
