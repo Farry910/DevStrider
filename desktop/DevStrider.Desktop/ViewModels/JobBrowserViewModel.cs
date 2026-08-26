@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
@@ -115,12 +116,12 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     /// soon as a tab is closed.
     /// </para>
     /// </summary>
-    public int MaxReviewTabs { get; private set; } = 4;
 
     public int ParkedReviewCount => Tabs.Count(tab => tab.IsAwaitingReview);
     public bool HasReviewBacklog => ParkedReviewCount > 0;
     public bool ShowTabStrip => Tabs.Count > 1;
-    public bool IsReviewCapacityFull => ParkedReviewCount >= MaxReviewTabs;
+    /// <summary>The review ceiling was removed: parked applications are no longer capped.</summary>
+    public bool IsReviewCapacityFull => false;
 
     public string ReviewBacklogSummary => ParkedReviewCount switch
     {
@@ -155,6 +156,15 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private bool _stopRequested;
 
     private const int ConsecutiveFailureLimit = 3;
+
+    /// <summary>
+    /// What a failure is evidence of. <see cref="Link"/> means this posting is unusable — an
+    /// unreadable description, a form no adapter matches, a page behind a human gate — and the run
+    /// skips it and carries on, however many of them there are. <see cref="Machinery"/> means
+    /// something every link depends on has broken: ChatGPT signed out, Word unavailable, no profile.
+    /// Only those count towards stopping the run, because only those get worse by continuing.
+    /// </summary>
+    public enum FailureScope { Link, Machinery }
     private int _consecutiveFailures;
     private int _submittedCount;
 
@@ -542,6 +552,13 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             StatusMessage = "There is no reviewed application waiting to be marked submitted.";
             return;
         }
+        // A submitted tab is kept open for the confirmation, so this command can now be aimed at one
+        // that is already done. Marking it again would count a second submission and re-park it.
+        if (item.Status == JobLinkQueueStatuses.Submitted)
+        {
+            StatusMessage = "That application is already marked submitted. Remove it to free the slot.";
+            return;
+        }
         await CompleteSubmittedItemAsync(item, "Marked submitted after human review.", automatic: false);
     }
 
@@ -557,7 +574,15 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
         var item = JobQueue.FirstOrDefault(x => x.Id == tab.WorkItemId);
-        if (item != null)
+        // A submitted tab has already had its link removed from the queue, so there is nothing left
+        // to file — closing it just releases the browser.
+        if (item == null) _activity.Info("Job Browser", "Application tab closed", tab.Url);
+        else if (item.Status == JobLinkQueueStatuses.Submitted)
+        {
+            _activity.Info("Job Browser", "Submitted application closed", item.Url);
+            JobQueue.Remove(item);
+        }
+        else
         {
             SetStatus(item, JobLinkQueueStatuses.Skipped);
             _activity.Info("Job Browser", "Application closed without submitting", item.Url);
@@ -611,31 +636,23 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         _activity.Success("Job Browser", automatic ? "Application submitted automatically" : "Application submitted",
             $"{item.Url} | {detail}");
         _trace.Step("Queue", automatic ? "automatic submission confirmed" : "marked submitted", item.Url);
-        // The bid row and the Activity entry are the durable record by this point, so the queue
-        // entry is spent. Drop it instead of letting submitted links pile up in the working list.
-        JobQueue.Remove(item);
         _submittedCount++;
+
+        // "Submitted" is not the end of the application. Some sites e-mail a code and ask for it on
+        // this same page; all of them show a confirmation worth reading, and some show it while
+        // something is still required. Closing the tab the moment the site said submitted threw that
+        // away, and with it any chance of finishing a two-step submission. The tab stays, holding
+        // whatever the site is showing, until a person closes it — and closing it is what files the
+        // queue entry and frees the slot.
+        ParkTabForReview(item, detail, JobLinkQueueStatuses.Submitted);
+        // The link is spent the moment it is applied to: the bid row and the Activity entry are the
+        // durable record, and links are supplied per profile a batch at a time, so a queue that kept
+        // its applied entries would grow forever. The tab does not go with it — it holds the
+        // confirmation, and a verification code step needs somewhere to happen.
+        JobQueue.Remove(item);
         if (CurrentQueueItem?.Id == item.Id) CurrentQueueItem = null;
         await SaveQueueAsync();
-
-        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
-        if (tab != null)
-        {
-            // A reviewed tab going away is what frees a slot; ReleaseTabAsync restarts the run if it
-            // had stopped for want of one. Restarting it unconditionally here would start a second
-            // one on top of a run that never paused.
-            await ReleaseTabAsync(tab);
-            return;
-        }
-
-        if (_stopRequested)
-        {
-            IsAutomaticQueueRunning = false;
-            StatusMessage = "Marked submitted. Automation is stopped; nothing further was started.";
-            return;
-        }
-        IsAutomaticQueueRunning = true;
-        await OpenNextWorkItemAsync();
+        await ContinueAfterParkingAsync(item);
     }
 
     [RelayCommand]
@@ -765,7 +782,8 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     }
 
     /// <summary>Hands the current tab over to the reviewer and takes it off the run.</summary>
-    private void ParkTabForReview(JobLinkQueueItem item, string summary)
+    private void ParkTabForReview(JobLinkQueueItem item, string summary,
+        string status = JobLinkQueueStatuses.ReadyForReview)
     {
         var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
         if (tab == null)
@@ -774,7 +792,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             Tabs.Add(tab);
         }
         tab.IsAutomation = false;
-        tab.Status = JobLinkQueueStatuses.ReadyForReview;
+        tab.Status = status;
         tab.Summary = summary;
         NotifyTabState();
     }
@@ -1143,7 +1161,14 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         await OpenNextWorkItemAsync();
     }
 
-    public async Task MarkAutomationFailureAsync(Guid workItemId, string message)
+    /// <param name="scope">
+    /// Whether this failure is evidence that the <em>run</em> is broken, or only that this posting
+    /// is. Three unreadable job pages in a row used to end a batch of twenty and leave seventeen
+    /// good links untouched, because every failure counted the same. A posting the automation cannot
+    /// read says nothing about the next one; ChatGPT being signed out says everything.
+    /// </param>
+    public async Task MarkAutomationFailureAsync(Guid workItemId, string message,
+        FailureScope scope = FailureScope.Machinery)
     {
         var item = JobQueue.FirstOrDefault(x => x.Id == workItemId);
         if (item == null) return;
@@ -1156,7 +1181,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         await SaveQueueAsync();
         RecordFailure("Application automation failed", $"{item.Url}: {message}");
 
-        _consecutiveFailures++;
+        if (scope == FailureScope.Machinery) _consecutiveFailures++;
+        else _trace.Step("Run", "link skipped", "a posting-level failure; the run keeps going");
+
         var keepGoing = IsAutomaticQueueRunning && _consecutiveFailures < ConsecutiveFailureLimit &&
                         JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued);
         if (keepGoing)
@@ -1194,8 +1221,11 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             "not settle it, choose the option that keeps the application eligible. Consent, availability, " +
             "willingness to relocate and acknowledgements are the applicant's own choice. Read the " +
             "direction first — consent to a background check is yes, requiring visa sponsorship is no. " +
-            "Never assert an unstated checkable claim (work authorisation, a degree, a licence, a " +
-            "clearance, employment dates); leave those empty.\n\n" +
+            "Eligibility facts (work authorisation, a degree, a licence, a clearance, employment dates) " +
+            "come from the reference data where it states them; where it is silent, take the answer " +
+            "that keeps the application eligible. A question carrying options never comes back " +
+            "empty — a blank ends the application unread, which is the same outcome as an " +
+            "ineligible answer and has no upside.\n\n" +
             "Where a question carries \"options\", the answer must be exactly one of them, copied character " +
             "for character; with \"multiple\": true, a comma-separated subset. Where it is marked " +
             "\"type\": \"dropdown\" with no options, answer with the short value most likely to be in the list.\n\n" +
@@ -1217,8 +1247,65 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             if (string.IsNullOrWhiteSpace(pair.Value)) continue;
             values[pair.Key] = pair.Value;
         }
-        return values.Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+        var filled = values.Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in filled.Keys.ToArray())
+        {
+            var corrected = EligibleAnswer(key, filled[key]);
+            if (corrected == null) continue;
+            _trace.Warn("Fill", "eligibility answer corrected",
+                $"\"{key.Trim()}\": \"{filled[key]}\" would end this application; sending \"{corrected}\"");
+            filled[key] = corrected;
+        }
+        return filled;
+    }
+
+    /// <summary>
+    /// The eligible answer to a screening question, when the one we hold is the disqualifying one.
+    /// Null means leave it alone — either it is not a screening question, or the answer is already
+    /// the one that keeps the application alive.
+    ///
+    /// <para>
+    /// This exists because a live run answered "Will you require sponsorship for US employment visa
+    /// status now or in the future?" with Yes, clicked it, and verified it. Nothing was broken in
+    /// the filling; the answer itself was the end of the application. Direction is the whole
+    /// difficulty with these questions — "are you authorised to work here" and "will you require
+    /// sponsorship" want opposite words for the same underlying fact — and it is the thing a model
+    /// gets wrong, in one direction, under a prompt that says exactly what to do.
+    /// </para>
+    ///
+    /// <para>
+    /// It corrects only yes/no answers to questions whose direction is unambiguous, and never
+    /// invents an answer where none was given: a blank stays blank for the correction round.
+    /// </para>
+    /// </summary>
+    private static string? EligibleAnswer(string question, string answer)
+    {
+        var said = answer.Trim().ToLowerInvariant();
+        var yes = said is "yes" or "y" or "true";
+        var no = said is "no" or "n" or "false";
+        if (!yes && !no) return null;
+
+        var text = question.ToLowerInvariant();
+        // Needing something from the employer disqualifies; the eligible answer is no. Keyed on the
+        // verb rather than a list of phrasings, because the phrasings are endless and the verb is
+        // what carries the direction: "do you need a work visa" and "will you require sponsorship"
+        // are the same question, and a fixed phrase list caught only the second.
+        var needsSomething = Regex.IsMatch(text,
+            @"\b(require|requires|need|needs)\b[^.?]{0,40}\b(sponsor\w*|visas?|work permits?|work authoriz\w*|work authoris\w*)\b")
+            || text.Contains("sponsorship for") || text.Contains("sponsor you");
+        // Already being allowed to work qualifies; the eligible answer is yes.
+        var alreadyAllowed = text.Contains("authorized to work") || text.Contains("authorised to work") ||
+                             text.Contains("legally authorized") || text.Contains("legally authorised") ||
+                             text.Contains("eligible to work") || text.Contains("right to work") ||
+                             text.Contains("legally able to work");
+
+        // A question can read both ways — "are you authorised to work without requiring sponsorship"
+        // — and guessing at those is how a guard like this does harm. Leave them to the model.
+        if (needsSomething && alreadyAllowed) return null;
+        if (needsSomething) return yes ? "No" : null;
+        if (alreadyAllowed) return no ? "Yes" : null;
+        return null;
     }
 
 
@@ -1255,7 +1342,6 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var settings = await _settings.GetAsync();
         // Clamped: one tab is the old one-at-a-time behaviour, and past a handful the browsers cost
         // more memory than the overlap saves attention.
-        MaxReviewTabs = Math.Clamp(settings.MaxReviewTabs, 1, 8);
         var items = settings.JobLinkQueues.TryGetValue(profile.Id.ToString(), out var saved)
             ? saved.Select(item => item.Clone()).ToList() : new List<JobLinkQueueItem>();
         JobQueue.Clear();

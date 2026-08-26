@@ -3,7 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 10.1.2
+- **Desktop app version:** 10.9.0
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
 The repo root's [README](../README.md) is the project overview and setup guide. This file is the
@@ -73,7 +73,7 @@ repository scopes its queries to the signed-in `app_user.id`, and a query issued
 throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
 DevStrider creates its `ds_users` row and seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v10.1.2`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v10.9.0`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -289,8 +289,40 @@ The extension drives the app through these endpoints on `http://127.0.0.1:8765`:
 | `GET`  | `/browse-word` | Native file picker for the .docm path |
 
 The loopback binding is what stands in for authentication: nothing off this machine can reach it.
-Requests therefore carry no credential and are served as whoever is signed in — which is why the
-listener starts only **after** login.
+Requests therefore carry no credential and are served as whoever is signed in, so every endpoint
+above answers **401 until there is a signed-in account**.
+
+### Developer endpoints (`/dev`)
+
+Settings → Local listener → **Developer tools**. On by default while the automation is being built.
+
+Almost everything hard about this app happens inside a signed-in ChatGPT session or a live
+application form — pages that exist on one machine and cannot be reproduced anywhere else. Before
+these, the only evidence that reached a diagnosis was a trace line saying something was not found,
+which never says what *was* there.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`  | `/dev` | Lists these routes |
+| `GET`  | `/dev/state` | Version, sign-in, settings, queue, review tabs, automation flags |
+| `GET`  | `/dev/log?n=&level=&q=` | Activity + trace entries, newest first |
+| `GET`  | `/dev/browsers` | Registered browsers and what each has open |
+| `GET`  | `/dev/composer` | Every ChatGPT composer candidate, scored, with reasons |
+| `GET`  | `/dev/dom?target=&selector=` | `outerHTML` from either browser |
+| `GET`  | `/dev/text?target=&selector=` | `innerText` from either browser |
+| `POST` | `/dev/eval` | `{target, script}` — run script, return its JSON |
+| `GET`  | `/dev/shot?target=` | PNG of what that browser is showing |
+| `POST` | `/dev/command` | `start`, `stop`, `skip`, `clear-queue`, `requeue-failed`, `add-links` |
+
+`target` is `chatgpt` or `job`; `job` means whichever tab automation currently holds.
+
+With developer tools on, the listener opens **at launch** rather than after sign-in, so a run that
+never got past the login window can still be looked at. `/dev/*` is the only family that works
+before sign-in.
+
+**Turn this off for anyone who is not developing the app.** `/dev/eval` runs arbitrary script inside
+a signed-in ChatGPT browser. Loopback is the same trust boundary the rest of the listener has always
+had, but this is a switch rather than something always on for a reason.
 
 `/refresh-word` is **serialized app-wide**: Word only ever has one instance of the .docm open, so
 concurrent calls (multiple Chrome profiles/windows bidding at once) queue behind each other rather

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.ViewModels;
@@ -64,6 +65,28 @@ public partial class JobBrowserView : UserControl
 
     private WebView2 JobSiteBrowser =>
         _automationBrowser ?? _unassignedBrowser ?? (_placeholder ??= new WebView2());
+
+    /// <summary>
+    /// The dev bridge if the container is up. A view built by a test harness has no container, and
+    /// diagnostics failing to register is not a reason for the browser not to start.
+    /// </summary>
+    private static DevBridge? DevBridgeSafe()
+    {
+        try { return App.Services?.GetService(typeof(DevBridge)) as DevBridge; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>Any browser with a live page, for diagnostics when no run is in progress.</summary>
+    private CoreWebView2? FirstLiveBrowser() =>
+        _unassignedBrowser?.CoreWebView2 ??
+        _browsers.Values.Select(browser => browser.CoreWebView2).FirstOrDefault(core => core != null);
+
+    /// <summary>The browser behind the nth review tab, in the order the tab strip shows them.</summary>
+    private CoreWebView2? TabBrowserAt(int index)
+    {
+        if (DataContext is not JobBrowserViewModel vm || index >= vm.Tabs.Count) return null;
+        return _browsers.TryGetValue(vm.Tabs[index].WorkItemId, out var browser) ? browser.CoreWebView2 : null;
+    }
 
     /// <summary>Builds a browser, wires it, and puts it in the host behind the tabs.</summary>
     private async Task<WebView2> CreateBrowserAsync()
@@ -159,8 +182,38 @@ public partial class JobBrowserView : UserControl
 
     private void OnSelectTab(object sender, RoutedEventArgs e)
     {
-        if (DataContext is JobBrowserViewModel vm && sender is FrameworkElement { Tag: ApplicationTabViewModel tab })
-            vm.SelectedTab = tab;
+        if (DataContext is not JobBrowserViewModel vm ||
+            sender is not FrameworkElement { Tag: ApplicationTabViewModel tab } element) return;
+        vm.SelectedTab = tab;
+
+        // Ctrl+click opens the tab's actions. Both of them act on the selected tab, so selecting it
+        // first is what makes the menu mean this tab rather than whichever was last looked at.
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0 || element.ContextMenu == null) return;
+        element.ContextMenu.PlacementTarget = element;
+        element.ContextMenu.DataContext = tab;
+        element.ContextMenu.IsOpen = true;
+    }
+
+    /// <summary>Selects the tab a menu item belongs to, so the view model's commands target it.</summary>
+    private ApplicationTabViewModel? SelectTabFor(object sender)
+    {
+        if (DataContext is not JobBrowserViewModel vm) return null;
+        var tab = (sender as FrameworkElement)?.DataContext as ApplicationTabViewModel
+                  ?? vm.SelectedTab;
+        if (tab != null) vm.SelectedTab = tab;
+        return tab;
+    }
+
+    private void OnTabMarkSubmitted(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not JobBrowserViewModel vm || SelectTabFor(sender) == null) return;
+        vm.MarkSubmittedAndContinueCommand.Execute(null);
+    }
+
+    private void OnTabRemove(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not JobBrowserViewModel vm || SelectTabFor(sender) == null) return;
+        vm.CloseSelectedTabCommand.Execute(null);
     }
 
     private bool _initialized;
@@ -202,6 +255,19 @@ public partial class JobBrowserView : UserControl
             // runs. The first work item adopts it rather than opening a second.
             _unassignedBrowser = await CreateBrowserAsync();
             _unassignedBrowser.Visibility = Visibility.Visible;
+            // "job" always means whichever tab automation is driving right now, which is why this
+            // registers the property and not a browser: parking a tab for review swaps the object.
+            // The fallback matters more than it looks. Between runs there is no automation browser
+            // at all, and JobSiteBrowser then hands back an uninitialised placeholder — so "job"
+            // read as "not initialised" at exactly the moment worth inspecting, with a filled
+            // application sitting in a parked tab that nothing could reach.
+            DevBridgeSafe()?.Register("job", () => JobSiteBrowser.CoreWebView2 ?? FirstLiveBrowser());
+            // Every parked tab by position, so a filled application waiting on review can be read.
+            for (var slot = 0; slot < 8; slot++)
+            {
+                var index = slot;
+                DevBridgeSafe()?.Register($"tab{index}", () => TabBrowserAt(index));
+            }
             if (DataContext is JobBrowserViewModel vm)
             {
                 vm.QueueNavigationRequested += NavigateToQueuedLink;
@@ -279,7 +345,8 @@ public partial class JobBrowserView : UserControl
             if (!string.IsNullOrWhiteSpace(gate))
             {
                 if (vm.CurrentQueueItem != null)
-                    await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate);
+                    await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate,
+                        JobBrowserViewModel.FailureScope.Link);
                 return;
             }
 
@@ -289,7 +356,8 @@ public partial class JobBrowserView : UserControl
             if (!string.IsNullOrWhiteSpace(gate))
             {
                 if (vm.CurrentQueueItem != null)
-                    await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate);
+                    await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, gate,
+                        JobBrowserViewModel.FailureScope.Link);
                 return;
             }
 
@@ -309,12 +377,14 @@ public partial class JobBrowserView : UserControl
             // from that, so this link is done and the next one starts.
             Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
             if (vm.CurrentQueueItem != null)
-                await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, ex.Summary);
+                await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, ex.Summary,
+                    JobBrowserViewModel.FailureScope.Link);
         }
         catch (Exception ex)
         {
             if (vm.CurrentQueueItem != null)
-                await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id, "Could not read the job page: " + ex.Message);
+                await vm.MarkAutomationFailureAsync(vm.CurrentQueueItem.Id,
+                    "Could not read the job page: " + ex.Message, JobBrowserViewModel.FailureScope.Link);
         }
     }
 
@@ -965,7 +1035,29 @@ public partial class JobBrowserView : UserControl
 
     private async void FillApplicationAutomatically(ResumeAutomationResult result)
     {
-        if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
+        if (DataContext is not JobBrowserViewModel vm) return;
+
+        // The tab this resume belongs to can be gone by the time the resume arrives: submitting the
+        // previous application releases its browser, and a resume takes minutes. Returning quietly
+        // when that happened left the item sitting in "Generating resume" for ever with the queue
+        // still marked running — no trace line, no failure, no retry. That is the stall that reads
+        // as the app hanging, and it cost a finished resume every time. Re-open the tab instead, and
+        // if that cannot be done, say so and let the run move on.
+        if (JobSiteBrowser.CoreWebView2 == null)
+        {
+            Trace?.Warn("Fill", "no application browser for the finished resume",
+                "the tab was released while the resume was generating; re-opening it");
+            await OpenAutomationTabAsync(result.WorkItemId);
+            if (JobSiteBrowser.CoreWebView2 == null)
+            {
+                await vm.MarkAutomationFailureAsync(result.WorkItemId,
+                    "The resume finished, but no application tab could be opened to fill it. " +
+                    "The resume is saved; retry the link from the queue.");
+                return;
+            }
+            if (TryGetHttpUri(result.JobUrl, out var reopened)) await NavigateAsync(reopened);
+        }
+
         var contract = new FlowContract(Trace);
         try
         {
@@ -1022,14 +1114,41 @@ public partial class JobBrowserView : UserControl
             // the empty fields are the only evidence left, so they drive the second pass. They are
             // matched against the question inventory on the way through, so protected and demographic
             // fields, which have no question entry, cannot reach ChatGPT this way.
+            // What the site said when Submit was pressed is the second pass's input, and nothing
+            // else is as good: the site knows which answers it will not take, and this run has just
+            // proved how wrong a client-side guess can be.
+            //
+            // The fallback only exists because Submit can produce no verdict at all — the click
+            // lands, the page does not move — and something still has to drive the correction. It
+            // used to be every empty field on the page, which meant optional ones nobody asked for:
+            // a live run sent GitHub URL, Portfolio URL and Other website to ChatGPT and got three
+            // blanks back, having spent a round trip on questions the form was happy to leave empty.
+            // Required-and-empty only, now.
+            // Required, plus the screening questions that decide eligibility whether or not the form
+            // marks them required. "Are you authorized to work in the United States?" was optional on
+            // one form and left blank, which is a worse answer than either option: a recruiter
+            // filtering on it drops the application, and nothing about leaving it empty is neutral.
+            var chase = fill.UnfilledRequired
+                .Concat(fill.Unfilled.Where(IsEligibilityQuestion))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var correctionQuestions = validation.Errors.Count > 0
                 ? await BuildCorrectionQuestionsAsync(vm, [], validation.Errors)
-                : fill.Unfilled.Count > 0
-                    ? await BuildCorrectionQuestionsAsync(vm, fill.Unfilled, [])
+                : chase.Length > 0
+                    ? await BuildCorrectionQuestionsAsync(vm, chase, [])
                     : "[]";
-            if (validation.Errors.Count == 0 && fill.Unfilled.Count > 0)
-                Trace?.Step("Fill", "submit gave no verdict; second pass driven by empty fields",
-                    string.Join(" | ", fill.Unfilled.Take(10)));
+            if (validation.Errors.Count > 0)
+                Trace?.Step("Fill", $"second pass driven by {validation.Errors.Count} site error(s)",
+                    string.Join(" | ", validation.Errors.Take(10)
+                        .Select(error => error.Question == error.Message
+                            ? error.Message
+                            : $"{error.Question}: {error.Message}")));
+            else if (chase.Length > 0)
+                Trace?.Step("Fill", "second pass driven by required and eligibility fields",
+                    string.Join(" | ", chase.Take(10)));
+            else if (fill.Unfilled.Count > 0)
+                Trace?.Step("Fill", "no second pass",
+                    $"{fill.Unfilled.Count} field(s) are empty, none required and none a screener: " +
+                    string.Join(" | ", fill.Unfilled.Take(8)));
             if (await vm.RequestAnswerCorrectionAsync(correctionQuestions)) return;
 
             // A challenge that appears only once the form is filled is still the human's to solve at
@@ -1045,7 +1164,8 @@ public partial class JobBrowserView : UserControl
         catch (FlowFormatException ex)
         {
             Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
-            await vm.MarkAutomationFailureAsync(result.WorkItemId, ex.Summary);
+            await vm.MarkAutomationFailureAsync(result.WorkItemId, ex.Summary,
+                JobBrowserViewModel.FailureScope.Link);
         }
         catch (Exception ex)
         {
@@ -1055,7 +1175,17 @@ public partial class JobBrowserView : UserControl
 
     private async void RefillApplicationAutomatically(Guid workItemId)
     {
-        if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
+        if (DataContext is not JobBrowserViewModel vm) return;
+        // Same silent dead end as the fill path: corrections that arrive after the tab went away
+        // used to vanish without a word.
+        if (JobSiteBrowser.CoreWebView2 == null)
+        {
+            Trace?.Warn("Fill", "no application browser for the corrected answers",
+                "the tab was released while ChatGPT was answering");
+            await vm.MarkAutomationFailureAsync(workItemId,
+                "Corrected answers came back after the application tab had closed. Retry that link.");
+            return;
+        }
         if (vm.CurrentQueueItem?.Id != workItemId)
         {
             // The refill is the last step of the correction round. Dropping it silently because the
@@ -1092,7 +1222,8 @@ public partial class JobBrowserView : UserControl
         catch (FlowFormatException ex)
         {
             Trace?.Warn("Run", "abandoning link on a format violation", ex.Summary);
-            await vm.MarkAutomationFailureAsync(workItemId, ex.Summary);
+            await vm.MarkAutomationFailureAsync(workItemId, ex.Summary,
+                JobBrowserViewModel.FailureScope.Link);
         }
         catch (Exception ex)
         {
@@ -1191,6 +1322,25 @@ public partial class JobBrowserView : UserControl
         // Keep the minimum long enough that a generic "Name" cannot match "Company name".
         return field.Length >= 5 && candidate.Contains(field, StringComparison.Ordinal) ||
                candidate.Length >= 8 && field.Contains(candidate, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether a label is a screening question — the kind that decides whether an application is
+    /// read at all. These are chased even when the form leaves them optional, because a blank is not
+    /// a neutral answer to "are you authorised to work here": a recruiter filtering on it drops the
+    /// application, exactly as an ineligible answer would, and with none of the upside.
+    /// </summary>
+    private static bool IsEligibilityQuestion(string label)
+    {
+        var text = RemoveDropdownSuffix(label).ToLowerInvariant();
+        if (text.Length == 0) return false;
+        return text.Contains("authoriz") || text.Contains("authoris") ||
+               text.Contains("sponsor") || text.Contains("visa") ||
+               text.Contains("work permit") || text.Contains("right to work") ||
+               text.Contains("legally able to work") || text.Contains("eligible to work") ||
+               text.Contains("background check") || text.Contains("background investigation") ||
+               text.Contains("drug test") || text.Contains("relocate") || text.Contains("willing to travel") ||
+               text.Contains("notice period") || text.Contains("start date") || text.Contains("available to start");
     }
 
     private static string RemoveDropdownSuffix(string value) =>
@@ -1300,8 +1450,31 @@ public partial class JobBrowserView : UserControl
                     aggregate.Filled + nextFill.Filled,
                     aggregate.Skipped + nextFill.Skipped,
                     aggregate.Touched.Concat(nextFill.Touched).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                    nextFill.Unfilled);
+                    nextFill.Unfilled,
+                    nextFill.UnfilledRequired);
                 continue;
+            }
+
+            // An application with a required question still unanswered must not reach an employer
+            // without a person seeing it. This gate did not exist: a run filled seven fields, logged
+            // "leaving it for review" against nine more — Country, Location, work authorisation,
+            // years of experience — and then clicked Submit anyway, and the job site accepted it.
+            // Nothing reviewed anything. The submission is not recoverable, which is what makes this
+            // the one place in the run worth refusing to act.
+            // Submit is pressed after every fill, and the site's answer is the review material: a
+            // confirmation page is proof the application landed, and a rejection names what is
+            // actually wrong far better than this app's reading of the form can. Where a required
+            // field still looks empty from here, that is said out loud rather than used as a reason
+            // to stop — one of the two readings is wrong, and the site owns the authoritative one.
+            if (action == "final" && aggregate.UnfilledRequired.Count > 0)
+            {
+                Trace?.Warn("Validate", "submitting with fields this app reads as required and empty",
+                    string.Join(" | ", aggregate.UnfilledRequired.Take(12)));
+                notes.Add($"Submitted with {aggregate.UnfilledRequired.Count} field(s) this app still " +
+                          "read as required and empty: " +
+                          string.Join("; ", aggregate.UnfilledRequired.Take(6)) +
+                          (aggregate.UnfilledRequired.Count > 6 ? "; …" : "") +
+                          " Check what the site returned.");
             }
 
             if (action == "final" && TryCoordinates(root, out var submitX, out var submitY))
@@ -1476,12 +1649,16 @@ public partial class JobBrowserView : UserControl
 
         await Task.Delay(800);
         var outstandingJson = await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.OutstandingFieldsScript);
-        var outstanding = JsonSerializer.Deserialize<string[]>(outstandingJson) ?? [];
+        using var outstandingDocument = JsonDocument.Parse(outstandingJson);
+        var outstanding = StringList(outstandingDocument.RootElement, "all").ToArray();
+        var outstandingRequired = StringList(outstandingDocument.RootElement, "required").ToArray();
         // Ashby's chosen-value element has a generated class, so an exact option click can persist
         // even when the generic visual probe cannot identify it. Do not report that confirmed click
         // as empty; the site itself remains the final authority at human review.
-        outstanding = outstanding.Where(item => !comboTouched.Any(label =>
-            NormalizeFieldLabel(item).StartsWith(NormalizeFieldLabel(label), StringComparison.Ordinal))).ToArray();
+        bool ConfirmedCombo(string item) => comboTouched.Any(label =>
+            NormalizeFieldLabel(item).StartsWith(NormalizeFieldLabel(label), StringComparison.Ordinal));
+        outstanding = outstanding.Where(item => !ConfirmedCombo(item)).ToArray();
+        outstandingRequired = outstandingRequired.Where(item => !ConfirmedCombo(item)).ToArray();
 
         var textKeys = textLabels.Select(NormalizeFieldLabel).ToHashSet(StringComparer.Ordinal);
         var choiceKeys = choiceLabels.Select(NormalizeFieldLabel).ToHashSet(StringComparer.Ordinal);
@@ -1501,7 +1678,8 @@ public partial class JobBrowserView : UserControl
             root.GetProperty("skipped").GetInt32(),
             nonTextTouched.Concat(textTouched).Concat(choiceTouched).Concat(comboTouched)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            outstanding);
+            outstanding,
+            outstandingRequired);
     }
 
     private async Task<(int Planned, int Filled, List<string> Labels, List<string> Touched)>
@@ -1693,41 +1871,81 @@ public partial class JobBrowserView : UserControl
             using var typed = JsonDocument.Parse(typedJson);
             if (!typed.RootElement.TryGetProperty("ok", out var ok) || !ok.GetBoolean()) continue;
 
-            await Task.Delay(450);
-            var committedJson = await JobSiteBrowser.ExecuteScriptAsync(
-                JobSiteFormAdapters.BuildComboboxCommitScript(index, value));
-            Trace?.Step("Dropdown", $"committed \"{label}\"", committedJson);
-            using var committed = JsonDocument.Parse(committedJson);
-            var commitMethod = committed.RootElement.TryGetProperty("method", out var method)
-                ? method.GetString() ?? ""
-                : "";
-            var browserCommitted = false;
-            if (committed.RootElement.TryGetProperty("ok", out var commitOk) && commitOk.GetBoolean())
-            {
-                if (commitMethod == "mouse-target" &&
-                    committed.RootElement.TryGetProperty("x", out var xElement) &&
-                    committed.RootElement.TryGetProperty("y", out var yElement))
-                {
-                    await DispatchBrowserMouseClickAsync(xElement.GetDouble(), yElement.GetDouble());
-                    browserCommitted = true;
-                }
-                else if (commitMethod == "enter-target")
-                {
-                    await DispatchBrowserEnterAsync();
-                }
-            }
-            // Poll rather than read once. Verification requires the menu to have closed and the
-            // chosen value to have rendered, and react-select does both a frame or two after the
-            // click — a single read at 450ms caught it mid-flight and reported ok:false every time.
+            // Two goes at the pick itself. The option is chosen by clicking a point the page told us
+            // about on an earlier round trip, and a page that scrolls in between turns that point
+            // into somewhere else — a missed click leaves the right answer sitting unpicked in an
+            // open menu. Reopening and retyping costs about a second and turns that into a retry
+            // rather than a field left for review.
             var confirmed = false;
             var verifiedJson = "";
-            for (var attempt = 0; attempt < 6 && !confirmed; attempt++)
+            var browserCommitted = false;
+            for (var pick = 0; pick < 2 && !confirmed; pick++)
             {
-                await Task.Delay(attempt == 0 ? 450 : 250);
-                verifiedJson = await JobSiteBrowser.ExecuteScriptAsync(
-                    JobSiteFormAdapters.BuildComboboxVerifyScript(index, value));
-                using var probe = JsonDocument.Parse(verifiedJson);
-                confirmed = probe.RootElement.TryGetProperty("ok", out var done) && done.GetBoolean();
+                if (pick > 0)
+                {
+                    Trace?.Step("Dropdown", $"retrying the pick for \"{label}\"", "the first click did not take");
+                    await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildComboboxCloseScript(index));
+                    await Task.Delay(300);
+                    await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildComboboxOpenScript(index));
+                    await Task.Delay(400);
+                    await JobSiteBrowser.ExecuteScriptAsync(JobSiteFormAdapters.BuildComboboxTypeScript(index, value));
+                }
+
+                await Task.Delay(450);
+                var committedJson = await JobSiteBrowser.ExecuteScriptAsync(
+                    JobSiteFormAdapters.BuildComboboxCommitScript(index, value));
+                Trace?.Step("Dropdown", $"committed \"{label}\"", committedJson);
+                using var committed = JsonDocument.Parse(committedJson);
+                var commitMethod = committed.RootElement.TryGetProperty("method", out var method)
+                    ? method.GetString() ?? ""
+                    : "";
+                if (committed.RootElement.TryGetProperty("ok", out var commitOk) && commitOk.GetBoolean())
+                {
+                    if (commitMethod == "mouse-target" &&
+                        committed.RootElement.TryGetProperty("x", out var xElement) &&
+                        committed.RootElement.TryGetProperty("y", out var yElement))
+                    {
+                        // Let the menu finish settling, then ask again where the option is. The
+                        // coordinates above were measured in the same task that scrolled it into
+                        // view, and a floating list moves after that — clicking the stale point put
+                        // the click on the page behind the menu.
+                        var x = xElement.GetDouble();
+                        var y = yElement.GetDouble();
+                        await Task.Delay(220);
+                        var retargetJson = await JobSiteBrowser.ExecuteScriptAsync(
+                            JobSiteFormAdapters.ComboboxRetargetScript);
+                        using var retarget = JsonDocument.Parse(retargetJson);
+                        if (retarget.RootElement.TryGetProperty("ok", out var fresh) && fresh.GetBoolean())
+                        {
+                            var newX = retarget.RootElement.GetProperty("x").GetDouble();
+                            var newY = retarget.RootElement.GetProperty("y").GetDouble();
+                            if (Math.Abs(newX - x) > 2 || Math.Abs(newY - y) > 2)
+                                Trace?.Step("Dropdown", $"option moved before the click for \"{label}\"",
+                                    $"{x:F0},{y:F0} -> {newX:F0},{newY:F0}");
+                            x = newX;
+                            y = newY;
+                        }
+                        else Trace?.Warn("Dropdown", $"could not re-find the option for \"{label}\"", retargetJson);
+
+                        await DispatchBrowserMouseClickAsync(x, y);
+                        browserCommitted = true;
+                    }
+                    else if (commitMethod == "enter-target")
+                    {
+                        await DispatchBrowserEnterAsync();
+                    }
+                }
+                // Poll rather than read once. Verification requires the menu to have closed and the
+                // chosen value to have rendered, and react-select does both a frame or two after the
+                // click — a single read at 450ms caught it mid-flight and reported ok:false every time.
+                for (var attempt = 0; attempt < 6 && !confirmed; attempt++)
+                {
+                    await Task.Delay(attempt == 0 ? 450 : 250);
+                    verifiedJson = await JobSiteBrowser.ExecuteScriptAsync(
+                        JobSiteFormAdapters.BuildComboboxVerifyScript(index, value));
+                    using var probe = JsonDocument.Parse(verifiedJson);
+                    confirmed = probe.RootElement.TryGetProperty("ok", out var done) && done.GetBoolean();
+                }
             }
             Trace?.Step("Dropdown", $"verified \"{label}\"",
                 $"{verifiedJson} (committed={browserCommitted})");
@@ -1760,9 +1978,17 @@ public partial class JobBrowserView : UserControl
         }));
     }
 
+    /// <param name="UnfilledRequired">
+    /// The subset of <paramref name="Unfilled"/> the form itself marks required. This is what
+    /// decides whether an application may go to an employer without a person seeing it. Unanswered
+    /// optional questions are on every form ever written — the EEO block alone guarantees several —
+    /// so gating on <paramref name="Unfilled"/> would mean nothing ever submits, and gating on
+    /// nothing at all is what sent an incomplete application to a real employer.
+    /// </param>
     private sealed record FillOutcome(
         string Adapter, int Filled, int Skipped,
-        IReadOnlyList<string> Touched, IReadOnlyList<string> Unfilled);
+        IReadOnlyList<string> Touched, IReadOnlyList<string> Unfilled,
+        IReadOnlyList<string> UnfilledRequired);
 
     private sealed record ApplicationValidationOutcome(
         FillOutcome Fill,

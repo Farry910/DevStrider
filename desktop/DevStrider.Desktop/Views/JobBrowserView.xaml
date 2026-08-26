@@ -26,6 +26,15 @@
                  the pane. -->
             <Button Click="OnSelectTab" Tag="{Binding}" Style="{StaticResource ApplicationTab}"
                     Margin="0,0,6,6">
+              <!-- Ctrl+click opens this, and so does a right-click. A modifier that acted on its own
+                   would put "remove this application" one slip away from a plain tab switch, so the
+                   gesture opens the choice rather than making it. -->
+              <Button.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Mark submitted" Click="OnTabMarkSubmitted"/>
+                  <MenuItem Header="Remove from the list" Click="OnTabRemove"/>
+                </ContextMenu>
+              </Button.ContextMenu>
               <Button.ToolTip>
                 <StackPanel MaxWidth="420">
                   <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/>

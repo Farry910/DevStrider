@@ -191,7 +191,6 @@ public partial class SettingsViewModel : ViewModelBase
         try
         {
             Model.ResumeGenerationsPerChat = Math.Clamp(Model.ResumeGenerationsPerChat, 1, 50);
-            Model.MaxReviewTabs = Math.Clamp(Model.MaxReviewTabs, 1, 8);
             // Blank means "keep what's there" — the box renders empty on every load, so treating
             // blank as "clear it" would silently disconnect anyone who saved an unrelated setting.
             if (!string.IsNullOrEmpty(R2SecretEntry))

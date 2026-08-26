@@ -677,8 +677,290 @@
          Clear list empties the queue, including mid-run, which is when you want it. Links open for
          review or being worked on right now are kept: the automation is inside one of them, a parked
          tab is a filled application waiting on a person, and dropping either would leave a browser
-         tab pointing at a queue entry that no longer exists. -->
-    <Version>10.1.2</Version>
+         tab pointing at a queue entry that no longer exists.
+
+         10.2.0 fixes which box the prompt goes into, opens the app up to be diagnosed from outside
+         itself, and stops a run of bad links from ending a good batch.
+
+         The composer bug first. "The composer" was defined by what it is not: not inside a
+         transcript turn, not disabled, and failing that, simply the last text input on the page.
+         Click Edit on a reply and ChatGPT puts a second real textarea above the composer - visible,
+         enabled, and on some builds not inside anything the transcript selectors recognise. The
+         prompt went into the open reply, nothing was sent, and the run waited out its full reply
+         timeout for an answer to a question it never asked.
+
+         The composer is identified by what it is now. It is the input that sits in a box with the
+         attach control, the send button and the model dropdown - furniture that appears once on the
+         page, around the real composer and nowhere else. Candidates are scored on how much of it
+         they can see. In the harness the open editor scores -3 against the composer's 21, and it
+         still loses when it is the last input on the page, when its turn carries no marker at all,
+         and when ChatGPT has taken away the composer's id and its test ids. No single signal is
+         decisive: any one of them written as a hard requirement is a run that stops dead the week
+         ChatGPT renames something.
+
+         Two things made that bug expensive rather than merely wrong. The rule existed in four
+         copies that had drifted apart, so the element the text was placed in was not necessarily
+         the one the send targeted - all four share one definition now. And the failure said only
+         "input not found", which never says what was there. It now names every candidate it
+         rejected and why.
+
+         Which is the same reason for the /dev endpoints. Everything hard about this app happens
+         inside a signed-in ChatGPT session or a live application form - pages that exist on one
+         machine and cannot be reproduced anywhere else - and the only evidence that ever reached a
+         diagnosis was a trace line saying something was missing. So: /dev/state, /dev/log,
+         /dev/browsers, /dev/composer, /dev/dom, /dev/text, /dev/eval, /dev/shot and /dev/command,
+         on the loopback listener that already existed. Script, DOM and a picture, on the real
+         session, without attaching a debugger or shipping a build. It is a switch in Settings and
+         it is on by default while this is being built; /dev/eval runs arbitrary script in a
+         signed-in browser, so it comes off before the app goes to anyone who is not developing it.
+
+         Last, failures. Three in a row stopped the run, and every failure counted the same. A
+         posting whose description will not parse says nothing about the next posting; ChatGPT being
+         signed out says everything about it. Those are now separate: a link-level failure skips and
+         the run carries on however many there are, and only a machinery failure counts towards
+         stopping. Reaching review resets the count, so the limit means three failures with nothing
+         working in between.
+
+         The endpoints then found something on their first outing, which is the argument for them.
+         Pointed at the Lyft form that had just failed, the app's own matcher reported it would put
+         the applicant's full name into Company name. The alias "name" is four characters and matches
+         by containment, so it sat inside "company name" - and inside "school name", "reference
+         email", "manager phone" and "emergency contact phone" too, every one of them answered with
+         the applicant's own details. Containment now stops at a label naming another party;
+         an exact match still goes through. Confirmed against the live form: seven fields filled
+         became six, and the employer's box was left for a person.
+
+         10.3.0 comes entirely out of running the automation against the live app and reading what
+         came back. Nine defects, every one found by watching a real run rather than reading code.
+
+         The worst: applications were submitted with required fields unanswered. A run filled seven
+         fields on a Greenhouse form, logged "leaving it for review" against nine more - Country,
+         Location, work authorisation, years of experience - and then clicked Submit anyway. The job
+         site accepted it. Nothing reviewed anything, and a submission is not recoverable. Final
+         Submit is now refused while any field the form marks required is still unanswered; the
+         application parks for review with the list. Required is read from the form itself, after
+         typing, not from the pre-typing snapshot the fill script returns - wiring it to that
+         snapshot made the gate refuse forms it had just filled, naming Full name and Email as empty
+         moments after verifying both.
+
+         Underneath that sat the reason those fields looked empty. Element.closest() matches the
+         element itself, and a react-select control IS an <input role="combobox">, so every lookup
+         for the rendered chosen value resolved to the input - which has no children. Dropdowns that
+         had been set correctly reported as unanswered in four places at once: the verify probe, the
+         outstanding list, the plan, and the fill. A parked tab showed select__single-value reading
+         "Cuautitlán Izcalli, México, Mexico" while the trace insisted that field was empty. One
+         shared helper now walks up from the control, stopping before an ancestor holding a second
+         combobox so it cannot read the neighbouring dropdown's answer.
+
+         The commit script also crashed outright on any form where the menu was not open:
+         controlledId is '' with no aria-controls, ''.split(/\s+/) is [''], getElementById('') is
+         null, and visible(null) threw. WebView2 reports a thrown script as the bare string "null",
+         so the host read a crash as "no option matched".
+
+         Two silent stalls. A resume arriving after its tab had been released hit a bare `return` -
+         the item sat in "Generating resume" for ever with the queue still marked running, no trace,
+         no failure, no retry, and a finished resume thrown away. It re-opens the tab now, and says
+         so if it cannot. The correction path had the same dead end.
+
+         Two ways one bad ChatGPT reply became many. A continuation sends the job description alone,
+         and by the fifth turn ChatGPT had stopped using the [Section]: labels the Word macro needs -
+         the format instruction was eight messages up. Continuations restate the contract now,
+         naming no labels because each profile picks its own. And a failure only abandoned the
+         conversation if it had just started it, so a drifted chat stayed in place and took the next
+         link down the same way, three in a row, until the run stopped on what looked like a
+         machinery streak and was really one conversation going bad.
+
+         Also: concurrent saves shared one settings.json.tmp and the loser got "the process cannot
+         access the file", surfacing mid-run as lost corrections; and ChatGPT's hidden accessibility
+         textarea could out-score the contenteditable for one render, costing a wasted attempt per
+         prompt.
+
+         Verified on the live app after the fixes: a Beacon Biosignals application filled with 8
+         fields verified and 0 outstanding, both dropdowns confirmed by their rendered values, and
+         submitted clean - while the Lyft form next to it was correctly refused, its unanswered list
+         down from fourteen fields to the four nobody can answer.
+
+         10.4.0 narrows what the second pass asks about, keeps the tab after a submission, and stops
+         the answer prompt refusing the questions that decide whether an application is read.
+
+         The prompt first, because it was contradicting itself. One paragraph said a required
+         question with options must never come back empty; a later one said never to assert an
+         unstated eligibility fact and named work authorisation among them. The second won: "Are you
+         legally authorized to work in the country where this role is based without restriction?",
+         options Yes and No, came back as "". A blank there is not the cautious answer — the
+         application ends unread, which is the same outcome as an ineligible answer and has no
+         upside, and applying for the role is itself the claim that you can hold it. Eligibility
+         facts now come from the reference data where it states them and take the eligible option
+         where it is silent, in all three prompts, which had drifted apart. The absolute refusal is
+         unchanged: government ID, national-insurance number, passport, licence, bank or card
+         details are never answered.
+
+         The second pass was carrying every empty field on the page. A live run sent GitHub URL,
+         Portfolio URL and Other website to ChatGPT and got three blanks back, having spent a round
+         trip on questions the form was happy to leave empty. The site's own errors drive it when
+         Submit produced any; when Submit produced no verdict at all, only required-and-empty fields
+         do. Fields that are empty and optional are now named in the trace and asked about by nobody.
+
+         And "submitted" is not the end of an application. Some sites e-mail a code and ask for it on
+         the same page; all of them show a confirmation worth reading. The tab used to close the
+         instant the site said submitted, which threw that away along with any chance of finishing a
+         two-step submission. It stays now, holding whatever the site is showing, and closing it is
+         what files the queue entry and frees the review slot.
+
+         Verified live on the question that started it: two options read off the control, "Yes"
+         chosen on the first pass and confirmed in the DOM, nine fields verified and none
+         outstanding, submitted clean — with no correction round at all — and the tab left open on
+         "Thank you for applying. Your application has been received."
+
+         10.5.0 gives the review tabs their two actions, and lets the correction pass press Submit.
+
+         Ctrl+click a tab — or right-click it — opens Mark submitted and Remove from the list. The
+         gesture opens the choice rather than making it: a modifier that acted on its own would put
+         "remove this application" one slip away from a plain tab switch. Marking a tab that is
+         already submitted is refused rather than counted twice, which it could be now that a
+         submitted tab stays open.
+
+         The submit gate was absolute, and on the second pass that was one refusal too many. The
+         first pass still holds back — there is a correction round to come, and submitting an
+         application known to be incomplete is the thing 10.3.0 exists to stop. But once that round
+         has been spent, everything answerable has been answered, and from there the site's verdict
+         is worth more than ours: a rejection names the real problem, while our "required" is
+         inferred from an asterisk. So the correction pass submits, and when it goes through with
+         fields this app still read as required and empty, that is said out loud in the note and the
+         trace rather than filed as a clean submission — one of the two readings is wrong, and only
+         one of them is recoverable.
+
+         Verified live on Natera: the first pass held back naming street address and Postal Code,
+         the second pass asked about exactly those two and nothing else, and after the refill it
+         pressed Submit with one field still outstanding and flagged it. Two other applications went
+         through the same run at 16 and 13 fields verified with nothing outstanding and no correction
+         round at all.
+
+         10.6.0 fixes two ways a bid could report success without producing anything, and clears out
+         four pieces of accumulated friction.
+
+         The worst one first: a run could attach a resume written for a different job. The file
+         resolver fell back to "newest folder written in the last ten minutes", and ten minutes is
+         several jobs in one run. With no [FolderName]: line at all it walked into the previous
+         application's folder, found a real PDF, and reported a successful generation. Freshness is
+         the test now, not existence: the moment the macro starts is passed in, and only a folder and
+         a file written after it count. Its sibling: when nothing was produced at all the run said
+         "Resume generated", handed an empty path to the job browser, and filled and submitted the
+         form with no resume attached. A bid without its resume is a failed bid and is reported as
+         one.
+
+         Both were fed by the resume chat. The conversation URL is remembered across restarts; the
+         count of resumes already written in it is not. Every launch therefore resumed an old chat
+         believing it was 0 of 10 used when it might hold forty, and a chat that long has the
+         [Section]: format instruction far above the fold — ChatGPT stops using it, the reply is a
+         fine resume the Word macro cannot read, and no resume gets made. A session starts a fresh
+         chat now, which costs one profile prompt and is the only honest reading of a counter that
+         starts at zero.
+
+         Then: Submit is pressed after every fill, because the site's answer is the review material
+         and its rejection names what is wrong far better than this app's reading of the form. Where
+         a required field still looks empty from here that is said out loud rather than used as a
+         reason to stop. The review ceiling is gone. Applied links leave the queue, while their tab
+         stays for the confirmation. Screening questions — work authorisation, sponsorship, visa,
+         background check, relocation, notice — are chased even when the form leaves them optional,
+         because a blank there loses the application as surely as an ineligible answer would. And one
+         answer chat now serves three applications rather than one, so a batch of thirty stops
+         leaving thirty conversations behind.
+
+         Verified on a live run: five applications through two answer chats instead of five, each
+         resume resolving to its own job's folder, the eligibility questions on Lumanu and BJAK
+         picked up on the second pass, two clean submissions, and their links gone from the queue
+         with the confirmation tabs still open.
+
+         10.7.0 finds the Submit button on forms that had none, and records the job board rather than
+         ChatGPT as where a bid came from.
+
+         Submit was located only through each adapter's selector list, and on Ashby every one of them
+         missed: its Submit sits outside any &lt;form&gt;, carries no type="submit" and no
+         role="button", so "form button", "button[type='submit']" and "[role='button']" all found
+         nothing. The candidate list came back empty, the action was "none", and the run filled a
+         complete application and never committed it — no submission, no errors, nothing to correct.
+         A selector list is a guess about markup; there is a backstop now. When the adapter finds
+         nothing, every pressable thing on the page is read and matched on its text, and the
+         bottom-most match wins, because the real Submit is the last thing on an application form.
+
+         That backstop needed to be narrower than the adapter matcher, not wider. "Apply" is a safe
+         word while the search is confined to form buttons and dangerous the moment it is not: an
+         embedded Greenhouse posting keeps an Apply button above the form, so the first version of
+         this matched it on the confirmation page, called a finished submission "still needs a final
+         click", and probed fourteen times for something that had already happened. The page-wide
+         reading takes submit and send/complete/finish application, and never a bare apply.
+
+         A Submit that exists but is switched off now reports as blocked rather than as absent. The
+         two are different problems and they read identically before.
+
+         Origin recorded "ChatGPT UI" on every automatic bid — how the resume was written, which says
+         nothing about the posting. It is the board now: Ashby, Greenhouse, Lever, or the site's own
+         host with the careers/jobs/boards subdomain trimmed so one company reads as one source.
+
+         Verified live: Ashby's Absci form, which had never once been committed, clicked Submit and
+         came back with the site's own "Education history is invalid"; a Lever form clicked Submit,
+         returned "Current location: Please fill out this field", drove a second pass on that one
+         field and submitted again; and two Greenhouse applications went through clean.
+
+         10.8.0 makes suggestion fields work — the kind that will not keep a typed value and only
+         accept an option you pick.
+
+         Lever's Current location is one. It is a plain input[type=text] with no combobox role and no
+         aria-autocomplete, so it went to the text pass, which typed into it, watched Lever clear it
+         on blur, reported "value did not persist", and left the application to be rejected for an
+         empty required field on every attempt, forever. The real answer goes into a hidden partner
+         input that only a picked option fills.
+
+         That hidden partner is the tell, and it is markup-shaped rather than site-shaped: a field
+         block holding one visible text box beside a hidden input whose name says it holds the
+         selected value is a control that demands a choice, whatever it looks like. Those now join
+         the dropdown pass, which already knew how to type, wait for a list, choose and read back —
+         precisely the sequence one of these needs and precisely what the text pass cannot do. Their
+         answer is read from the partner rather than from a rendered value element, in the plan, the
+         outstanding list and the verify probe alike.
+
+         Two general bugs surfaced underneath, both of which had been quietly costing picks on every
+         site. norm() stripped accents as punctuation, so "Cuautitlán" became "cuautitl n" and a
+         typed "Cuautitlan" matched nothing a Mexican city returns; accents are folded now, not
+         deleted. And option matching demanded equality, while a suggestion list answers a partial
+         query with a fuller string — type "Cuautitlan Izcalli", get "Cuautitlán Izcalli, México,
+         MEX". Equality still wins where it exists, with prefix and containment behind it, each
+         carrying a length floor so a two-letter query cannot select a country.
+
+         Verified live on the posting that had never once got past this field: the option picked,
+         Lever's hidden selectedLocation holding the chosen city, Submit clicked, and the site
+         answering "application submitted".
+
+         10.9.0 stops the app sending the one answer that ends an application, and stops a menu
+         moving out from under the click that was meant to choose from it.
+
+         The first is the serious one, and nothing was broken in the filling. A live run answered
+         "Will you require sponsorship for US employment visa status now or in the future?" with Yes,
+         clicked it, verified it as selected, and submitted. The answer itself was the end of the
+         application. Direction is the whole difficulty with these questions — "are you authorised to
+         work here" and "will you require sponsorship" want opposite words for the same underlying
+         fact — and it is exactly what a model gets wrong, in one direction, under a prompt that
+         spells out what to do. Screening answers are now checked before they are typed: where the
+         one we hold is the disqualifying one, the eligible one goes instead and the substitution is
+         traced. It keys on the verb rather than a list of phrasings, because the phrasings are
+         endless and the verb is what carries the direction; it corrects only yes/no answers, never
+         invents one where none was given, and leaves alone any question that reads both ways.
+
+         The second: Ashby's Location and School were typed, matched to the right option, clicked,
+         and left unpicked, so the form was rejected for a required field whose answer was visible on
+         screen at the time. The commit script scrolls the option into view and measures it in the
+         same synchronous task, but a floating menu repositions a frame or two later and the click
+         happens on a separate round trip after that — Location came back at y=122 for a menu that
+         settled at y=400, so the click landed on the page behind the list. The option is stashed
+         now and its position re-read immediately before the click, and the whole pick gets a second
+         attempt when the first does not take.
+
+         Verified live: the sponsorship question corrected from Yes to No, clicked and confirmed
+         selected, on the Absci form that had been failing on it — and that application submitted.
+         The retarget step is built and traced but the queue ran dry before a form with an Ashby
+         location dropdown came round again, so it is not yet confirmed on a live run. -->
+    <Version>10.9.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

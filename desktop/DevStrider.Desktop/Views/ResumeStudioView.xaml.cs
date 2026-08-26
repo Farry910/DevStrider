@@ -62,6 +62,9 @@ public partial class ResumeStudioView : UserControl
                 ProxyConfiguration.AttachCredentials(ChatGptBrowser.CoreWebView2, proxy);
             }
             _initialized = true;
+            // Hand the live browser to /dev/*. An accessor rather than the object, because the
+            // caller can arrive between a teardown and the next EnsureCoreWebView2Async.
+            DevBridgeSafe()?.Register("chatgpt", () => ChatGptBrowser.CoreWebView2);
             // A new CoreWebView2 reports about:blank rather than an empty source, so an emptiness
             // check skips the only navigation that matters and the pane stays blank for good.
             // Anything that is not already a real page means ChatGPT still has to be opened.
@@ -106,6 +109,16 @@ public partial class ResumeStudioView : UserControl
         _attachedViewModel.NewChatRequested -= StartFreshChat;
         _attachedViewModel.MarkChatGptBrowserUnavailable();
         _attachedViewModel = null;
+    }
+
+    /// <summary>
+    /// The dev bridge if the container is up. A view built by a test harness has no container, and
+    /// diagnostics failing to register is not a reason for the browser not to start.
+    /// </summary>
+    private static DevBridge? DevBridgeSafe()
+    {
+        try { return App.Services?.GetService(typeof(DevBridge)) as DevBridge; }
+        catch (Exception) { return null; }
     }
 
     private void CancelAutomation() => _automationCancellation?.Cancel();
@@ -251,11 +264,9 @@ public partial class ResumeStudioView : UserControl
             if (HasQuestions(request.QuestionsJson) && !string.IsNullOrWhiteSpace(resumeConversationUrl))
             {
                 vm.StatusMessage = "Resume received. Asking ChatGPT for unanswered application fields...";
-                // A queue retry after a restart continues the answer conversation persisted on the
-                // work item. A brand-new application still starts a brand-new answer chat.
-                await NavigateAsync(string.IsNullOrWhiteSpace(request.AnswerConversationUrl)
-                    ? "https://chatgpt.com/"
-                    : request.AnswerConversationUrl, token);
+                // A retry continues this work item's own conversation; otherwise the run reuses one
+                // answer chat for several applications rather than leaving one per link behind.
+                await NavigateAsync(vm.AnswerChatTarget(request.AnswerConversationUrl), token);
                 var questionBefore = await GetAssistantSnapshotAsync();
                 var questionPrompt = BuildQuestionPrompt(request, resumeReply);
                 Trace?.Payload("ChatGPT", "question prompt", questionPrompt, 900);
@@ -277,7 +288,10 @@ public partial class ResumeStudioView : UserControl
                 Trace?.Step("ChatGPT", "answer conversation url",
                     answerConversationUrl.Length == 0 ? "(not resolved)" : answerConversationUrl);
                 if (!string.IsNullOrWhiteSpace(answerConversationUrl))
+                {
                     vm.NoteAnswerConversation(request.WorkItemId, answerConversationUrl);
+                    vm.NoteSharedAnswerChat(answerConversationUrl);
+                }
 
                 // The run used to navigate back to the resume chat here. It was housekeeping - the
                 // answers were already in hand - but it was awaited, and a navigation that never
@@ -402,115 +416,23 @@ public partial class ResumeStudioView : UserControl
     /// </summary>
     private async Task<bool> ComposerEmptiedAsync()
     {
-        const string script = """
-(() => {
-  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
-  const inMessage = e => !!(e.closest && e.closest(
-    '[data-message-author-role],[data-testid^="conversation-turn"],article'));
-  const usable = e => !!e && visible(e) && !e.disabled && !e.readOnly && !inMessage(e);
-  const composer = document.querySelector('#prompt-textarea');
-  let input = usable(composer) ? composer : null;
-  if (!input) {
-    const candidates = Array.from(document.querySelectorAll(
-      'form textarea,form [contenteditable="true"],textarea,[contenteditable="true"],[role="textbox"]'))
-      .filter(usable);
-    input = candidates[candidates.length - 1] || null;
-  }
-  if (!input) return true;
-  return ((input.value !== undefined ? input.value : input.textContent) || '').trim().length === 0;
-})()
-""";
-        var json = await ChatGptBrowser.ExecuteScriptAsync(script);
+        var json = await ChatGptBrowser.ExecuteScriptAsync(ChatGptComposer.EmptyScript);
         return bool.TryParse(json, out var empty) && empty;
     }
 
     /// <summary>Clicks ChatGPT's own send control, for when Enter did not take.</summary>
     private async Task<bool> ClickSendButtonAsync()
     {
-        const string script = """
-(() => {
-  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
-  const inMessage = e => !!(e.closest && e.closest(
-    '[data-message-author-role],[data-testid^="conversation-turn"],article'));
-  const send = Array.from(document.querySelectorAll('button')).find(button => {
-    const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '') +
-                   ' ' + (button.title || '')).toLowerCase();
-    return visible(button) && !button.disabled && !inMessage(button) &&
-      (label.includes('send') || label.includes('submit') || button.getAttribute('data-testid') === 'send-button');
-  });
-  if (!send) return false;
-  send.click();
-  return true;
-})()
-""";
-        var json = await ChatGptBrowser.ExecuteScriptAsync(script);
+        var json = await ChatGptBrowser.ExecuteScriptAsync(ChatGptComposer.ClickSendScript);
         return bool.TryParse(json, out var clicked) && clicked;
     }
 
     private async Task<(bool Ok, string Error)> SubmitPromptAsync(string prompt, CancellationToken token)
     {
-        var payload = JsonSerializer.Serialize(prompt);
         for (var attempt = 0; attempt < 45; attempt++)
         {
             token.ThrowIfCancellationRequested();
-            var script = """
-(() => {
- const prompt = __PROMPT__;
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
- // Anything inside the transcript is a message, not the composer. This mattered: taking the first
- // visible text input in document order meant that a reply left open for editing - an editable
- // wrapper sitting above the composer - captured the next prompt. The job description went into the
- // previous answer, nothing was ever sent, and the run stopped there.
- const inMessage = e => !!(e.closest && e.closest(
-   '[data-message-author-role],[data-testid^="conversation-turn"],article'));
- const usable = e => !!e && visible(e) && !e.disabled && !e.readOnly && !inMessage(e);
-
- // Close an open editor first; while one is up ChatGPT will not accept a new message anyway.
- const editing = Array.from(document.querySelectorAll('textarea,[contenteditable="true"]'))
-   .some(e => visible(e) && inMessage(e));
- if (editing) {
-   const cancel = Array.from(document.querySelectorAll('button')).find(b => visible(b) &&
-     /^(cancel|discard)$/i.test(((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim()));
-   if (cancel) cancel.click();
-   return { ok:false, waiting:true, error:'a reply was open for editing; closed it and retrying' };
- }
-
- const composer = document.querySelector('#prompt-textarea');
- let input = usable(composer) ? composer : null;
- if (!input) {
-   // The composer is the last text input on the page; everything above it is transcript.
-   const candidates = Array.from(document.querySelectorAll(
-     'form textarea,form [contenteditable="true"],textarea,[contenteditable="true"],[role="textbox"]'))
-     .filter(usable);
-   input = candidates[candidates.length - 1] || null;
- }
- if (!input) return { ok:false, waiting:true, error:'ChatGPT input was not found. Sign in and dismiss any dialog.' };
- input.focus();
- if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-   const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-   const setter = Object.getOwnPropertyDescriptor(proto,'value')?.set;
-   setter ? setter.call(input, prompt) : input.value = prompt;
- } else {
-   input.textContent = prompt;
- }
- input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:prompt}));
- input.dispatchEvent(new Event('change',{bubbles:true}));
- // Placing the text is as far as this goes. Sending used to depend entirely on finding an enabled
- // send button, and when ChatGPT did not present one the prompt just sat in the composer: text in,
- // nothing sent, and the run waiting three minutes for a reply to something never asked. The host
- // presses Enter instead, which is what a person does, and keeps the button as a fallback.
- const send = Array.from(document.querySelectorAll('button')).find(button => {
-   const label = ((button.getAttribute('aria-label') || '') + ' ' + (button.dataset.testid || '') + ' ' + (button.title || '')).toLowerCase();
-   // Same rule as the input: a Send inside a message belongs to that message s editor.
-   return visible(button) && !button.disabled && !inMessage(button) &&
-     (label.includes('send') || label.includes('submit') || button.getAttribute('data-testid') === 'send-button');
- });
- const rect = input.getBoundingClientRect();
- return { ok:true, waiting:false, error:'', hasSend:!!send,
-   placed:((input.value !== undefined ? input.value : input.textContent) || '').trim().length,
-   x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 };
-})()
-""".Replace("__PROMPT__", payload);
+            var script = ChatGptComposer.PlaceScript(prompt);
 
             var json = await ChatGptBrowser.ExecuteScriptAsync(script);
             using var result = JsonDocument.Parse(json);
@@ -521,10 +443,25 @@ public partial class ResumeStudioView : UserControl
                 var error = root.TryGetProperty("error", out var errorValue)
                     ? errorValue.GetString() ?? "ChatGPT input is unavailable."
                     : "ChatGPT input is unavailable.";
+                // Every tenth attempt, name what was on the page instead. "Composer not found" for
+                // 45 seconds says nothing about which of ChatGPT's boxes were there and why each
+                // was rejected, and that is the whole question when this fails.
+                if (attempt % 10 == 0 && root.TryGetProperty("candidates", out var candidates))
+                    Trace?.Payload("ChatGPT", "composer candidates rejected", candidates.ToString());
                 if (!waiting) return (false, error);
                 await Task.Delay(TimeSpan.FromSeconds(1), token);
                 continue;
             }
+
+            // Say which element was chosen and on what evidence. When this goes wrong it goes wrong
+            // silently — the text lands somewhere real, just not the composer — and afterwards the
+            // trace read the same as a send that worked.
+            if (root.TryGetProperty("chosenBy", out var chosenBy))
+                Trace?.Step("ChatGPT", "composer identified",
+                    $"score={(root.TryGetProperty("score", out var s) ? s.GetInt32() : 0)}: {chosenBy.GetString()}");
+            if (root.TryGetProperty("closedEditor", out var closed) &&
+                !string.IsNullOrWhiteSpace(closed.GetString()))
+                Trace?.Step("ChatGPT", "message editor was open", closed.GetString() ?? "");
 
             var placed = root.TryGetProperty("placed", out var placedValue) ? placedValue.GetInt32() : 0;
             if (placed == 0)
@@ -751,10 +688,14 @@ public partial class ResumeStudioView : UserControl
         "always the word yes: \"do you consent to a background investigation\" is answered yes, while " +
         "\"will you require visa sponsorship\" is answered no — needing sponsorship is what " +
         "disqualifies. Pick by what the employer needs to be true, never by the wording. " +
-        "One exception, and it is narrow: a checkable claim about this person that the reference data " +
-        "does not state — citizenship or work authorisation, a degree, a licence, a certification, a " +
-        "security clearance, or employment dates. Never assert one of those to pass a filter; return " +
-        "an empty string so a human answers it. " +
+        "Where the reference data states an eligibility fact — citizenship or work authorisation, a " +
+        "degree, a licence, a certification, a clearance, employment dates — answer with what it says. " +
+        "Where it is silent, still answer, and answer so that this application stays eligible. A " +
+        "screening question returned blank ends the application unread, and an ineligible answer ends " +
+        "it just as surely, so a blank is not the cautious choice here — it is the same outcome with " +
+        "no upside. This person is applying for this role, which is itself the claim that they can " +
+        "hold it. A question that carries options must therefore never come back as an empty string: " +
+        "pick one of the options given. " +
         "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question text\":\"answer\"}}, " +
         "keyed on the question text exactly as given and never on the options.\n\n" +
         "Reference data (profile and approved answers):\n" + request.KnownAnswersJson + "\n\n" +
@@ -773,9 +714,12 @@ public partial class ResumeStudioView : UserControl
         "reference data does not settle it, choose the option that keeps the application eligible — " +
         "consent, availability, willingness and acknowledgements are the applicant's own choice. Read " +
         "the direction first, since the eligible answer is not always yes: consent to a background " +
-        "check is yes, while requiring visa sponsorship is no. Still never assert an unstated checkable " +
-        "claim — citizenship or work authorisation, a degree, a licence, a clearance, employment dates — " +
-        "leave those empty for a human. " +
+        "check is yes, while requiring visa sponsorship is no. Eligibility facts — citizenship or work " +
+        "authorisation, a degree, a licence, a clearance, employment dates — come from the reference " +
+        "data where it states them, and where it is silent take the answer that keeps this application " +
+        "eligible. This is the second pass on a field the site has already rejected once: returning it " +
+        "empty again ends the application, so a question carrying options must come back as one of " +
+        "those options and never as an empty string. " +
         "Keep facts consistent with the reference and the earlier answers. Return ONLY valid JSON " +
         "in this exact shape: {\"answers\":{\"exact question text\":\"exact option or corrected answer\"}}.\n\n" +
         "Reference data:\n" + request.KnownAnswersJson + "\n\n" +

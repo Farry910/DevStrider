@@ -68,15 +68,47 @@ public sealed class SettingsStore
         }
     }
 
+    /// <summary>
+    /// One writer at a time, process-wide. The queue is saved after almost every step of a run, and
+    /// those steps overlap: a resume finishing, a tab being parked and a correction returning are
+    /// three independent continuations that can all land together. They shared a single
+    /// <c>settings.json.tmp</c>, and the second writer got "the process cannot access the file" —
+    /// which surfaced mid-run as "Applying the corrected answers failed", losing the corrections.
+    /// </summary>
+    private static readonly SemaphoreSlim WriteGate = new(1, 1);
+
     public void Save(AppSettings settings)
     {
-        Directory.CreateDirectory(DirectoryPath);
-        var temp = FilePath + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(settings, Json));
-        File.Move(temp, FilePath, overwrite: true);
+        WriteGate.Wait();
+        try { WriteAtomically(settings); }
+        finally { WriteGate.Release(); }
     }
 
-    public Task SaveAsync(AppSettings settings) => Task.Run(() => Save(settings));
+    public async Task SaveAsync(AppSettings settings)
+    {
+        await WriteGate.WaitAsync().ConfigureAwait(false);
+        try { await Task.Run(() => WriteAtomically(settings)).ConfigureAwait(false); }
+        finally { WriteGate.Release(); }
+    }
+
+    private void WriteAtomically(AppSettings settings)
+    {
+        Directory.CreateDirectory(DirectoryPath);
+        // A per-write temp name as well as the gate. The gate is what makes writes safe inside this
+        // process; the unique name is what keeps two processes — a second DevStrider, or one being
+        // restarted over another — from colliding on the same scratch file.
+        var temp = $"{FilePath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(temp, JsonSerializer.Serialize(settings, Json));
+            File.Move(temp, FilePath, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); }
+            catch (IOException) { /* the move already took it, or the next run will */ }
+        }
+    }
 }
 
 /// <summary>

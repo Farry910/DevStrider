@@ -67,6 +67,58 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// The answer conversation the run is currently reusing, and how many applications have been
+    /// answered in it.
+    ///
+    /// <para>
+    /// Every application used to open its own answer chat, so a batch of thirty left thirty
+    /// conversations in the sidebar. The question prompt is self-contained — it carries the
+    /// reference data, the generated resume and the questions every time — so a chat can serve
+    /// several applications without the later ones depending on the earlier. It is not unlimited:
+    /// each round adds a full prompt and a full reply, and a long chat is what made the resume
+    /// conversation drift off its output format in the first place.
+    /// </para>
+    /// </summary>
+    private string _sharedAnswerConversationUrl = "";
+    private int _answersInChat;
+
+    /// <summary>How many applications one answer chat serves before a fresh one is opened.</summary>
+    private const int AnswersPerChat = 3;
+
+    /// <summary>
+    /// Where the questions step should go: the work item's own conversation when it has one (a retry
+    /// continues where it left off), the shared one while it has room, and a fresh chat otherwise.
+    /// </summary>
+    public string AnswerChatTarget(string workItemConversationUrl)
+    {
+        if (!string.IsNullOrWhiteSpace(workItemConversationUrl)) return workItemConversationUrl;
+        if (!string.IsNullOrWhiteSpace(_sharedAnswerConversationUrl) && _answersInChat < AnswersPerChat)
+        {
+            _trace.Step("ChatGPT", "reusing the answer chat",
+                $"{_answersInChat}/{AnswersPerChat} used: {_sharedAnswerConversationUrl}");
+            return _sharedAnswerConversationUrl;
+        }
+        if (!string.IsNullOrWhiteSpace(_sharedAnswerConversationUrl))
+            _trace.Step("ChatGPT", "answer chat is full", $"{_answersInChat} answered; opening a fresh one");
+        return "https://chatgpt.com/";
+    }
+
+    /// <summary>Records which answer chat was actually used, so the next application can reuse it.</summary>
+    public void NoteSharedAnswerChat(string conversationUrl)
+    {
+        var url = (conversationUrl ?? "").Trim();
+        if (url.Length == 0) return;
+        if (string.Equals(url, _sharedAnswerConversationUrl, StringComparison.OrdinalIgnoreCase))
+            _answersInChat++;
+        else
+        {
+            _sharedAnswerConversationUrl = url;
+            _answersInChat = 1;
+        }
+        _trace.Step("ChatGPT", "answer chat in use", $"{_answersInChat}/{AnswersPerChat}: {url}");
+    }
+
     private bool _resumeChatStarted;
     public bool ResumeChatStarted
     {
@@ -215,7 +267,17 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         // Both are built every time. The driver sends Prompt, but if a continuation turns out to
         // point at a conversation that will not open, it needs the full one in hand right then.
         var freshPrompt = profile.ResumePrompt.Trim() + "\n\nJob description:\n\n" + jd;
-        var prompt = startFreshChat ? freshPrompt : "Job description:\n\n" + jd;
+        // A continuation sends the job description alone, and by the fifth turn ChatGPT had stopped
+        // using the [Section]: labels the Word macro looks up — it returned a perfectly good resume
+        // as prose, the shape check rejected it, and the link failed. The format instruction was
+        // eight messages up the conversation by then. This restates the contract without restating
+        // the whole prompt, and names no labels: each profile's prompt picks its own, so the only
+        // honest reference is the shape the conversation has already been using.
+        var prompt = startFreshChat
+            ? freshPrompt
+            : "Job description:\n\n" + jd +
+              "\n\nReply in exactly the same [Section]: labelled format you used above — the same " +
+              "labels, in the same order, and nothing outside them.";
 
         var request = new ChatGptResumeRequest(
             workItemId, prompt, freshPrompt, jobUrl, jd, questionsJson, knownAnswersJson,
@@ -360,7 +422,9 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
                 {
                     bid.JobDescription = request.JobDescription;
                     bid.GptResumeContent = split.ResumePart;
-                    bid.Origin = "ChatGPT UI";
+                    // The job board, not the tool that wrote the resume.
+                    var site = JobSiteApplyAdapters.SiteNameFor(request.JobUrl);
+                    bid.Origin = site.Length > 0 ? site : "Job site";
                     bid.Status = BidStatuses.Draft;
                     if (split.Parsed == null) return;
                     bid.ResumeId = split.Parsed.ResumeId;
@@ -376,11 +440,13 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
             var profile = _profiles.Current ?? throw new InvalidOperationException("No active profile.");
             _trace.Step("Word", "running macro",
                 $"{profile.MacroName} on {profile.WordDocPath} ({split.ResumePart.Length} chars)");
+            var macroStartedAt = DateTime.Now;
             var macro = await _word.RunAsync(split.ResumePart, profile.WordDocPath, profile.MacroName, profile.Name);
             _trace.Step("Word", "macro returned", $"success={macro.Success}: {macro.Message}");
             if (!macro.Success) throw new InvalidOperationException("Word macro failed: " + macro.Message);
 
-            await FinishSuccessfulRequestAsync(request, split.ResumePart, split.FastFeedLine, split.Parsed, bidId);
+            await FinishSuccessfulRequestAsync(request, split.ResumePart, split.FastFeedLine, split.Parsed, bidId,
+                macroStartedAt);
         }
         catch (Exception ex)
         {
@@ -412,7 +478,16 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private void Fail(Guid workItemId, string message)
     {
         _pendingRequest = null;
-        if (_activeRequest is { StartFreshChat: true }) ResumeChatStarted = false;
+        // Any failure abandons the conversation, not only one that had just started it. A
+        // continuation whose reply came back in the wrong shape has drifted, and leaving it in place
+        // pointed the next link at the same drifted chat: one bad reply turned into every following
+        // link failing identically, three in a row, and the run stopping on a machinery streak that
+        // was really one conversation going bad. Starting fresh costs one profile prompt.
+        if (ResumeChatStarted)
+            _trace.Step("ChatGPT", "abandoning the resume conversation",
+                "its last reply was unusable; the next job starts a fresh chat");
+        ResumeChatStarted = false;
+        CompletedInChat = 0;
         IsAutomationRunning = false;
         ShowManualRecovery = true;
         StatusMessage = message;
@@ -476,6 +551,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         try
         {
             var body = FastFeed.SplitTrailing(GeneratedResume).ResumePart;
+            var macroStartedAt = DateTime.Now;
             var result = await _word.RunAsync(body, profile.WordDocPath, profile.MacroName, profile.Name);
             if (!result.Success)
             {
@@ -488,7 +564,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
                 return;
             }
             var split = FastFeed.SplitTrailing(GeneratedResume);
-            await FinishSuccessfulRequestAsync(_activeRequest, split.ResumePart, split.FastFeedLine, split.Parsed, _activeBidId);
+            await FinishSuccessfulRequestAsync(_activeRequest, split.ResumePart, split.FastFeedLine, split.Parsed, _activeBidId,
+                macroStartedAt);
         }
         finally { IsAutomationRunning = false; }
     }
@@ -539,12 +616,27 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         string resumeContent,
         string fastFeedLine,
         FastFeed.Parsed? parsed,
-        string bidId)
+        string bidId,
+        DateTime macroStartedAt)
     {
         CompletedInChat++;
-        var filePath = await ResolveGeneratedResumePathAsync(fastFeedLine);
+        var filePath = await ResolveGeneratedResumePathAsync(fastFeedLine, macroStartedAt);
         _trace.Step("Word", "resume file resolved",
             $"folder=\"{fastFeedLine}\" -> " + (filePath.Length == 0 ? "(not found)" : filePath));
+
+        // No file means no resume, whatever the reply looked like. This said "Resume generated" and
+        // handed an empty path to the job browser anyway, which filled the form, attached nothing,
+        // and submitted — an application that reads as complete and carries no resume, logged as a
+        // success. The only thing worse than not applying is applying like that. A bid without its
+        // resume is a failed bid, and it is reported as one.
+        if (!request.ResumeOnly && string.IsNullOrWhiteSpace(filePath))
+        {
+            Fail(request.WorkItemId,
+                "ChatGPT replied and the macro ran, but no resume file was produced. Nothing was " +
+                "submitted for this link. Check the Word macro's output folder, then retry it.");
+            return;
+        }
+
         IsAutomationRunning = false;
         _activeRequest = null;
         StatusMessage = request.ResumeOnly
@@ -577,7 +669,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     /// name setting is now only a tie-break.
     /// </para>
     /// </summary>
-    private async Task<string> ResolveGeneratedResumePathAsync(string folderName)
+    private async Task<string> ResolveGeneratedResumePathAsync(string folderName, DateTime macroStartedAt)
     {
         // The profile owns this, not the machine: the macro that just wrote the file is this
         // profile s macro, and its OUTPUT_ROOT is a property of that document.
@@ -603,19 +695,36 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
             if (Directory.Exists(direct)) folder = direct;
         }
         // The macro decides the folder name from its own copy of the fast-feed line, so a stray
-        // space or comma is enough to miss it. Whatever it just wrote is the newest folder here.
-        if (folder.Length == 0) folder = NewestFolderSince(root, DateTime.Now.AddMinutes(-10));
-        if (folder.Length == 0) return "";
+        // space or comma is enough to miss it, and the newest folder is then the best guess. The
+        // window used to be ten minutes wide, which is several jobs in one run: with no fast-feed
+        // line at all this walked into the previous application's folder and returned its resume.
+        // The file was real, the path existed, and the run reported a successful generation while
+        // attaching a resume written for a different job. Only what was written after this macro
+        // started counts as this macro's output.
+        var cutoff = macroStartedAt.AddSeconds(-5);
+        if (folder.Length == 0) folder = NewestFolderSince(root, cutoff);
+        if (folder.Length == 0)
+        {
+            _trace.Warn("Word", "no resume folder was written by this run",
+                $"looked in {root} for anything newer than {cutoff:HH:mm:ss}" +
+                (safeFolder.Length == 0 ? "; ChatGPT sent no [FolderName]: line" : $"; and for \"{safeFolder}\""));
+            return "";
+        }
 
         var preferred = (profile?.ResumeOutputFileBase ?? "").Trim();
         foreach (var pattern in new[] { "*.pdf", "*.docx", "*.doc" })
         {
-            var files = Directory.EnumerateFiles(folder, pattern).ToList();
+            // Freshness is the test, not existence. A folder can hold last week's PDF beside the
+            // .docx this run just wrote, and returning the stale one attaches the wrong resume.
+            var files = Directory.EnumerateFiles(folder, pattern)
+                .Where(file => File.GetLastWriteTime(file) >= cutoff).ToList();
             if (files.Count == 0) continue;
             var named = preferred.Length == 0 ? null : files.FirstOrDefault(file =>
                 Path.GetFileNameWithoutExtension(file).Equals(preferred, StringComparison.OrdinalIgnoreCase));
             return Path.GetFullPath(named ?? files.OrderByDescending(File.GetLastWriteTimeUtc).First());
         }
+        _trace.Warn("Word", "the resume folder holds nothing this run wrote",
+            $"{folder} has no .pdf/.docx newer than {cutoff:HH:mm:ss}");
         return "";
     }
 
@@ -644,9 +753,18 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         var settings = await _settings.GetAsync();
         GenerationLimit = Math.Clamp(settings.ResumeGenerationsPerChat, 1, 50);
         ResumeConversationUrl = Session(settings)?.ResumeConversationUrl ?? "";
-        // A remembered conversation IS a started chat. Without this the first resume after a
-        // restart opened a new one and threw away a chat that still had generations left in it.
-        if (!string.IsNullOrWhiteSpace(ResumeConversationUrl)) ResumeChatStarted = true;
+        // The URL is remembered across restarts; the count of resumes already written in it is not.
+        // Treating the remembered conversation as "started" therefore meant every launch resumed an
+        // old chat believing it was 0 of 10 used, when it might hold forty. Long chats drift: the
+        // [Section]: format instruction ends up far above the fold and ChatGPT stops using it, so
+        // the reply is a fine resume that the Word macro cannot read, and no resume gets made at all.
+        // A session begins with a fresh chat. That costs one profile prompt and is the only honest
+        // reading of a counter that starts at zero.
+        ResumeChatStarted = false;
+        CompletedInChat = 0;
+        if (!string.IsNullOrWhiteSpace(ResumeConversationUrl))
+            _trace.Step("ChatGPT", "not resuming the remembered resume chat",
+                "its generation count did not survive the restart; starting fresh");
     }
 
     /// <summary>The active profile's ChatGPT session settings, or null when there is no profile.</summary>

@@ -71,6 +71,30 @@ public static class JobSiteApplyAdapters
                ?? Default;
     }
 
+    /// <summary>
+    /// Where a job came from, for the bid's Origin column: the job board, not the tool that wrote
+    /// the resume. This used to record "ChatGPT UI" on every automatic bid, which says how the
+    /// resume was produced and nothing about the posting — so a board full of them could not be
+    /// sorted, filtered or counted by source, which is the one thing that column is for.
+    /// </summary>
+    public static string SiteNameFor(string? jobUrl)
+    {
+        if (!Uri.TryCreate((jobUrl ?? "").Trim(), UriKind.Absolute, out var uri)) return "";
+        var adapter = Resolve(uri);
+        if (!ReferenceEquals(adapter, Default)) return adapter.Name;
+
+        // An unrecognised board still has a name worth keeping. Strip the subdomain every careers
+        // site puts in front of it so "jobs.acme.com" and "careers.acme.com" read as one source.
+        var host = uri.Host.ToLowerInvariant();
+        foreach (var prefix in new[] { "www.", "jobs.", "job-boards.", "boards.", "careers.", "career.", "apply." })
+        {
+            if (!host.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            host = host[prefix.Length..];
+            break;
+        }
+        return host;
+    }
+
     public static string BuildOpenApplicationScript(Uri uri)
     {
         var payload = JsonSerializer.Serialize(Resolve(uri));
@@ -141,12 +165,44 @@ public static class JobSiteApplyAdapters
  if (successPattern.test(successText) || /\/(confirmation|submitted|thank-you|thank_you)(\/|$)/i.test(location.pathname))
    return { adapter:adapter.Name, action:'success', clicked:false, final:true, label:'application submitted', errors:[] };
 
- const candidates = nodes(adapter.ActionSelectors).filter(element => visible(element) && !element.disabled);
  const textFor = element => norm(element.innerText || element.value || element.getAttribute('aria-label') || element.title);
  const finalPattern = /^(submit|submit application|send application|complete application|finish application|apply)$/;
  const nextPattern = /^(next|continue|save and continue|continue application|review application|next step)$/;
- const final = candidates.find(element => finalPattern.test(textFor(element)));
- const next = candidates.find(element => nextPattern.test(textFor(element)));
+ // A looser reading, for the page-wide fallback below where the only thing standing between the run
+ // and a submission is a button whose wording nobody predicted.
+ //
+ // Deliberately stricter than finalPattern in one way: never a bare "apply". That word is safe
+ // while the search is confined to an adapter's form-button selectors, and dangerous the moment it
+ // is not — an embedded Greenhouse posting keeps an "Apply" button above the form, so a page-wide
+ // match found it after a successful submission, reported the confirmation page as still needing a
+ // final click, and probed fourteen times for a submission that had already gone through.
+ const looksFinal = text => /^submit\b/.test(text) ||
+   /\bsubmit (my |your |this )?application\b/.test(text) ||
+   /^(send|complete|finish) (my |your |this )?application\b/.test(text);
+
+ const usable = element => visible(element) && !element.disabled &&
+   element.getAttribute('aria-disabled') !== 'true';
+ const adapterCandidates = nodes(adapter.ActionSelectors).filter(usable);
+ // Everything on the page that can be pressed. Ashby's Submit sits outside any <form>, carries no
+ // type="submit" and no role="button", so every adapter selector missed it: the candidate list came
+ // back empty, the action was "none", and the run filled a whole application and never committed
+ // it. A selector list is a guess about markup; this is the backstop for when the guess is wrong.
+ const everyButton = Array.from(document.querySelectorAll(
+   'button,input[type="submit"],input[type="button"],[role="button"],a[href="#"]')).filter(usable);
+ // Bottom-most wins. The real Submit is the last thing on an application form, and anything higher
+ // up the page carrying the same word belongs to a section rather than to the whole application.
+ const lowest = list => list.length === 0 ? null
+   : list.reduce((best, e) => e.getBoundingClientRect().top > best.getBoundingClientRect().top ? e : best);
+
+ // A Submit that exists but is switched off is a different problem from one that is not there,
+ // and the two used to report identically as "no Submit located".
+ const blockedFinal = Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
+   .filter(e => visible(e) && (e.disabled || e.getAttribute('aria-disabled') === 'true'))
+   .find(e => looksFinal(textFor(e)));
+ const final = adapterCandidates.find(element => finalPattern.test(textFor(element)))
+   || lowest(everyButton.filter(element => looksFinal(textFor(element))));
+ const next = adapterCandidates.find(element => nextPattern.test(textFor(element)))
+   || lowest(everyButton.filter(element => nextPattern.test(textFor(element))));
 
  // On the primary pass, return the real action before inspecting validity. The host must physically
  // click Next/Submit first; only the errors rendered by that action are correction evidence.
@@ -163,7 +219,8 @@ public static class JobSiteApplyAdapters
      x:rect.left + rect.width/2, y:rect.top + rect.height/2 };
  }
  if (request.allowSafeAdvance)
-   return { adapter:adapter.Name, action:'none', clicked:false, final:false, label:'', errors:[] };
+   return { adapter:adapter.Name, action:'none', clicked:false, final:false, label:'',
+     blocked: blockedFinal ? textFor(blockedFinal) : '', errors:[] };
 
  // This branch runs only after a real action click. :user-invalid distinguishes controls rejected
  // by that click from untouched required fields on a newly revealed step; calling reportValidity()
@@ -196,7 +253,8 @@ public static class JobSiteApplyAdapters
    return { adapter:adapter.Name, action:'final', clicked:false, final:true, label:textFor(final), errors:[],
      x:rect.left + rect.width/2, y:rect.top + rect.height/2 };
  }
- return { adapter:adapter.Name, action:'none', clicked:false, final:false, label:'', errors:[] };
+ return { adapter:adapter.Name, action:'none', clicked:false, final:false, label:'',
+   blocked: blockedFinal ? textFor(blockedFinal) : '', errors:[] };
 })()
 """.Replace("__PAYLOAD__", payload);
     }

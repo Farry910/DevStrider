@@ -65,6 +65,20 @@ public partial class App : Application
             Services.GetRequiredService<WordMacroService>()
                 .EnsureSingleWordInstance("DevStrider started");
 
+            // With developer tools on, the listener opens here rather than after sign-in, so /dev
+            // can see a login window that never got past itself — which is exactly the state worth
+            // being able to look at. The endpoints that act as the signed-in user refuse until
+            // there is one; see LocalApiServer.HandleAsync. Off, this does nothing and the listener
+            // starts after login as it always has.
+            if (settings.Current.DeveloperTools)
+            {
+                var early = Services.GetRequiredService<LocalApiServer>();
+                early.Start(settings.Current.ListenerPort);
+                Services.GetRequiredService<ActivityLogService>().Info("Listener",
+                    early.IsRunning ? "Developer listener started early" : "Developer listener could not start early",
+                    early.Status, silent: true);
+            }
+
             // Nothing below this line runs without an account. Every repository scopes its calls
             // to SessionContext, and one issued before login throws rather than quietly asking the
             // portal for whatever an unauthenticated request would return.
@@ -159,6 +173,8 @@ public partial class App : Application
         services.AddSingleton<QuickAnswerService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
+        services.AddSingleton<DevBridge>();
+        services.AddSingleton<DevEndpoints>();
         services.AddSingleton<LocalApiServer>();
 
         // ── view-models ─────────────────────────────────────────────────────

@@ -18,8 +18,12 @@ public static class JobSiteFormAdapters
     /// </summary>
     private const string MatchingPrelude = """
  const payload = __PAYLOAD__;
- const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+ // Accents are folded, not deleted. Stripping them as punctuation turned "Cuautitlán" into
+ // "cuautitl n", so a typed "Cuautitlan" matched none of the suggestions a Mexican city returns
+ // and the pick never happened.
+ const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
  // Only what the user has said this app is never given. Everything else — demographics, salary,
  // work authorisation, sponsorship, legal attestations, date of birth — is answerable, because the
  // user supplies those answers themselves in Job Operations; they are simply never invented.
@@ -161,18 +165,74 @@ public static class JobSiteFormAdapters
  const textFor = e => norm(association(e));
  // react-select and friends render a real <input> as their search box. Typing into it looks like a
  // successful fill and selects nothing, so it belongs to the combobox pass, not the text pass.
+ // A text box that will not keep a typed value: it offers a list once you type, and writes the real
+ // answer into a hidden field only when an option is picked. Lever's Current location is the one
+ // that forced this. It looks like an ordinary <input type="text"> — no combobox role, no
+ // aria-autocomplete — so it went to the text pass, which typed into it, watched Lever clear it on
+ // blur, reported "value did not persist", and left the application to be rejected for an empty
+ // required field on every attempt.
+ //
+ // The tell is the hidden partner. A field block holding one visible text input beside a hidden
+ // input whose name says it holds the *selected* value is a control that demands a choice, whatever
+ // it looks like. That is markup-shaped rather than site-shaped, so it reads the same pattern
+ // wherever it appears.
+ const suggestionPartner = e => {
+   if (!e || e.tagName !== 'INPUT') return null;
+   const type = (e.type || 'text').toLowerCase();
+   if (type !== 'text' && type !== 'search') return null;
+   const block = e.closest('[class*="field" i],[data-field],[data-field-entry-id],fieldset,li');
+   if (!block) return null;
+   return Array.from(block.querySelectorAll('input[type="hidden"]'))
+     .find(hidden => /select|chosen|resolved/i.test((hidden.name || '') + ' ' + (hidden.id || ''))) || null;
+ };
+ const typeaheadInput = e => !!suggestionPartner(e);
  const comboInput = e => e.getAttribute('role') === 'combobox'
    || e.getAttribute('aria-autocomplete') === 'list'
-   || /(^|\s)select__input(\s|$)/.test(String(e.className || ''));
+   || /(^|\s)select__input(\s|$)/.test(String(e.className || ''))
+   || typeaheadInput(e);
  const comboSelector = '[role="combobox"],[aria-haspopup="listbox"],[aria-autocomplete="list"],'
    + '[data-radix-select-trigger],[data-headlessui-listbox-button],[data-reach-listbox-button]';
+ // The rendered chosen value of a custom dropdown, found by walking up from the control instead of
+ // guessing at one ancestor. react-select puts the value in .select__value-container while the input
+ // sits in .select__input-container beneath it, so every "nearest select-ish ancestor" guess landed
+ // one level too low and found nothing. Dropdowns that were correctly set therefore reported as
+ // unanswered everywhere at once: the verify probe warned "not confirmed, leaving it for review",
+ // the outstanding list kept them, and the plan re-drove them on the next pass. The parked tab in a
+ // real run had select__single-value reading "Cuautitlán Izcalli, México, Mexico" while the trace
+ // insisted that field was empty. The walk stops before an ancestor holding a second combobox, so
+ // it can never read the value belonging to the dropdown next door.
+ const chosenValueFor = control => {
+   // A suggestion field's answer lives in its hidden partner, not in a rendered value element.
+   const partner = suggestionPartner(control);
+   if (partner) return String(partner.value || '').trim().length > 0 ? partner : null;
+   let node = control && control.parentElement;
+   for (let up = 0; up < 6 && node; up++) {
+     if (node.querySelectorAll(comboSelector).length > 1) break;
+     const hit = node.querySelector('[class*="single-value" i],[class*="singleValue" i],'
+       + '[class*="multi-value" i],[class*="multiValue" i]');
+     if (hit) return hit;
+     node = node.parentElement;
+   }
+   return null;
+ };
  const aliases = { 'full name':['full name','candidate name','your name','name'], 'first name':['first name','given name'], 'last name':['last name','family name','surname'], email:['email','email address'], phone:['phone','phone number','mobile'], linkedin:['linkedin','linkedin url','linkedin profile'], location:['location','city'], 'salary expectation':['salary expectation','salary expectations','desired salary','expected salary','salary range','desired compensation','compensation expectation','compensation expectations','expected compensation','minimum salary'] };
  // Best match wins, not first, and containment works both ways. A field labelled just "Name" has
  // to take "full name": the old rule only tried key-inside-label, so the shorter label matched
  // nothing at all and Ashby filled zero fields. Scoring keeps "first name" from being answered by
  // the "name" alias — an exact hit always outranks a containment, and a longer one a shorter.
+ // A label can be asking for somebody else's details. "Company name" on an employment-history row
+ // is the employer's; "School" is the university's; "Reference email" and "Manager phone" belong to
+ // other people entirely. Every one of those was being answered with the applicant's own value,
+ // because containment is all it took: the alias "name" is four characters and sits inside "company
+ // name", "school name" and "your manager's name" alike. Found on Lyft's Greenhouse form, where
+ // Company name came back filled with the applicant's full name.
+ //
+ // Containment is what has to stop at the boundary, not matching itself: a key that matches such a
+ // label exactly is a value genuinely about that other party, and is still allowed through.
+ const otherParty = /\b(company|employer|business|organisation|organization|school|university|college|institution|manager|supervisor|recruiter|reference|referee|emergency|parent|guardian|spouse)\b/;
  const valueFor = e => {
    const hay = textFor(e); if (!hay || protectedField(hay)) return null;
+   const foreign = otherParty.test(hay);
    let best = null, bestScore = 0;
    for (const [raw, value] of Object.entries(payload.values || {})) {
      const key = norm(raw); if (!key || String(value) === '') continue;
@@ -180,6 +240,7 @@ public static class JobSiteFormAdapters
        const k = norm(alias); if (!k) continue;
        let score = 0;
        if (hay === k) score = 300 + k.length;
+       else if (foreign) score = 0;
        else if (hay.includes(k) && k.length >= 3) score = 200 + k.length;
        else if (k.includes(hay) && hay.length >= 4) score = 100 + hay.length;
        if (score > bestScore) { bestScore = score; best = String(value); }
@@ -343,15 +404,27 @@ __PRELUDE__
  // Report what a human still has to complete. Protected questions are in here by design — the
  // adapters never answer legal, demographic or work-authorisation fields — and so is any dropdown
  // no saved answer matched, which is otherwise invisible until the form rejects the submission.
- const chosen = e => { const box = e.closest('[class*="select" i]:not(input)') || e.parentElement; return !!box?.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]'); };
+ const chosen = e => !!chosenValueFor(e);
  const custom = Array.from(document.querySelectorAll(comboSelector))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !norm(e.value) && !chosen(e));
- const outstanding = Array.from(new Set(Array.from(document.querySelectorAll(
+ const outstandingNodes = Array.from(new Set(Array.from(document.querySelectorAll(
    'input:not([type="hidden"]):not([type="file"]),textarea,select,' + choiceSelector))))
    .filter(e => (visible(e) || choiceVisible(e)) && !comboInput(e) && !mirroredChoice(e)
-     && !e.disabled && !e.readOnly && !groupAnswered(e))
+     && !e.disabled && !e.readOnly && !groupAnswered(e));
+ const outstanding = outstandingNodes
    .map(e => { const l = labelFor(e); return l && e.tagName === 'SELECT' ? l + ' (dropdown)' : l; })
    .concat(custom.map(e => { const l = labelFor(e); return l ? l + ' (dropdown)' : ''; }))
+   .filter(Boolean);
+ // Which of those the form itself insists on. The distinction decides whether an application may be
+ // submitted without a person seeing it: an unanswered optional EEO question is on every form ever
+ // and blocking on it would mean nothing ever submits, while an unanswered required question means
+ // the application is incomplete and an employer is about to receive it that way.
+ const requiredField = e => !!(e.required || attr(e,'aria-required') === 'true'
+   || /[*∗]\s*$/.test(String(labelFor(e) || '').trim())
+   || (e.closest && e.closest('[aria-required="true"],[data-required="true"]')));
+ const outstandingRequired = outstandingNodes.filter(requiredField)
+   .map(e => { const l = labelFor(e); return l && e.tagName === 'SELECT' ? l + ' (dropdown)' : l; })
+   .concat(custom.filter(requiredField).map(e => { const l = labelFor(e); return l ? l + ' (dropdown)' : ''; }))
    .filter(Boolean);
  // Which visible controls the correction scope actually resolved to. A scope that matches nothing is
  // a silent no-op otherwise: the pass reports zero fields filled and reads exactly like a form that
@@ -363,7 +436,8 @@ __PRELUDE__
  return { adapter, filled, skipped, touched:Array.from(new Set(touched)), textPlanned:window.__dsTextPlan.length,
    scoped:onlyKeys.length, scopeMatched:Array.from(new Set(scopeMatched)),
    textLabels:window.__dsTextPlan.map(item => item.label), choicePlanned:window.__dsChoicePlan.length,
-   choiceLabels:window.__dsChoicePlan.map(item => item.label), unfilled:Array.from(new Set(outstanding)).slice(0,25) };
+   choiceLabels:window.__dsChoicePlan.map(item => item.label), unfilled:Array.from(new Set(outstanding)).slice(0,25),
+   unfilledRequired:Array.from(new Set(outstandingRequired)).slice(0,25) };
 })()
 """.Replace("__PRELUDE__", MatchingPrelude).Replace("__PAYLOAD__", payload);
     }
@@ -561,18 +635,31 @@ __PRELUDE__
  const answered = e => choice(e) ? choiceSelected(e)
    : e.tagName === 'SELECT' ? e.selectedIndex > 0 && !!e.value : !!String(e.value || '').trim();
  const groupAnswered = e => choice(e) ? choiceOptions(e).some(choiceSelected) : answered(e);
- const chosen = e => { const box=e.closest('[class*="select" i]:not(input)')||e.parentElement; return !!box?.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]'); };
- const plain = Array.from(new Set(Array.from(document.querySelectorAll(
+ const chosen = e => !!chosenValueFor(e);
+ // Whether the form itself insists on this one. This is the reading that decides whether an
+ // application may be submitted unseen, and it has to be taken here rather than from the fill
+ // script: the fill script only *plans* the text fields, and the host types them afterwards, so
+ // anything it reported as outstanding was a snapshot from before a single character was entered.
+ // Wiring the submit gate to that snapshot made it refuse to submit a form it had just filled,
+ // naming Full name, Email and Phone as unanswered moments after verifying all three.
+ const requiredField = e => !!(e.required || attr(e,'aria-required') === 'true'
+   || /[*✱∗﹡＊]\s*$/.test(String(labelFor(e) || '').trim())
+   || (e.closest && e.closest('[aria-required="true"],[data-required="true"]')));
+ const label = e => { const l=labelFor(e); return l && e.tagName === 'SELECT' ? l+' (dropdown)' : l; };
+ const plainNodes = Array.from(new Set(Array.from(document.querySelectorAll(
    'input:not([type="hidden"]):not([type="file"]),textarea,select,' + choiceSelector))))
    .filter(e => (visible(e) || choiceVisible(e)) && !comboInput(e) && !mirroredChoice(e)
-     && !e.disabled && !e.readOnly && !groupAnswered(e))
-   .map(e => { const label=labelFor(e); return label && e.tagName === 'SELECT' ? label+' (dropdown)' : label; });
- const custom = Array.from(document.querySelectorAll(comboSelector))
+     && !e.disabled && !e.readOnly && !groupAnswered(e));
+ const customNodes = Array.from(document.querySelectorAll(comboSelector))
    // Search text is not a selected answer. Dynamic dropdowns commonly retain the failed primary
    // query in their input, so only a rendered chosen-value marker removes them from this list.
-   .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !chosen(e))
-   .map(e => { const label=labelFor(e); return label ? label+' (dropdown)' : ''; });
- return Array.from(new Set(plain.concat(custom).filter(Boolean))).slice(0,25);
+   .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !chosen(e));
+ const name = e => e.tagName === 'SELECT' || customNodes.includes(e)
+   ? (labelFor(e) ? labelFor(e) + ' (dropdown)' : '') : label(e);
+ const all = plainNodes.concat(customNodes).map(name).filter(Boolean);
+ const required = plainNodes.concat(customNodes).filter(requiredField).map(name).filter(Boolean);
+ return { all: Array.from(new Set(all)).slice(0,25),
+          required: Array.from(new Set(required)).slice(0,25) };
 })()
 """.Replace("__PRELUDE__", MatchingPrelude).Replace("__PAYLOAD__", "{\"adapter\":\"\",\"values\":{}}");
 
@@ -606,7 +693,7 @@ __PRELUDE__
 __PRELUDE__
  const shell = e => e.closest('[class*="select" i]:not(input)') || e.parentElement || e;
  // Answered means the widget renders a chosen value, not merely that its search box holds text.
- const answered = e => !!shell(e).querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]');
+ const answered = e => !!chosenValueFor(e);
  const fieldKey = value => norm(value).replace(/[^a-z0-9]+/g,' ').trim();
  const forceKeys = (payload.forceLabels || []).map(fieldKey).filter(Boolean);
  const forced = e => {
@@ -633,7 +720,11 @@ __PRELUDE__
    return !key || !onlyKeys.some(only => key === only
      || Math.min(key.length, only.length) >= 8 && (key.includes(only) || only.includes(key)));
  };
- const controls = Array.from(document.querySelectorAll(comboSelector))
+ // Suggestion text boxes join the dropdown pass, because that is what they are: the pass already
+ // knows how to type, wait for a list, choose an option and read back what was chosen, which is
+ // exactly the sequence one of these needs and exactly what the text pass cannot do.
+ const controls = Array.from(new Set(Array.from(document.querySelectorAll(comboSelector))
+     .concat(Array.from(document.querySelectorAll('input')).filter(typeaheadInput))))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !e.disabled
      && !outOfScope(e) && !settled(e) && (!answered(e) || forced(e)));
  const plan = [];
@@ -659,7 +750,7 @@ __PRELUDE__
  const request = __PAYLOAD__;
  const control = (window.__dsCombos || [])[request.index];
  if (!control) return { ok:false, error:'gone' };
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
  const baselineNodes = Array.from(document.body.querySelectorAll('*'));
  window.__dsComboBaseline = new WeakSet(baselineNodes);
  window.__dsComboVisibleBaseline = new WeakSet(baselineNodes.filter(visible));
@@ -698,7 +789,7 @@ __PRELUDE__
  const request = __PAYLOAD__;
  const control = (window.__dsCombos || [])[request.index];
  if (!control) return { ok:false, error:'gone' };
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
  const container = control.closest('[role="combobox"],[class*="select" i],[data-field],fieldset')
    || control.parentElement || control;
  const active = document.activeElement;
@@ -738,7 +829,7 @@ __PRELUDE__
 (() => {
 __PRELUDE__
  const shell = e => e.closest('[class*="select" i]:not(input)') || e.parentElement || e;
- const chosen = e => !!shell(e).querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]');
+ const chosen = e => !!chosenValueFor(e);
  const controls = Array.from(document.querySelectorAll(comboSelector))
    .filter(e => visible(e) && e.getAttribute('aria-disabled') !== 'true' && !e.disabled && !chosen(e));
  const seen = new Set();
@@ -889,15 +980,21 @@ __PRELUDE__
  const input = window.__dsQuestionComboInput || control;
  const controlledId = input.getAttribute?.('aria-controls') || input.getAttribute?.('aria-owns')
    || control.getAttribute?.('aria-controls') || control.getAttribute?.('aria-owns') || '';
- const controlled = controlledId.split(/\s+/).map(id => document.getElementById(id)).find(visible) || null;
- const listboxes = Array.from(document.querySelectorAll('[role="listbox"],[class*="menu" i],[class*="popover" i]')).filter(visible);
+ // Both .filter(Boolean) calls are load-bearing, and so is the null guard in visible(). With no
+ // aria-controls — which is what an unopened menu looks like — controlledId is '', so split gives
+ // [''], getElementById('') is null, and visible(null) threw. WebView2 reports a thrown script as
+ // the bare string "null", so the host read a crash as "no option matched": every dropdown on the
+ // form logged "not confirmed, leaving it for review", and the run submitted the application anyway.
+ const controlled = controlledId.split(/\s+/).filter(Boolean)
+   .map(id => document.getElementById(id)).filter(Boolean).find(visible) || null;
+ const listboxes = Array.from(document.querySelectorAll('[role="listbox"],[class*="menu" i],[class*="popover" i],[class*="dropdown-results" i],[class*="suggest" i],[class*="typeahead" i],[class*="autocomplete" i]')).filter(visible);
  // aria-controls is authoritative. Without it, only a menu mounted by this activation is eligible;
  // using the last menu anywhere on the page picked Greenhouse's navigation and every JD <li>.
  // A menu may either be newly mounted or pre-exist hidden and become visible when activated.
  const freshListboxes = listboxes.filter(node => !window.__dsDropdownVisibleBaseline?.has(node));
  const listbox = visible(controlled) ? controlled : (freshListboxes.length ? freshListboxes[freshListboxes.length - 1] : null);
  const roleNodes = listbox
-   ? Array.from(listbox.querySelectorAll('[role="option"],[data-value],[data-option],[class*="option" i],li')).filter(visible)
+   ? Array.from(listbox.querySelectorAll('[role="option"],[data-value],[data-option],[class*="option" i],[class*="dropdown-" i],li')).filter(visible)
    : [];
  // Ashby's hashed menu markup currently has no option/listbox roles. Menu rows are freshly mounted,
  // so their visible leaf nodes are a safer fallback than guessing a generated class name.
@@ -977,18 +1074,28 @@ __PRELUDE__
  const control = (window.__dsCombos || [])[request.index];
  const input = window.__dsComboInput;
  if (!control || !input) return { ok:false, text:'' };
- const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
- const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+ // Accents are folded, not deleted. Stripping them as punctuation turned "Cuautitlán" into
+ // "cuautitl n", so a typed "Cuautitlan" matched none of the suggestions a Mexican city returns
+ // and the pick never happened.
+ const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
  const wanted = norm(request.value);
  const clean = value => String(value || '').replace(/\s+/g,' ').trim();
  const controlledId = input.getAttribute?.('aria-controls') || input.getAttribute?.('aria-owns')
    || control.getAttribute?.('aria-controls') || control.getAttribute?.('aria-owns') || '';
- const controlled = controlledId.split(/\s+/).map(id => document.getElementById(id)).find(visible) || null;
- const listboxes = Array.from(document.querySelectorAll('[role="listbox"],[class*="menu" i],[class*="popover" i]')).filter(visible);
+ // Both .filter(Boolean) calls are load-bearing, and so is the null guard in visible(). With no
+ // aria-controls — which is what an unopened menu looks like — controlledId is '', so split gives
+ // [''], getElementById('') is null, and visible(null) threw. WebView2 reports a thrown script as
+ // the bare string "null", so the host read a crash as "no option matched": every dropdown on the
+ // form logged "not confirmed, leaving it for review", and the run submitted the application anyway.
+ const controlled = controlledId.split(/\s+/).filter(Boolean)
+   .map(id => document.getElementById(id)).filter(Boolean).find(visible) || null;
+ const listboxes = Array.from(document.querySelectorAll('[role="listbox"],[class*="menu" i],[class*="popover" i],[class*="dropdown-results" i],[class*="suggest" i],[class*="typeahead" i],[class*="autocomplete" i]')).filter(visible);
  const freshListboxes = listboxes.filter(node => !window.__dsComboVisibleBaseline?.has(node));
  const menu = visible(controlled) ? controlled : (freshListboxes.length ? freshListboxes[freshListboxes.length - 1] : null);
  const roleOptions = menu
-   ? Array.from(menu.querySelectorAll('[role="option"],[data-value],[data-option],[class*="option" i],li')).filter(visible)
+   ? Array.from(menu.querySelectorAll('[role="option"],[data-value],[data-option],[class*="option" i],[class*="dropdown-" i],li')).filter(visible)
    : [];
  const controlRect = control.getBoundingClientRect();
  const nearControl = node => {
@@ -1004,12 +1111,46 @@ __PRELUDE__
    nearControl(node) && clean(node.innerText || node.textContent).length <= 240 &&
    !noise(clean(node.innerText || node.textContent)));
  const options = Array.from(new Set(roleOptions.concat(freshLeaves)));
- const exact = options.find(option => norm(option.innerText || option.textContent) === wanted);
+ // A suggestion list answers a partial query with a fuller string: type "Cuautitlan Izcalli" and
+ // the option comes back "Cuautitlán Izcalli, México, MEX". Requiring equality left every one of
+ // those unpicked — and on a control that accepts nothing but a picked option, unpicked means the
+ // answer never landed at all. Equality still wins where it exists; the looser readings are ordered
+ // most-specific-first and carry a length floor so a two-letter query cannot select a country.
+ const optionText = option => norm(option.innerText || option.textContent);
+ const exact = options.find(option => optionText(option) === wanted)
+   || (wanted.length >= 3 ? options.find(option => optionText(option).startsWith(wanted)) : null)
+   || (wanted.length >= 4 ? options.find(option => optionText(option).includes(wanted)) : null)
+   || (wanted.length >= 4 ? options.find(option => {
+        const text = optionText(option);
+        return text.length >= 4 && wanted.startsWith(text);
+      }) : null);
  if (exact) {
    exact.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
-   const rect = exact.getBoundingClientRect();
-   return { ok:true, text:String(exact.innerText || exact.textContent || '').trim(), method:'mouse-target',
-     x:rect.left + rect.width/2, y:rect.top + rect.height/2 };
+   // The host clicks these coordinates on a later round trip, so they have to still mean this option
+   // by the time it does. scrollIntoView can move the page under a floating menu, and a rectangle
+   // read on the wrong side of that scroll names whatever now sits at that point: the click missed,
+   // the option stayed unpicked, and the field reported "not confirmed" while the menu underneath it
+   // was showing the right answer. Ashby's Location came back at y=122 on a menu that was at y=400.
+   const at = () => {
+     const rect = exact.getBoundingClientRect();
+     return { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+   };
+   const hits = point => {
+     const el = document.elementFromPoint(point.x, point.y);
+     return !!el && (el === exact || exact.contains(el) || el.contains(exact));
+   };
+   let point = at();
+   if (!hits(point)) point = at();
+   if (hits(point)) {
+     // Stash it so the host can re-read the rectangle immediately before it clicks. A floating menu
+     // repositions itself a frame or two after the scroll above, which is inside the round trip
+     // between this answer and the click that acts on it.
+     window.__dsComboOption = exact;
+     return { ok:true, text:String(exact.innerText || exact.textContent || '').trim(),
+       method:'mouse-target', x:point.x, y:point.y };
+   }
+   // Rather than click a point that is not the option, fall through to the keyboard: the exact match
+   // is highlighted by the typing, and Enter takes what is highlighted.
  }
  const rect = input.getBoundingClientRect();
  return { ok:true, text:'', method:'enter-target', x:rect.left + rect.width/2, y:rect.top + rect.height/2 };
@@ -1026,16 +1167,78 @@ __PRELUDE__
  const request = __PAYLOAD__;
  const control = (window.__dsCombos || [])[request.index];
  if (!control || !control.isConnected) return { ok:false, text:'' };
- const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
- const shell = control.closest('[role="combobox"],[aria-haspopup="listbox"],[class*="select" i]') || control.parentElement || control;
- const chosen = shell.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]');
+ // Accents are folded, not deleted. Stripping them as punctuation turned "Cuautitlán" into
+ // "cuautitl n", so a typed "Cuautitlan" matched none of the suggestions a Mexican city returns
+ // and the pick never happened.
+ const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+   .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+ // Walk up for the chosen value rather than guessing one ancestor. Element.closest() matches the
+ // element itself, and this control IS an <input role="combobox">, so the old lookup resolved to the
+ // input — which has no children and could therefore never hold a value. Every dropdown reported
+ // "not confirmed, leaving it for review" whether the selection had worked or not; a real run left
+ // a parked tab showing select__single-value = "Cuautitlán Izcalli, México, Mexico" on a field the
+ // trace had just called empty. Stop before an ancestor with a second combobox in it, so this can
+ // never read the neighbouring dropdown's answer and call this one confirmed.
+ // A suggestion field keeps its answer in a hidden partner rather than in a rendered value element,
+ // so look there first. This script carries its own helpers and does not share the fill prelude, and
+ // that is exactly how it came to disagree with it: the pick had worked, Lever's hidden
+ // selectedLocation held the chosen city, and the verify still reported the field empty.
+ const hiddenPartner = (() => {
+   const block = control.closest('[class*="field" i],[data-field],[data-field-entry-id],fieldset,li');
+   if (!block) return null;
+   return Array.from(block.querySelectorAll('input[type="hidden"]'))
+     .find(h => /select|chosen|resolved/i.test((h.name || '') + ' ' + (h.id || ''))) || null;
+ })();
+ if (hiddenPartner) {
+   const held = String(hiddenPartner.value || '').trim();
+   const shown = String(control.value || '').trim();
+   return { ok: held.length > 0, text: (shown || held).slice(0,120),
+     error: held.length > 0 ? '' : 'no option was picked, so the field holds nothing the form will accept' };
+ }
+
+ const comboish = '[role="combobox"],[aria-haspopup="listbox"],[aria-autocomplete="list"]';
+ let chosen = null, box = control.parentElement;
+ for (let up = 0; up < 6 && box; up++) {
+   if (box.querySelectorAll(comboish).length > 1) break;
+   chosen = box.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]');
+   if (chosen) break;
+   box = box.parentElement;
+ }
  const expanded = control.getAttribute('aria-expanded') === 'true';
- const text = String(chosen?.innerText || chosen?.textContent || control.getAttribute('aria-valuetext') || (!expanded ? shell.innerText : '') || '').trim();
+ const text = String(chosen?.innerText || chosen?.textContent || control.getAttribute('aria-valuetext') || '').trim();
  const actual = norm(text), wanted = norm(request.value);
  return { ok:!expanded && !!actual && (actual === wanted || actual.includes(wanted) || wanted.includes(actual)), text:text.slice(0,120) };
 })()
 """.Replace("__PAYLOAD__", payload);
     }
+
+    /// <summary>
+    /// Re-reads where the chosen option is, immediately before the host clicks it.
+    ///
+    /// <para>
+    /// The commit script scrolls the option into view and measures it in the same synchronous task,
+    /// but a floating menu repositions itself a frame or two later — and the click happens on a
+    /// separate round trip after that. Ashby's Location came back at y=122 for a menu that settled at
+    /// y=400, so the click landed on the page behind the list, the option stayed unpicked, and the
+    /// form was rejected for a required field whose answer was visible on screen at the time.
+    /// </para>
+    /// </summary>
+    public static readonly string ComboboxRetargetScript = """
+(() => {
+ const option = window.__dsComboOption;
+ if (!option || !option.isConnected) return { ok:false, error:'the option is gone' };
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
+ if (!visible(option)) return { ok:false, error:'the option is no longer visible' };
+ const rect = option.getBoundingClientRect();
+ const x = rect.left + rect.width/2, y = rect.top + rect.height/2;
+ if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight)
+   return { ok:false, error:'the option is outside the viewport at ' + Math.round(x) + ',' + Math.round(y) };
+ const at = document.elementFromPoint(x, y);
+ if (!at || (at !== option && !option.contains(at) && !at.contains(option)))
+   return { ok:false, error:'something else is at ' + Math.round(x) + ',' + Math.round(y) };
+ return { ok:true, x, y, text:String(option.innerText || option.textContent || '').trim() };
+})()
+""";
 
     /// <summary>Dismisses an uncommitted search so the discovery pass can reopen it cleanly.</summary>
     public static string BuildComboboxCloseScript(int index)
@@ -1074,7 +1277,7 @@ __PRELUDE__
     public static readonly string QuestionsScript = """
 (() => {
 __PRELUDE__
- const chosen = e => { const box = e.closest('[class*="select" i]:not(input)') || e.parentElement; return !!box?.querySelector('[class*="single-value" i],[class*="singleValue" i],[class*="multi-value" i],[class*="multiValue" i]'); };
+ const chosen = e => !!chosenValueFor(e);
  const answered = e => choice(e) ? choiceSelected(e)
    : e.tagName === 'SELECT' ? e.selectedIndex > 0 && !!e.value
    : !!String(e.value || '').trim();

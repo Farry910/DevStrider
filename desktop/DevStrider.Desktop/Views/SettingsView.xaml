@@ -37,19 +37,6 @@
         </StackPanel>
       </Border>
 
-      <Border Style="{StaticResource Card}">
-        <StackPanel>
-          <TextBlock Text="Application defaults" FontWeight="SemiBold" Margin="0,0,0,8"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="Machine-wide behaviour for the automatic queue. Answers a person gives — salary among them — belong to a profile rather than to this machine, and are edited there."/>
-          <TextBlock Text="Applications waiting for review at once"/>
-          <TextBox Text="{Binding Model.MaxReviewTabs, UpdateSourceTrigger=PropertyChanged}"
-                   Width="80" HorizontalAlignment="Left" Margin="0,2,0,4" Tag="4"/>
-          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="A filled application parks in its own tab so the queue can carry on to the next link instead of waiting for you. Each tab is a live browser, so this caps memory as well as attention: at the limit the queue pauses, and closing any tab starts it again. 1 restores the old one-at-a-time behaviour; 8 is the maximum."/>
-        </StackPanel>
-      </Border>
-
       <!--
         Proxy. This exists because ChatGPT is unreachable from some of the places people run
         DevStrider from, and the entire app is built around driving ChatGPT in a real browser —
@@ -232,6 +219,17 @@
 
           <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,0" TextWrapping="Wrap"
                      Text="Local contract: POST /record-bid with JSON body { url, jobDescription, gptResumeContent, fastFeedInput?, comment?, origin? }. Fast-feed format: 'UID, Company, Role, Stack1, Stack2, …'."/>
+
+          <!--
+            Powerful and deliberately visible. /dev/eval runs script inside a signed-in ChatGPT
+            browser, so it is a switch rather than something always on - but while the automation is
+            still being built, being able to look at the real page is the difference between a
+            diagnosis and a guess.
+          -->
+          <CheckBox IsChecked="{Binding Model.DeveloperTools}" Margin="0,14,0,0"
+                    Content="Developer tools (/dev endpoints)"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,4,0,0" TextWrapping="Wrap"
+                     Text="Opens /dev on the same loopback port: app state, the activity log, and script, DOM and screenshot access to the embedded browsers. GET http://127.0.0.1:8765/dev lists them. Turn this off for anyone who is not developing the app."/>
         </StackPanel>
       </Border>
 

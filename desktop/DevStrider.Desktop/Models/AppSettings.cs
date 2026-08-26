@@ -54,16 +54,19 @@ public class AppSettings
     public int ResumeGenerationsPerChat { get; set; } = 10;
 
     /// <summary>
-    /// How many filled applications may wait for review at once, each in its own tab.
+    /// Opens the <c>/dev/*</c> endpoints on the local listener: app state, the activity log, and
+    /// script/DOM/screenshot access to the embedded browsers.
     ///
     /// <para>
-    /// Reviewing is the slow part of a batch and it needs a person, so the run parks finished
-    /// applications and carries on rather than waiting. Every parked tab is a live browser holding a
-    /// rendered page, so this is a memory ceiling as much as an attention one; at the limit the run
-    /// pauses and resumes as soon as a tab is closed.
+    /// This is a development affordance and it is deliberately powerful. Everything hard about this
+    /// app happens inside a signed-in ChatGPT session and a live application form — pages nobody can
+    /// reproduce off this machine — and without a way to look at them a diagnosis is a guess wrapped
+    /// in a build. It is loopback-only, which is the same trust boundary the rest of this listener
+    /// has always had; but /dev/eval runs arbitrary script in a signed-in browser, so it is a switch
+    /// rather than something always on. Turn it off before this goes to people who are not building it.
     /// </para>
     /// </summary>
-    public int MaxReviewTabs { get; set; } = 4;
+    public bool DeveloperTools { get; set; } = true;
 
     /// <summary>Must match the Word macro's OUTPUT_ROOT when automatic upload is desired.</summary>
     /// <summary>

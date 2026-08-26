@@ -33,6 +33,8 @@ public sealed partial class LocalApiServer : ObservableObject
     private readonly ActivityLogService _activity;
     private readonly ProfileContext _profileContext;
     private readonly WordMacroService _wordMacro;
+    private readonly DevEndpoints _dev;
+    private readonly SessionContext _session;
 
     /// <summary>
     /// Serializes <see cref="HandleRefreshWordAsync"/> end to end. Opening an already-open
@@ -93,13 +95,17 @@ public sealed partial class LocalApiServer : ObservableObject
         SettingsService settingsService,
         ActivityLogService activity,
         ProfileContext profileContext,
-        WordMacroService wordMacro)
+        WordMacroService wordMacro,
+        DevEndpoints dev,
+        SessionContext session)
     {
         _bids = bids;
         _settingsService = settingsService;
         _activity = activity;
         _profileContext = profileContext;
         _wordMacro = wordMacro;
+        _dev = dev;
+        _session = session;
     }
 
     public void Start(int port)
@@ -228,7 +234,25 @@ public sealed partial class LocalApiServer : ObservableObject
 
             if (ctx.Request.HttpMethod == "GET" && (path == "/health" || path == "/"))
             {
-                await WriteJsonAsync(ctx, 200, new { ok = true, port = BoundPort });
+                await WriteJsonAsync(ctx, 200, new { ok = true, port = BoundPort, dev = "/dev" });
+                return;
+            }
+
+            // Development endpoints. They answer for themselves — including refusing when the
+            // setting is off — so a route under /dev never falls through to the 404 below. They are
+            // also the only ones that work before sign-in, which is the point: a run that never got
+            // past the login window is worth being able to look at.
+            if (await _dev.TryHandleAsync(ctx, path)) return;
+
+            // Everything below acts as the signed-in user. The listener used not to exist at all
+            // until after login, which made this guard unnecessary; with developer tools it opens
+            // at launch, so the guard is what keeps that promise instead of the timing.
+            if (!_session.IsAuthenticated)
+            {
+                await WriteJsonAsync(ctx, 401, new
+                {
+                    error = "Not signed in. This endpoint acts as the signed-in user; /dev/* does not.",
+                });
                 return;
             }
 
