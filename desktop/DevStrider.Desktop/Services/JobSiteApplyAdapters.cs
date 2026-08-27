@@ -159,12 +159,6 @@ public static class JobSiteApplyAdapters
      || clean(element.getAttribute('aria-label')) || clean(element.name) || clean(element.id) || 'Required field').slice(0,160);
  };
 
- const successPattern = /\b(thank you for applying|thanks for applying|application (has been )?(submitted|received)|we (have )?received your application)\b/;
- const successText = Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"],[role="status"]'))
-   .filter(visible).map(node => norm(node.innerText || node.textContent)).join(' ');
- if (successPattern.test(successText) || /\/(confirmation|submitted|thank-you|thank_you)(\/|$)/i.test(location.pathname))
-   return { adapter:adapter.Name, action:'success', clicked:false, final:true, label:'application submitted', errors:[] };
-
  const textFor = element => norm(element.innerText || element.value || element.getAttribute('aria-label') || element.title);
  const finalPattern = /^(submit|submit application|send application|complete application|finish application|apply)$/;
  const nextPattern = /^(next|continue|save and continue|continue application|review application|next step)$/;
@@ -203,6 +197,40 @@ public static class JobSiteApplyAdapters
    || lowest(everyButton.filter(element => looksFinal(textFor(element))));
  const next = adapterCandidates.find(element => nextPattern.test(textFor(element)))
    || lowest(everyButton.filter(element => nextPattern.test(textFor(element))));
+
+ // ---- Did the site say it took the application? -------------------------------------------------
+ // Read from the page, never inferred. The rule this replaced accepted silence — the Submit button
+ // disappearing and nothing else happening — as acceptance, which filed applications as submitted on
+ // no evidence whatsoever. If the site does not say so, the run leaves it for a person.
+ const successPattern = new RegExp('\\b(' + [
+   'thank(s| you) for (applying|your application|your interest|your submission|applying to)',
+   'application (has been |was |is )?(submitted|received|sent|complete|completed)',
+   "we (have |'ve )?(now )?received your application",
+   'submission (was |is )?(successful|complete|received)',
+   'successfully (submitted|applied|sent|completed)',
+   'your application (has been |is |was )(submitted|received|sent|complete|completed|in)',
+ ].join('|') + ')\\b');
+ const pageText = norm(document.body ? document.body.innerText : '').slice(0, 20000);
+ const saidSo = successPattern.test(pageText)
+   || /\/(confirmation|submitted|thank-you|thank_you|success)(\/|$)/i.test(location.pathname);
+ // A phrase is only a confirmation once the form it belongs to is done with. Widening the wording
+ // means widening the ways it can be met by something that is not a confirmation at all — a job
+ // description that thanks you for your interest, sitting above a form still waiting to be sent.
+ const stillSendable = !!final && !final.disabled;
+ if (saidSo && !stillSendable) {
+   // A confirmation and a code box are not alternatives; a site can show both. So what decides
+   // whether this application is finished is not the wording, it is whether the page still wants
+   // something from a person. autocomplete="one-time-code" is the standard way to say so, and the
+   // labels cover the sites that do not use it.
+   const codeWords = /\b(code|verification|verify|otp|one[- ]time|passcode|pin)\b/;
+   const pending = Array.from(document.querySelectorAll('input,textarea')).find(e =>
+     visible(e) && !e.disabled && !e.readOnly && String(e.value || '').trim().length === 0 &&
+     (norm(e.getAttribute('autocomplete')) === 'one-time-code' ||
+      codeWords.test(norm(labelFor(e) + ' ' + (e.placeholder || '') + ' ' + (e.name || '') + ' ' + (e.id || '')))));
+   return { adapter:adapter.Name, action:'success', clicked:false, final:true,
+     label:'application submitted', errors:[],
+     pendingCode: !!pending, pendingLabel: pending ? labelFor(pending) : '' };
+ }
 
  // On the primary pass, return the real action before inspecting validity. The host must physically
  // click Next/Submit first; only the errors rendered by that action are correction evidence.

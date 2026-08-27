@@ -76,6 +76,88 @@ public partial class JobBrowserView : UserControl
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// Types a verification code into the application that is waiting for it, sends it, and reads
+    /// what the site says back. Returns an empty string when the site accepted it, or the reason.
+    ///
+    /// <para>
+    /// It works on that application's own browser rather than on whichever tab the run happens to be
+    /// driving, because the whole point is that the queue does not stop for this: a code arrives by
+    /// e-mail minutes after the application went out, by which time the run is several links further
+    /// on.
+    /// </para>
+    /// </summary>
+    private async Task<string> EnterVerificationCodeAsync(Guid workItemId, string code)
+    {
+        if (DataContext is not JobBrowserViewModel vm) return "The job browser is not ready.";
+        if (!_browsers.TryGetValue(workItemId, out var browser) || browser.CoreWebView2 == null)
+            return "That application's tab is no longer open. Finish it on the job site directly.";
+        var core = browser.CoreWebView2;
+
+        try
+        {
+            var targetJson = await core.ExecuteScriptAsync(JobSiteFormAdapters.CodeFieldTargetScript);
+            Trace?.Step("Code", "code field located", targetJson);
+            using var target = JsonDocument.Parse(targetJson);
+            if (!target.RootElement.TryGetProperty("ok", out var ok) || !ok.GetBoolean())
+                return target.RootElement.TryGetProperty("error", out var why)
+                    ? "That page is not asking for a code any more: " + why.GetString()
+                    : "No verification-code field is on that page any more.";
+
+            await DispatchMouseClickAsync(core, target.RootElement.GetProperty("x").GetDouble(),
+                target.RootElement.GetProperty("y").GetDouble());
+            await DispatchTextEntryAsync(core, code);
+            await Task.Delay(300);
+
+            // Its own button if the page has one, Enter if it does not — the same order the rest of
+            // the run uses, and for the same reason: a real control is more reliable than a keypress,
+            // but a keypress works on the forms that have no button at all.
+            if (target.RootElement.TryGetProperty("send", out var send) &&
+                send.ValueKind == JsonValueKind.Object)
+            {
+                Trace?.Step("Code", "clicking the verify control",
+                    send.TryGetProperty("label", out var label) ? label.GetString() ?? "" : "");
+                await DispatchMouseClickAsync(core, send.GetProperty("x").GetDouble(),
+                    send.GetProperty("y").GetDouble());
+            }
+            else await DispatchEnterAsync(core);
+
+            // Then ask the page, rather than assuming the click worked — the same rule as everywhere
+            // else in this run.
+            if (!TryGetHttpUri(core.Source, out var uri))
+                return "That tab is no longer on the application.";
+            for (var attempt = 0; attempt < 16; attempt++)
+            {
+                await Task.Delay(attempt == 0 ? 800 : 500);
+                var json = await core.ExecuteScriptAsync(
+                    JobSiteApplyAdapters.BuildValidationScript(uri, allowSafeAdvance: false));
+                using var probe = JsonDocument.Parse(json);
+                var errors = ValidationErrors(probe.RootElement);
+                if (errors.Count > 0)
+                {
+                    Trace?.Warn("Code", "the site rejected the code",
+                        string.Join("; ", errors.Take(3).Select(e => e.Message)));
+                    return "The site rejected that code: " + errors[0].Message;
+                }
+                var action = probe.RootElement.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "";
+                var stillAsking = probe.RootElement.TryGetProperty("pendingCode", out var pending) &&
+                                  pending.GetBoolean();
+                if (action == "success" && !stillAsking)
+                {
+                    Trace?.Ok("Code", "verification accepted", uri.Host);
+                    await vm.CompleteVerifiedApplicationAsync(workItemId);
+                    return "";
+                }
+            }
+            return "The code went in, but the site has not confirmed it yet. Check that tab.";
+        }
+        catch (Exception ex)
+        {
+            Trace?.Warn("Code", "entering the code threw", ex.Message);
+            return "The code could not be entered: " + ex.Message;
+        }
+    }
+
     /// <summary>Any browser with a live page, for diagnostics when no run is in progress.</summary>
     private CoreWebView2? FirstLiveBrowser() =>
         _unassignedBrowser?.CoreWebView2 ??
@@ -97,13 +179,13 @@ public partial class JobBrowserView : UserControl
             // Job sites stay on the direct connection unless the scope says otherwise. They are
             // reachable from wherever this is running — it is ChatGPT that is not — and an extra
             // hop would be paid on the page-heavy part of every run for nothing.
-            var arguments = proxy.BrowserArguments(forChatGpt: false);
+            var arguments = BrowserLaunch.Arguments(proxy, forChatGpt: false);
             _environment = await CoreWebView2Environment.CreateAsync(
                 userDataFolder: Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "DevStrider", "webview2", "job-sites"),
                 options: new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
-            if (arguments.Length > 0) Trace?.Step("Browser", "job sites behind a proxy", proxy.Address);
+            if (proxy.AppliesToJobSites) Trace?.Step("Browser", "job sites behind a proxy", proxy.Address);
         }
 
         var browser = new WebView2 { Visibility = Visibility.Hidden };
@@ -236,6 +318,13 @@ public partial class JobBrowserView : UserControl
     /// <summary>The page the ledger describes. A different form is a different set of fields.</summary>
     private string _settledPage = "";
 
+    /// <summary>
+    /// Marks the document the ledger was built from. Written into the page, so a reload loses it and
+    /// the ledger is known to be stale — which the URL alone cannot tell us, since a retried link
+    /// loads the same address with every field empty again.
+    /// </summary>
+    private string _settledStamp = "";
+
     /// <summary>Resolved from the DataContext rather than injected: the view is created by XAML.</summary>
     private BidTraceService? Trace => (DataContext as JobBrowserViewModel)?.Trace;
 
@@ -277,6 +366,7 @@ public partial class JobBrowserView : UserControl
                 vm.AutomationTabRequested += OpenAutomationTabAsync;
                 vm.TabCloseRequested += CloseTab;
                 vm.TabSelectionChanged += SelectTab;
+                vm.VerificationCodeEntryRequested += EnterVerificationCodeAsync;
             }
         }
         catch (Exception ex) when (DataContext is JobBrowserViewModel vm)
@@ -695,6 +785,14 @@ public partial class JobBrowserView : UserControl
                 await vm.MarkSubmittedAutomaticallyAsync(validation.Note);
                 return;
             }
+            // Confirmed, but the page is still asking a person for a verification code. The
+            // application is not filed and the tab is not closed: it is parked with the code field
+            // waiting, and the run carries on to the next link without it.
+            if (validation.NeedsCode)
+            {
+                await vm.MarkAwaitingVerificationCodeAsync(validation.Note, validation.CodeLabel);
+                return;
+            }
             await InstallHumanSubmitObserverAsync();
             var note = "Validation errors appeared after Submit: " + string.Join("; ", descriptions.Take(8)) +
                        (string.IsNullOrWhiteSpace(validation.Note) ? "" : " " + validation.Note);
@@ -1106,6 +1204,14 @@ public partial class JobBrowserView : UserControl
                 await vm.MarkSubmittedAutomaticallyAsync(validation.Note);
                 return;
             }
+            // Confirmed, but the page is still asking a person for a verification code. The
+            // application is not filed and the tab is not closed: it is parked with the code field
+            // waiting, and the run carries on to the next link without it.
+            if (validation.NeedsCode)
+            {
+                await vm.MarkAwaitingVerificationCodeAsync(validation.Note, validation.CodeLabel);
+                return;
+            }
 
             // The site s own errors are the best evidence of what is wrong, and when there are any
             // they are used on their own. But Submit can produce neither a confirmation nor an error
@@ -1208,6 +1314,14 @@ public partial class JobBrowserView : UserControl
             if (validation.Submitted)
             {
                 await vm.MarkSubmittedAutomaticallyAsync(validation.Note);
+                return;
+            }
+            // Confirmed, but the page is still asking a person for a verification code. The
+            // application is not filed and the tab is not closed: it is parked with the code field
+            // waiting, and the run carries on to the next link without it.
+            if (validation.NeedsCode)
+            {
+                await vm.MarkAwaitingVerificationCodeAsync(validation.Note, validation.CodeLabel);
                 return;
             }
             var notes = new List<string>();
@@ -1397,8 +1511,7 @@ public partial class JobBrowserView : UserControl
                 ? actionElement.GetString() ?? "none"
                 : "none";
             if (action == "success")
-                return new ApplicationValidationOutcome(aggregate, "Application submission confirmed.",
-                    Array.Empty<ValidationError>(), true);
+                return Confirmed(aggregate, root);
 
             if (action == "next" && TryCoordinates(root, out var nextX, out var nextY))
             {
@@ -1484,9 +1597,9 @@ public partial class JobBrowserView : UserControl
                 await DispatchBrowserMouseClickAsync(submitX, submitY);
                 notes.Add("Clicked final Submit with browser-level mouse input.");
 
-                for (var attempt = 0; attempt < 14; attempt++)
+                for (var attempt = 0; attempt < 26; attempt++)
                 {
-                    await Task.Delay(attempt == 0 ? 700 : 250);
+                    await Task.Delay(attempt == 0 ? 700 : 450);
                     if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var probeUri)) continue;
                     string probeJson;
                     try
@@ -1494,7 +1607,7 @@ public partial class JobBrowserView : UserControl
                         probeJson = await JobSiteBrowser.ExecuteScriptAsync(
                             JobSiteApplyAdapters.BuildValidationScript(probeUri, allowSafeAdvance: false));
                     }
-                    catch when (attempt < 13) { continue; }
+                    catch when (attempt < 25) { continue; }
                     Trace?.Step("Validate", $"post-Submit probe {attempt + 1}", probeJson);
                     using var probe = JsonDocument.Parse(probeJson);
                     var probeRoot = probe.RootElement;
@@ -1518,16 +1631,21 @@ public partial class JobBrowserView : UserControl
                     var probeAction = probeRoot.TryGetProperty("action", out var probeActionElement)
                         ? probeActionElement.GetString() ?? "none"
                         : "none";
-                    if (probeAction == "success" || (attempt >= 4 && probeAction == "none"))
+                    // Only the site saying so counts. This used to accept silence after a couple of
+                    // seconds — the Submit button gone and nothing else on the page — and file the
+                    // application as submitted on no evidence at all. Most of a day's runs were
+                    // recorded that way. An application nobody can show was accepted goes to review.
+                    if (probeAction == "success")
                     {
-                        notes.Add("The job site accepted the application.");
-                        return new ApplicationValidationOutcome(aggregate, string.Join(" ", notes),
-                            Array.Empty<ValidationError>(), true);
+                        var confirmed = Confirmed(aggregate, probeRoot);
+                        notes.Add(confirmed.Note);
+                        return confirmed with { Note = string.Join(" ", notes) };
                     }
                 }
 
                 await InstallHumanSubmitObserverAsync();
-                notes.Add("Submit was clicked, but the site showed neither confirmation nor a readable error; review the visible result.");
+                notes.Add("Submit was clicked, but the site showed no confirmation and no error. " +
+                          "Check the tab: if it went through, mark it submitted.");
             }
             else
             {
@@ -1544,6 +1662,27 @@ public partial class JobBrowserView : UserControl
         notes.Add("Stopped after five application steps; review before continuing.");
         return new ApplicationValidationOutcome(aggregate, string.Join(" ", notes),
             Array.Empty<ValidationError>(), false);
+    }
+
+    /// <summary>
+    /// Reads a confirmed submission, and whether the page is still asking a person for something.
+    /// Closing a tab wrongly can lose a submission for good; keeping one wrongly costs a click, so
+    /// anything ambiguous is kept.
+    /// </summary>
+    private ApplicationValidationOutcome Confirmed(FillOutcome fill, JsonElement root)
+    {
+        var needsCode = root.TryGetProperty("pendingCode", out var pending) && pending.GetBoolean();
+        var label = root.TryGetProperty("pendingLabel", out var name) ? name.GetString() ?? "" : "";
+        if (!needsCode)
+            return new ApplicationValidationOutcome(fill, "Application submission confirmed.",
+                Array.Empty<ValidationError>(), true);
+
+        Trace?.Step("Validate", "confirmed, but the page still wants a code",
+            label.Length > 0 ? label : "an unlabelled field");
+        return new ApplicationValidationOutcome(fill,
+            "The site confirmed the application and is asking for a verification code" +
+            (label.Length > 0 ? $" ({label})" : "") + ". The tab is open for you to paste it in.",
+            Array.Empty<ValidationError>(), false, true, label);
     }
 
     private static bool TryCoordinates(JsonElement root, out double x, out double y)
@@ -1603,6 +1742,24 @@ public partial class JobBrowserView : UserControl
         {
             ResetSettledFields("page is now " + page);
             _settledPage = page;
+        }
+
+        // The URL is not enough to tell one document from another. A retried link loads the same
+        // address a second time with every field empty again, and the ledger — which is only ever a
+        // memory of what this app typed — said all fifteen were already done. The run skipped every
+        // one of them, filled nothing, and failed the link for having nothing to submit. A marker in
+        // the page settles it, because a reload takes the page's globals with it and an SPA
+        // re-render, which really is the same document, keeps them.
+        var stamp = (await JobSiteBrowser.ExecuteScriptAsync("window.__dsFillStamp || \"\""))
+            .Trim().Trim('"');
+        if (!string.Equals(stamp, _settledStamp, StringComparison.Ordinal))
+        {
+            ResetSettledFields(stamp.Length == 0
+                ? "this document has not been filled before"
+                : "a different document is open than the ledger was built from");
+            _settledStamp = Guid.NewGuid().ToString("N")[..8];
+            await JobSiteBrowser.ExecuteScriptAsync(
+                $"window.__dsFillStamp = \"{_settledStamp}\"");
         }
         // Anything the caller forces is being corrected, so it is no longer settled whatever the
         // ledger says - drop it before the scripts read the ledger, not after.
@@ -1725,9 +1882,13 @@ public partial class JobBrowserView : UserControl
         return (labels.Count, touched.Count, labels, touched);
     }
 
-    private async Task DispatchBrowserTextEntryAsync(string value)
+    private Task DispatchBrowserTextEntryAsync(string value) =>
+        DispatchTextEntryAsync(
+            JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable."), value);
+
+    /// <summary>Types into a named browser. Same reason as the click above.</summary>
+    private static async Task DispatchTextEntryAsync(CoreWebView2 core, string value)
     {
-        var core = JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable.");
         async Task KeyAsync(string type, string key, string code, int virtualKey, int modifiers = 0) =>
             await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", JsonSerializer.Serialize(new
             {
@@ -1744,7 +1905,7 @@ public partial class JobBrowserView : UserControl
 
         foreach (var character in value.Replace("\r\n", "\n").Replace('\r', '\n'))
         {
-            if (character == '\n') await DispatchBrowserEnterAsync();
+            if (character == '\n') await DispatchEnterAsync(core);
             else await core.CallDevToolsProtocolMethodAsync("Input.insertText",
                 JsonSerializer.Serialize(new { text = character.ToString() }));
         }
@@ -1808,9 +1969,13 @@ public partial class JobBrowserView : UserControl
         return (labels.Count, touched.Count, labels, touched);
     }
 
-    private async Task DispatchBrowserMouseClickAsync(double x, double y)
+    private Task DispatchBrowserMouseClickAsync(double x, double y) =>
+        DispatchMouseClickAsync(
+            JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable."), x, y);
+
+    /// <summary>Clicks in a named browser, so a parked tab can be driven without being the current one.</summary>
+    private static async Task DispatchMouseClickAsync(CoreWebView2 core, double x, double y)
     {
-        var core = JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable.");
         await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", JsonSerializer.Serialize(new
         {
             type = "mouseMoved", x, y, button = "none", buttons = 0, pointerType = "mouse"
@@ -1963,9 +2128,13 @@ public partial class JobBrowserView : UserControl
         return (touched.Count, touched);
     }
 
-    private async Task DispatchBrowserEnterAsync()
+    private Task DispatchBrowserEnterAsync() =>
+        DispatchEnterAsync(
+            JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable."));
+
+    /// <summary>Presses Enter in a named browser.</summary>
+    private static async Task DispatchEnterAsync(CoreWebView2 core)
     {
-        var core = JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable.");
         await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", JsonSerializer.Serialize(new
         {
             type = "rawKeyDown", key = "Enter", code = "Enter", windowsVirtualKeyCode = 13,
@@ -1990,11 +2159,18 @@ public partial class JobBrowserView : UserControl
         IReadOnlyList<string> Touched, IReadOnlyList<string> Unfilled,
         IReadOnlyList<string> UnfilledRequired);
 
+    /// <param name="NeedsCode">
+    /// The site confirmed the application and is still asking a person for something — a verification
+    /// code, almost always. Confirmed is not the same as finished, so this application is not filed
+    /// and its tab is not closed: it stays open for the code to be pasted into.
+    /// </param>
     private sealed record ApplicationValidationOutcome(
         FillOutcome Fill,
         string Note,
         IReadOnlyList<ValidationError> Errors,
-        bool Submitted);
+        bool Submitted,
+        bool NeedsCode = false,
+        string CodeLabel = "");
     private sealed record ValidationError(string Question, string Message);
 
     private static IReadOnlyList<string> StringList(JsonElement root, string name) =>
@@ -2163,8 +2339,35 @@ public partial class JobBrowserView : UserControl
             return false;
         }
         var fileName = Path.GetFileName(vm.SelectedResumePath);
+
+        // Handing the file over is not the same as the site having taken it. Ashby posts the file to
+        // its own server on the change event and only counts the field as answered once that lands,
+        // so a Submit fired in the meantime came back "Missing entry for required field: Resume" —
+        // intermittently, depending on how long the rest of the form happened to take. Wait for the
+        // site to show the name back before anything else in the run proceeds.
+        var attached = false;
+        var attachedJson = "";
+        for (var attempt = 0; attempt < 20 && !attached; attempt++)
+        {
+            await Task.Delay(attempt == 0 ? 400 : 600);
+            attachedJson = await JobSiteBrowser.ExecuteScriptAsync(
+                JobSiteFormAdapters.BuildResumeAttachedScript(fileName));
+            using var probe = JsonDocument.Parse(attachedJson);
+            attached = probe.RootElement.TryGetProperty("ok", out var done) && done.GetBoolean();
+            // A site that shows nothing either way is not a slow upload, and waiting the full twelve
+            // seconds for it on every application is twelve seconds of nothing. Give it a few
+            // rounds in case the render is late, then stop.
+            if (!attached && attempt >= 4 &&
+                probe.RootElement.TryGetProperty("quiet", out var quiet) && quiet.GetBoolean()) break;
+        }
+        if (!attached)
+            Trace?.Warn("Upload", "the site has not shown the resume back",
+                $"{attachedJson} — submitting anyway; it may be rejected for a missing resume");
+
         if (TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out var uri)) vm.RecordUpload(uri.Host, fileName);
-        Trace?.Ok("Upload", "resume attached", $"{fileName} from {vm.SelectedResumePath}");
+        Trace?.Ok("Upload", "resume attached", attached
+            ? $"{fileName}, confirmed on the page"
+            : $"{fileName} (not confirmed on the page)");
         if (reportStatus) vm.StatusMessage = $"Uploaded {fileName}. Confirm it on the page.";
         return true;
     }

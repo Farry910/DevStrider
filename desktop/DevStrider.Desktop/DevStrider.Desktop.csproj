@@ -959,8 +959,177 @@
          Verified live: the sponsorship question corrected from Yes to No, clicked and confirmed
          selected, on the Absci form that had been failing on it — and that application submitted.
          The retarget step is built and traced but the queue ran dry before a form with an Ashby
-         location dropdown came round again, so it is not yet confirmed on a live run. -->
-    <Version>10.9.0</Version>
+         location dropdown came round again, so it is not yet confirmed on a live run.
+
+         10.10.0 recovers answers that were being thrown away, and stops a retry filling nothing.
+
+         A question that quotes one of its own options — If you selected "Location not listed" above,
+         tell us where you intend to work — comes back as a JSON key holding bare double quotes,
+         because ChatGPT echoes the question text as it was given. That is not JSON, so the parse
+         failed, so every answer in the reply was discarded: sixteen good answers lost over one
+         question's punctuation, three minutes spent re-reading the same reply, and the link failed
+         as a format violation. JSON cannot tell a closing quote from a literal one by looking at the
+         quote, but it can by looking at what follows: a string ends only where the next thing that
+         matters is a colon, comma, brace, bracket or the end of the text. Anywhere else the model
+         forgot an escape, and the reader puts it back. The prompt asks for the escaping too, which
+         costs nothing, but the reader is what makes it not matter.
+
+         The second was hiding behind the first. The settled-field ledger — the record of what this
+         app has already typed and verified, so later passes leave correct answers alone — was keyed
+         on the URL. A retried link loads the same address a second time with every field empty
+         again, and the ledger still said all fifteen were done: the run skipped every one, filled
+         nothing, and failed the link for having nothing to submit. It carries a marker in the page
+         now. A reload takes the page's globals with it, so the ledger is known to be stale; an SPA
+         re-render, which really is the same document, keeps them.
+
+         Verified live on the Thumbtack posting that prompted both: sixteen of sixteen answers
+         parsed, the ledger cleared for a fresh document, and a fill that had managed 0 verified
+         fields managing 16 — then Submit clicked and Ashby answering with its own remaining
+         complaint rather than silence.
+
+         10.11.0 waits for the job site to take the resume before anything else in the run proceeds.
+
+         "Missing entry for required field: Resume" on a form the trace said had the resume attached,
+         and then the same link submitting cleanly on the next attempt with no code changed in
+         between. That difference is the whole diagnosis: it is a race, not a failure. Setting a file
+         input's files is instant, and everything after it is not — Ashby posts the file to its own
+         server on the change event and counts the field as answered only once that lands. Whether
+         Submit beat it depended on how long the rest of the form happened to take to fill.
+
+         So the run now waits on the site's own evidence rather than on ours. The file sitting in the
+         input is our half; the file's name appearing on the page is the site's, and both are
+         required. Anything still visibly uploading holds the wait open rather than failing it, and
+         when the site never shows the name back the run says so and submits anyway — a resume that
+         did land and was never rendered is not a reason to abandon a finished application.
+
+         Verified on the live Ashby form that nothing false-positives: an empty form reports neither
+         half, and a word the page really displays satisfies the name check while the empty input
+         still holds the wait. The full positive needs an unapplied Ashby posting to land on, and
+         every one in the queue had already been submitted by the time this was built.
+
+         10.12.0 releases links an interrupted run was holding, and corrects the resume check that
+         10.11.0 got wrong in both halves.
+
+         A status like "Generating resume" describes a browser, a ChatGPT conversation and a Word
+         macro that all stopped existing when the app closed. Nothing ever cleared it, and Start only
+         picks up "Queued" — so a link killed mid-run sat reading "Generating resume" for ever,
+         invisible to the queue and to every retry. Two were stranded that way. Every in-flight
+         status is put back in the queue at startup, keeping the attempt count and the last error and
+         dropping only the claim that something is in progress. Needs JD and Failed stay as they are:
+         those are conclusions a run reached, not work it was in the middle of, and Skipped is a
+         person's decision.
+
+         The resume check needed both halves fixed, and the run that exercised those two links is
+         what showed it. It matched the file name's stem as well as the whole name, to be forgiving —
+         but this profile's resume is Fernando.pdf and the applicant is Fernando, so "fernando" is on
+         the form the moment the name field is filled, and the check reported the resume attached
+         before it had been. And it required our file to still be sitting in the input, which
+         Greenhouse makes impossible: it hands the file to its own uploader and removes the native
+         input, leaving no file inputs on the page at all. Both together meant twelve seconds of
+         waiting and a misleading warning on every Greenhouse application. The name must now match in
+         full, either side of the evidence is enough on its own, and a site showing nothing either
+         way is given a few rounds rather than the whole budget.
+
+         Verified live: both stranded links released at startup and announced, then run to completion
+         — "resume attached, confirmed on the page", 24 fields verified with nothing outstanding, and
+         the application accepted.
+
+         10.13.0 stops the app filing applications as submitted on no evidence, and makes marking one
+         submitted mean it is finished with.
+
+         The rule that went: after Submit, if a couple of seconds passed with the button gone and
+         nothing else on the page, the application was recorded as accepted. That is not a reading of
+         anything — it is silence, and most of a day's runs were filed that way. Only the site saying
+         so counts now, in its own words, read off the page. The window to say it went from about
+         four seconds to twelve, because a confirmation that renders slowly was previously indistinct
+         from one that never came.
+
+         The wording it accepts is much wider — thanks for applying, application received or sent or
+         complete, submission successful, successfully submitted, and the confirmation paths. Widening
+         it is what makes the guard necessary: a job description that thanks you for your interest,
+         sitting above a form still waiting to be sent, matches several of those phrases. So a phrase
+         only counts once the form is done with it — while an enabled Submit is still on the page,
+         nothing is confirmed.
+
+         A confirmation and a verification code are not alternatives, and a site can show both. What
+         decides whether an application is finished is therefore not the wording but whether the page
+         still wants something from a person: an empty, enabled field carrying
+         autocomplete="one-time-code" or a label that says code, verification, OTP or PIN. Confirmed
+         with nothing pending is filed and its tab closed. Confirmed with a code field waiting keeps
+         its tab, keeps its place in the queue, is flagged in the activity log, and the run carries
+         on to the next link — a code arrives by e-mail minutes later and nothing is served by making
+         a batch wait for it. Ambiguity keeps the tab, because closing one wrongly can lose a
+         submission for good and keeping one wrongly costs a click.
+
+         Marking submitted now closes the tab, by hand as well as automatically: a submitted
+         application sitting in the review list is a thing to read and dismiss that carries no
+         decision. Remove from the list stays for the other case.
+
+         The harness caught a bug in this before it ran anywhere: an escaped apostrophe inside the
+         phrase list ended its JavaScript string early, which would have thrown on every page the
+         validation script touched. Ten cases now cover the real Greenhouse confirmation word for
+         word, four other real wordings, a code box found by attribute and by label, a filled code box
+         that must not hold a tab open, silence, and the job description that thanks you above a live
+         form. Confirmed on the live pages too: the Greenhouse confirmation reads as submitted, and
+         the Ashby application form next to it does not.
+
+         10.14.0 adds the box the verification codes go into, and fixes a stall that the live test of
+         it exposed.
+
+         The stall first, because it was mine and it was from an hour earlier. Marking an application
+         submitted was changed to close its tab, and the method that closes tabs also decides whether
+         to restart a run that had paused for a free slot — so it declined to open the next link, on
+         the grounds that the queue was already going. It was: it was going nowhere. One application
+         submitted, its tab closed, and nine links sat waiting with nothing left to start them.
+         Disposing a tab and deciding what the run does next are now separate things, because the two
+         callers want opposite answers: a person closing a reviewed tab may be freeing the run to
+         continue, while the run closing its own tab is already running and needs the next link.
+
+         Then the codes. A site that confirms an application and then e-mails a code leaves the run
+         several links further on by the time it arrives, so the application parks with its tab open
+         and the queue carries on. The codes are pasted into one box, aimed by default at whichever
+         application has been waiting longest and moving on by itself after each one — so pasting
+         them in the order the e-mails land needs no aiming at all. It is a list rather than a queue
+         because the e-mails do not always arrive in the order the applications went out, and a code
+         typed into the wrong application cannot afterwards be typed into the right one. Entering one
+         drives that application's own browser rather than whichever tab the run is on, then asks the
+         page what happened: accepted files the application and closes it, rejected says what the
+         site said, and neither leaves it where it was.
+
+         The live test: ten links, six submitted on the site's own confirmation, three parked for
+         review because no confirmation came — under the rule this replaced, those three would have
+         been recorded as submitted on silence. Not tested live: the code entry itself. No site in
+         the batch asked for a code, Greenhouse included, so the box has its unit coverage and its
+         wiring checked and nothing more.
+
+         10.15.0 lets the app work while nothing is looking at it.
+
+         Chromium assumes it is a browser somebody is watching. When its window is covered, minimised
+         or on another virtual desktop it treats the page as unwatched and turns it down: timers
+         throttled to about once a second, animation frames stopped, renderer priority dropped. That
+         is right for a browser and fatal here, because the unwatched page is the one being driven —
+         a form being filled, a ChatGPT reply being waited for. Left in the background a run did not
+         go slowly, it stopped, and the only way to keep it going was to leave the window on top of
+         everything else.
+
+         Measured before: with nothing in front of it but a terminal, a 100ms interval was firing 0.3
+         times a second — thirty times slower than asked — and requestAnimationFrame was not firing
+         at all. Four switches at environment creation turn that off: CalculateNativeWinOcclusion is
+         the Windows check that decides a window is covered and is what makes "only works on top" the
+         rule; backgrounding-occluded-windows is what it does about it; renderer-backgrounding drops
+         process priority; background-timer-throttling is the one that stretches every timer out.
+         Measured after, same conditions: 10 timer ticks a second, exactly the rate asked for.
+
+         Minimised is the same. The job browser held 10 ticks a second with the window iconified, and
+         the ChatGPT browser held 60 frames a second alongside it. Then a real run, minimised
+         throughout: three links worked, a form filled, Submit clicked, and an application confirmed
+         by the site and filed — all of it through DevTools input, which is synthesised inside the
+         renderer and never touches the desktop, so no window has to be anywhere near the front for a
+         click to land where it was aimed.
+
+         The arguments have to be passed when the environment is created, so this needs a restart to
+         take effect, exactly as the proxy does. -->
+    <Version>10.15.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

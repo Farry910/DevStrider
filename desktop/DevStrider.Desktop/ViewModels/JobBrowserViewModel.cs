@@ -158,6 +158,27 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private const int ConsecutiveFailureLimit = 3;
 
     /// <summary>
+    /// The statuses that only mean anything while a run is actually holding the link. They describe
+    /// a browser, a ChatGPT conversation or a Word macro that stopped existing when the app closed,
+    /// so on the next launch they are stale by definition and are put back in the queue.
+    ///
+    /// <para>
+    /// Deliberately not here: <c>Needs JD</c> and <c>Failed</c>, which are conclusions a run reached
+    /// rather than work it was in the middle of, and <c>Skipped</c>, which is a person's decision.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> InFlight = new(StringComparer.OrdinalIgnoreCase)
+    {
+        JobLinkQueueStatuses.Loading,
+        JobLinkQueueStatuses.ExtractingJobDescription,
+        JobLinkQueueStatuses.GeneratingResume,
+        JobLinkQueueStatuses.CreatingDocument,
+        JobLinkQueueStatuses.FillingApplication,
+        JobLinkQueueStatuses.ResolvingApplicationFields,
+        JobLinkQueueStatuses.ResumeReady,
+    };
+
+    /// <summary>
     /// What a failure is evidence of. <see cref="Link"/> means this posting is unusable — an
     /// unreadable description, a form no adapter matches, a page behind a human gate — and the run
     /// skips it and carries on, however many of them there are. <see cref="Machinery"/> means
@@ -598,13 +619,26 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     /// starts again here, without anybody having to notice that it had stopped.
     /// </para>
     /// </summary>
-    private async Task ReleaseTabAsync(ApplicationTabViewModel tab)
+    /// <summary>
+    /// Disposes a tab and nothing else. Kept apart from <see cref="ReleaseTabAsync"/> because that
+    /// one also decides whether to restart a paused run, and the two callers want opposite things:
+    /// a person closing a reviewed tab may be freeing the run to continue, while the run closing its
+    /// own tab after submitting is already going and needs to move to the next link rather than be
+    /// restarted. Merging them stalled a whole batch — the queue submitted one application, closed
+    /// its tab, and sat there with nine links still waiting and nothing to start them.
+    /// </summary>
+    private void DisposeTab(ApplicationTabViewModel tab)
     {
         TabCloseRequested?.Invoke(tab.WorkItemId);
         Tabs.Remove(tab);
         if (ReferenceEquals(SelectedTab, tab))
             SelectedTab = Tabs.FirstOrDefault(candidate => candidate.IsAwaitingReview) ?? Tabs.FirstOrDefault();
         NotifyTabState();
+    }
+
+    private async Task ReleaseTabAsync(ApplicationTabViewModel tab)
+    {
+        DisposeTab(tab);
         await SaveQueueAsync();
 
         var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
@@ -617,6 +651,141 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         IsAutomaticQueueRunning = true;
         StatusMessage = "A review slot freed up. Continuing with the next link.";
         await OpenNextWorkItemAsync();
+    }
+
+    /// <summary>
+    /// Applications waiting on a verification code, oldest first — the order the codes were asked
+    /// for, which is the order their e-mails arrive in.
+    /// </summary>
+    public IEnumerable<JobLinkQueueItem> AwaitingCodeItems =>
+        JobQueue.Where(item => item.Status == JobLinkQueueStatuses.AwaitingCode)
+            .OrderBy(item => item.UpdatedAt);
+
+    public int AwaitingCodeCount => AwaitingCodeItems.Count();
+    public bool HasAwaitingCode => AwaitingCodeCount > 0;
+
+    /// <summary>
+    /// Which waiting application the code box is aimed at. Defaults to the one that has been waiting
+    /// longest and moves on by itself after each code, so pasting codes in the order the e-mails
+    /// arrive needs no aiming at all — but it is a list rather than a queue, because the e-mails do
+    /// not always arrive in the order the applications went out, and a code typed into the wrong
+    /// application is one that cannot be typed into the right one afterwards.
+    /// </summary>
+    private JobLinkQueueItem? _codeTarget;
+    public JobLinkQueueItem? CodeTarget
+    {
+        get => _codeTarget ?? AwaitingCodeItems.FirstOrDefault();
+        set { if (SetProperty(ref _codeTarget, value)) OnPropertyChanged(nameof(CodeTargetSummary)); }
+    }
+
+    public string CodeTargetSummary
+    {
+        get
+        {
+            var target = CodeTarget;
+            if (target == null) return "";
+            var waiting = AwaitingCodeCount;
+            return waiting > 1
+                ? $"Applying to {TabTitleFor(target)} — {waiting} applications are waiting."
+                : $"Applying to {TabTitleFor(target)}.";
+        }
+    }
+
+    private string _verificationCode = "";
+    public string VerificationCode
+    {
+        get => _verificationCode;
+        set => SetProperty(ref _verificationCode, value);
+    }
+
+    /// <summary>Raised so the browser holding that application can type the code into it.</summary>
+    public event Func<Guid, string, Task<string>>? VerificationCodeEntryRequested;
+
+    /// <summary>
+    /// Types a code into the application that is waiting for it and reports what the site said.
+    /// </summary>
+    [RelayCommand]
+    private async Task SubmitVerificationCodeAsync()
+    {
+        var code = VerificationCode.Trim();
+        var target = CodeTarget;
+        if (target == null) { StatusMessage = "No application is waiting for a code."; return; }
+        if (code.Length == 0) { StatusMessage = "Paste the code first."; return; }
+        if (VerificationCodeEntryRequested == null) return;
+
+        StatusMessage = $"Entering the code for {TabTitleFor(target)}...";
+        _trace.Step("Code", "entering a verification code", $"{code.Length} character(s) for {target.Url}");
+        var problem = await VerificationCodeEntryRequested.Invoke(target.Id, code);
+        if (problem.Length > 0)
+        {
+            StatusMessage = problem;
+            _trace.Warn("Code", "the code was not accepted", problem);
+            return;
+        }
+
+        VerificationCode = "";
+        // Cleared rather than advanced: the item that was the target has just left the list, so the
+        // getter falls through to whichever has been waiting longest of the rest.
+        _codeTarget = null;
+        OnPropertyChanged(nameof(CodeTarget));
+        NotifyCodeState();
+        StatusMessage = HasAwaitingCode
+            ? $"Code accepted. {AwaitingCodeCount} application(s) still waiting for one."
+            : "Code accepted. Nothing else is waiting for a code.";
+    }
+
+    private void NotifyCodeState()
+    {
+        OnPropertyChanged(nameof(AwaitingCodeItems));
+        OnPropertyChanged(nameof(AwaitingCodeCount));
+        OnPropertyChanged(nameof(HasAwaitingCode));
+        OnPropertyChanged(nameof(CodeTarget));
+        OnPropertyChanged(nameof(CodeTargetSummary));
+    }
+
+    /// <summary>
+    /// The site accepted the code: the application is finished, so it is filed and its tab closed,
+    /// exactly as one that never asked for a code would have been.
+    /// </summary>
+    public async Task CompleteVerifiedApplicationAsync(Guid workItemId)
+    {
+        var item = JobQueue.FirstOrDefault(candidate => candidate.Id == workItemId);
+        if (item == null) return;
+        CurrentQueueItem = item;
+        await CompleteSubmittedItemAsync(item, "Verification code accepted.", automatic: true);
+        NotifyCodeState();
+    }
+
+    /// <summary>
+    /// The site confirmed the application and is still asking for a verification code.
+    ///
+    /// <para>
+    /// Confirmed is not finished. The tab stays open with the code field in it, the link stays in
+    /// the queue, and the run carries straight on to the next one — the code arrives by email
+    /// minutes later and nothing is served by making a batch wait for it. It is flagged loudly
+    /// instead, because a tab nobody notices is the same as a lost application.
+    /// </para>
+    /// </summary>
+    public async Task MarkAwaitingVerificationCodeAsync(string detail, string codeLabel)
+    {
+        var item = CurrentQueueItem;
+        if (item == null) return;
+        SetStatus(item, JobLinkQueueStatuses.AwaitingCode);
+        item.Error = "";
+        await SaveQueueAsync();
+
+        var summary = detail.Length > 0
+            ? detail
+            : "Submitted. The site is asking for a verification code" +
+              (codeLabel.Length > 0 ? $" ({codeLabel})" : "") + ".";
+        ParkTabForReview(item, summary, JobLinkQueueStatuses.AwaitingCode);
+        _activity.Warning("Job Browser", "Waiting for a verification code",
+            $"{item.Url} | paste the code into its tab to finish this application");
+        _trace.Step("Queue", "parked for a verification code", item.Url);
+        NotifyCodeState();
+        StatusMessage = "One application needs a verification code pasted into its tab. " +
+                        "The queue is carrying on without it.";
+        await ContinueAfterParkingAsync(item);
     }
 
     public async Task MarkSubmittedAutomaticallyAsync(string detail)
@@ -644,15 +813,27 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         // away, and with it any chance of finishing a two-step submission. The tab stays, holding
         // whatever the site is showing, until a person closes it — and closing it is what files the
         // queue entry and frees the slot.
-        ParkTabForReview(item, detail, JobLinkQueueStatuses.Submitted);
-        // The link is spent the moment it is applied to: the bid row and the Activity entry are the
-        // durable record, and links are supplied per profile a batch at a time, so a queue that kept
-        // its applied entries would grow forever. The tab does not go with it — it holds the
-        // confirmation, and a verification code step needs somewhere to happen.
+        // Submitted means finished, and finished means gone: the link leaves the queue and the tab
+        // closes with it. Both halves are one action, because a submitted application left sitting
+        // in the review list is a thing to read and dismiss that carries no decision. The tab is
+        // only kept when the site is still asking for something — see MarkAwaitingVerificationCodeAsync,
+        // which is reached instead of this whenever a confirmation came with a code field.
         JobQueue.Remove(item);
         if (CurrentQueueItem?.Id == item.Id) CurrentQueueItem = null;
         await SaveQueueAsync();
-        await ContinueAfterParkingAsync(item);
+
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab != null) DisposeTab(tab);
+
+        // The run continues from here, exactly as it did when this parked the tab instead of closing
+        // it. A person marking one submitted by hand while the queue is stopped does not start it.
+        if (IsAutomaticQueueRunning) await ContinueAfterParkingAsync(item);
+        else
+        {
+            CurrentQueueItem = null;
+            NotifyQueueState();
+            StatusMessage = "Marked submitted and closed.";
+        }
     }
 
     [RelayCommand]
@@ -1340,12 +1521,11 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var profile = _profiles.Current;
         if (profile == null) return;
         var settings = await _settings.GetAsync();
-        // Clamped: one tab is the old one-at-a-time behaviour, and past a handful the browsers cost
-        // more memory than the overlap saves attention.
         var items = settings.JobLinkQueues.TryGetValue(profile.Id.ToString(), out var saved)
             ? saved.Select(item => item.Clone()).ToList() : new List<JobLinkQueueItem>();
         JobQueue.Clear();
         _submittedCount = 0;
+        var revived = 0;
         foreach (var item in items)
         {
             if (item.Status == JobLinkQueueStatuses.InProgress) item.Status = JobLinkQueueStatuses.Queued;
@@ -1354,11 +1534,28 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             // card for a page that no longer exists.
             if (item.Status == JobLinkQueueStatuses.ReadyForReview) item.Status = JobLinkQueueStatuses.Queued;
             if (item.Status == JobLinkQueueStatuses.Completed) item.Status = JobLinkQueueStatuses.Submitted;
+            // Every status that only exists while a run is holding the link. Nothing is holding it
+            // after a restart, so the status is a description of work that stopped — and one nothing
+            // ever cleared: Start only picks up "Queued", so a link killed mid-resume sat reading
+            // "Generating resume" for ever, invisible to the queue and to any retry. Two of them were
+            // stranded that way. The attempt count and last error are kept; only the claim that
+            // something is in progress is dropped.
+            if (InFlight.Contains(item.Status))
+            {
+                item.Status = JobLinkQueueStatuses.Queued;
+                revived++;
+            }
             // Clears out links submitted by builds that kept them, so an existing queue prunes itself once.
             if (item.Status == JobLinkQueueStatuses.Submitted) continue;
             JobQueue.Add(item);
         }
-        if (JobQueue.Count != items.Count) await SaveQueueAsync();
+        if (revived > 0)
+        {
+            _trace.Step("Queue", $"released {revived} link(s) left mid-run", "an earlier session ended while it held them");
+            _activity.Info("Job Browser", "Interrupted links requeued",
+                $"{revived} link(s) were still marked in progress from an earlier session");
+        }
+        if (JobQueue.Count != items.Count || revived > 0) await SaveQueueAsync();
         CurrentQueueItem = JobQueue.FirstOrDefault(item => item.Status is not (JobLinkQueueStatuses.Queued or JobLinkQueueStatuses.Submitted or JobLinkQueueStatuses.Skipped));
         NotifyQueueState();
     }
@@ -1389,6 +1586,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         OnPropertyChanged(nameof(FailedLinks));
         OnPropertyChanged(nameof(FailedCount));
         OnPropertyChanged(nameof(HasFailedLinks));
+        NotifyCodeState();
     }
 
     /// <summary>Entry count of an answers object or a questions array, for the trace line.</summary>

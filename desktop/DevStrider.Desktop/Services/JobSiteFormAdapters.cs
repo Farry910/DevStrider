@@ -1240,6 +1240,93 @@ __PRELUDE__
 })()
 """;
 
+    /// <summary>
+    /// Asks whether the site has taken the resume, rather than whether we handed it over.
+    ///
+    /// <para>
+    /// Setting a file input's files is instant; what follows is not. Ashby posts the file to its own
+    /// server on the change event and only then counts the field as answered, so a Submit fired in
+    /// the meantime is rejected for a missing resume — intermittently, depending on how long the
+    /// rest of the form took to fill. The file being in the input is our side of it; the file's name
+    /// appearing on the page is the site's.
+    /// </para>
+    /// </summary>
+    public static string BuildResumeAttachedScript(string fileName)
+    {
+        var payload = JsonSerializer.Serialize(new { fileName });
+        return """
+(() => {
+ const request = __PAYLOAD__;
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
+ const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+ const wanted = norm(request.fileName);
+ const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+ const held = inputs.some(input => (input.files || []).length > 0);
+ const body = norm(document.body ? document.body.innerText : '');
+ // The full file name, extension and all. Matching the stem as well looked more forgiving and was
+ // simply wrong: this profile's resume is Fernando.pdf and the applicant is Fernando, so "fernando"
+ // is on the form the moment the name field is filled — the check reported the resume attached
+ // before it had been.
+ const named = wanted.length > 0 && body.includes(wanted);
+ // Anything still in flight, so a slow upload is waited out rather than mistaken for a failure.
+ const busy = Array.from(document.querySelectorAll(
+   '[role="progressbar"],progress,[class*="upload" i],[class*="progress" i],[class*="spinner" i]'))
+   .some(e => visible(e) && /uploading|processing|\d{1,3}\s*%/.test(norm(e.innerText || e.getAttribute('aria-label'))));
+ // Either side is enough. Greenhouse hands the file to its own uploader and removes the native
+ // input entirely — there were no file inputs left on the page at all — so demanding that our file
+ // still be sitting in one could never be satisfied there. Ashby keeps the input and renders the
+ // name. What must not happen is waiting on evidence a site never produces.
+ return { held, named, busy, ok: !busy && (held || named),
+   quiet: !held && !named && !busy };
+})()
+""".Replace("__PAYLOAD__", payload);
+    }
+
+    /// <summary>
+    /// Locates the verification-code box on a confirmed application, and the control that submits it.
+    /// The same reading that decided the application was not finished — an empty, enabled field
+    /// carrying <c>autocomplete="one-time-code"</c> or a label that says so.
+    /// </summary>
+    public static readonly string CodeFieldTargetScript = """
+(() => {
+ const visible = e => !!(e && (e.offsetWidth || e.offsetHeight || e.getClientRects().length));
+ const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+ const attr = (e, n) => (e && e.getAttribute && e.getAttribute(n)) || '';
+ const labelOf = e => {
+   const forId = e.id ? document.querySelector('label[for="' + CSS.escape(e.id) + '"]') : null;
+   const own = e.labels && e.labels.length ? Array.from(e.labels).map(l => l.innerText).join(' ') : '';
+   const box = e.closest('[class*="field" i],fieldset,li,div');
+   return norm((forId ? forId.innerText : '') + ' ' + own + ' ' + attr(e,'aria-label') + ' ' +
+     (e.placeholder || '') + ' ' + (e.name || '') + ' ' + (e.id || '') + ' ' +
+     ((box && box.innerText) || '').slice(0, 120));
+ };
+ const codeWords = /\b(code|verification|verify|otp|one[- ]time|passcode|pin)\b/;
+ const field = Array.from(document.querySelectorAll('input,textarea')).find(e =>
+   visible(e) && !e.disabled && !e.readOnly && String(e.value || '').trim().length === 0 &&
+   (norm(attr(e,'autocomplete')) === 'one-time-code' || codeWords.test(labelOf(e))));
+ if (!field) return { ok:false, error:'no empty verification-code field is on this page' };
+ field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+ const rect = field.getBoundingClientRect();
+ if (rect.width <= 0 || rect.height <= 0) return { ok:false, error:'the code field has no rectangle' };
+ // The control that sends it. Scoped to the field's own area first, because a confirmation page can
+ // still carry the application's own buttons elsewhere.
+ const box = field.closest('form,[class*="field" i],fieldset,section,div') || document.body;
+ const sendWords = /\b(verify|submit|confirm|continue|send|done|finish)\b/;
+ const button = Array.from(box.querySelectorAll('button,input[type="submit"],[role="button"]'))
+     .find(b => visible(b) && !b.disabled && sendWords.test(norm(b.innerText || b.value || attr(b,'aria-label'))))
+   || Array.from(document.querySelectorAll('button,input[type="submit"],[role="button"]'))
+     .find(b => visible(b) && !b.disabled && sendWords.test(norm(b.innerText || b.value || attr(b,'aria-label'))));
+ let send = null;
+ if (button) {
+   const r = button.getBoundingClientRect();
+   send = { x: r.left + r.width/2, y: r.top + r.height/2,
+     label: norm(button.innerText || button.value || attr(button,'aria-label')).slice(0, 40) };
+ }
+ return { ok:true, x: rect.left + rect.width/2, y: rect.top + rect.height/2,
+   label: norm(attr(field,'aria-label') || field.placeholder || field.name).slice(0, 60), send };
+})()
+""";
+
     /// <summary>Dismisses an uncommitted search so the discovery pass can reopen it cleanly.</summary>
     public static string BuildComboboxCloseScript(int index)
     {

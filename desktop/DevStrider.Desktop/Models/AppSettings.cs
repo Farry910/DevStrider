@@ -287,6 +287,12 @@ public static class JobLinkQueueStatuses
     public const string FillingApplication = "Filling application";
     public const string ResolvingApplicationFields = "Resolving application fields";
     public const string ReadyForReview = "Ready for review";
+
+    /// <summary>
+    /// The site confirmed the application and then asked for a verification code. Not submitted —
+    /// the code still has to be pasted in — and not stale either, so a restart leaves it alone.
+    /// </summary>
+    public const string AwaitingCode = "Needs a code";
     public const string Submitted = "Submitted";
     public const string ResumeReady = "Resume ready";
     public const string Failed = "Failed";

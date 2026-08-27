@@ -51,12 +51,12 @@ public partial class ResumeStudioView : UserControl
             // has to happen here and nowhere later — there is no way to move a live browser onto a
             // proxy, which is why changing the setting asks for a restart.
             var proxy = new ProxyConfiguration(_attachedViewModel?.ProxySettings);
-            var arguments = proxy.BrowserArguments(forChatGpt: true);
+            var arguments = BrowserLaunch.Arguments(proxy, forChatGpt: true);
             var environment = await CoreWebView2Environment.CreateAsync(
                 userDataFolder: dataFolder,
                 options: new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
             await ChatGptBrowser.EnsureCoreWebView2Async(environment);
-            if (arguments.Length > 0)
+            if (proxy.AppliesToChatGpt)
             {
                 Trace?.Step("ChatGPT", "browser started behind a proxy", proxy.Address);
                 ProxyConfiguration.AttachCredentials(ChatGptBrowser.CoreWebView2, proxy);
@@ -697,7 +697,12 @@ public partial class ResumeStudioView : UserControl
         "hold it. A question that carries options must therefore never come back as an empty string: " +
         "pick one of the options given. " +
         "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question text\":\"answer\"}}, " +
-        "keyed on the question text exactly as given and never on the options.\n\n" +
+        "keyed on the question text exactly as given and never on the options. " +
+        // A question that quotes one of its own options — If you selected "Location not listed"… —
+        // comes back as a key holding bare double quotes, which is not JSON at all. The reader
+        // repairs that now, but it costs nothing to ask for it correctly.
+        "A question often contains double quotes of its own: escape every one of them inside the " +
+        "JSON string, and do not drop or reword the question text to avoid them.\n\n" +
         "Reference data (profile and approved answers):\n" + request.KnownAnswersJson + "\n\n" +
         "Generated resume for this role:\n" + generatedResume + "\n\n" +
         "Questions:\n" + request.QuestionsJson + "\n\n" +

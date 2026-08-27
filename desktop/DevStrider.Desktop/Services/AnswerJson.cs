@@ -32,10 +32,29 @@ public static class AnswerJson
         json = "{}";
         if (string.IsNullOrWhiteSpace(reply)) return false;
 
+        if (TryCandidates(reply, out json)) return true;
+
+        // An unescaped quote inside a value does not just break the parse — it desynchronises the
+        // object scan above, because that scan tracks strings by counting quotes. So the whole reply
+        // is repaired and rescanned rather than each candidate the first scan happened to produce.
+        //
+        // This is not a rare shape. A question that quotes one of its own options — "If you selected
+        // "Location not listed" above, tell us where you intend to work" — becomes a key containing
+        // bare double quotes, and ChatGPT echoes it back as it was given without escaping them. Every
+        // answer in the reply was then thrown away over one question's punctuation, and the run spent
+        // three minutes re-reading the same reply before giving the link up as a format failure.
+        return TryCandidates(RepairUnescapedQuotes(RepairNewlinesInStrings(reply)), out json);
+    }
+
+    private static bool TryCandidates(string reply, out string json)
+    {
+        json = "{}";
         foreach (var candidate in BalancedObjects(reply).OrderByDescending(text => text.Length))
         {
             if (TryReadAnswers(candidate, out json)) return true;
-            if (TryReadAnswers(RepairNewlinesInStrings(candidate), out json)) return true;
+            var newlines = RepairNewlinesInStrings(candidate);
+            if (TryReadAnswers(newlines, out json)) return true;
+            if (TryReadAnswers(RepairUnescapedQuotes(newlines), out json)) return true;
         }
         return false;
     }
@@ -142,6 +161,48 @@ public static class AnswerJson
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Escapes double quotes sitting inside a string value with no escape in front of them.
+    ///
+    /// <para>
+    /// JSON gives no way to tell a closing quote from a literal one by looking at the quote alone,
+    /// but it does by looking at what follows: a string ends only where the next thing that matters
+    /// is structural — a colon, a comma, a closing brace or bracket, or the end of the text.
+    /// Anywhere else the quote is part of the value and the model simply forgot to escape it.
+    /// </para>
+    /// </summary>
+    private static string RepairUnescapedQuotes(string candidate)
+    {
+        var repaired = new StringBuilder(candidate.Length);
+        var inString = false;
+        var escaped = false;
+
+        for (var i = 0; i < candidate.Length; i++)
+        {
+            var c = candidate[i];
+            if (!inString)
+            {
+                if (c == '"') inString = true;
+                repaired.Append(c);
+                continue;
+            }
+            if (escaped) { escaped = false; repaired.Append(c); continue; }
+            if (c == '\\') { escaped = true; repaired.Append(c); continue; }
+            if (c != '"') { repaired.Append(c); continue; }
+
+            var next = i + 1;
+            while (next < candidate.Length && char.IsWhiteSpace(candidate[next])) next++;
+            var following = next < candidate.Length ? candidate[next] : '\0';
+            if (following is ':' or ',' or '}' or ']' or '\0')
+            {
+                inString = false;
+                repaired.Append(c);
+            }
+            else repaired.Append("\\\"");
+        }
+        return repaired.ToString();
     }
 
     /// <summary>

@@ -31,7 +31,10 @@
                    gesture opens the choice rather than making it. -->
               <Button.ContextMenu>
                 <ContextMenu>
-                  <MenuItem Header="Mark submitted" Click="OnTabMarkSubmitted"/>
+                  <!-- Marking submitted closes the tab too: a submitted application left in the
+                       review list is a thing to read and dismiss that carries no decision. Remove
+                       stays for the other case — done with it, but it did not go through. -->
+                  <MenuItem Header="Mark submitted and close" Click="OnTabMarkSubmitted"/>
                   <MenuItem Header="Remove from the list" Click="OnTabRemove"/>
                 </ContextMenu>
               </Button.ContextMenu>
@@ -98,6 +101,41 @@
             </DataGrid>
           </StackPanel>
         </Border>
+      <!--
+        Verification codes. Some sites confirm the application and then e-mail a code, which arrives
+        minutes later with the run several links further on. The queue does not wait for it: the
+        application parks here with its tab still open, and the codes are pasted in as they arrive.
+        One box, aimed by default at whichever has been waiting longest, so pasting them in the order
+        the e-mails land needs no aiming at all — but the list is there because the e-mails do not
+        always arrive in the order the applications went out.
+      -->
+      <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+              Visibility="{Binding HasAwaitingCode, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <StackPanel>
+          <TextBlock Text="Needs a verification code" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding CodeTargetSummary}" Style="{StaticResource MutedText}"
+                     TextWrapping="Wrap" Margin="0,4,0,8"/>
+          <ListBox ItemsSource="{Binding AwaitingCodeItems}" SelectedItem="{Binding CodeTarget}"
+                   MaxHeight="110" Margin="0,0,0,8" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Orientation="Horizontal">
+            <TextBox Text="{Binding VerificationCode, UpdateSourceTrigger=PropertyChanged}"
+                     Width="150" Margin="0,0,8,0" FontFamily="{StaticResource UiFontMono}"
+                     Tag="paste the code">
+              <TextBox.InputBindings>
+                <KeyBinding Key="Return" Command="{Binding SubmitVerificationCodeCommand}"/>
+              </TextBox.InputBindings>
+            </TextBox>
+            <Button Command="{Binding SubmitVerificationCodeCommand}" Content="Enter code"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
         <Border Style="{StaticResource Card}" Margin="0,0,0,12"
                 Visibility="{Binding HasFailedLinks, Converter={StaticResource BooleanToVisibilityConverter}}">
           <StackPanel>
