@@ -80,6 +80,12 @@
               <Button Command="{Binding StartAutomaticQueueCommand}" Content="Approve &amp; start automatic flow" Margin="0,0,8,8"
                       Visibility="{Binding IsAutomaticQueueIdle, Converter={StaticResource BooleanToVisibilityConverter}}"
                       IsEnabled="{Binding IsAutomaticQueueRunning, Converter={StaticResource InverseBoolean}}"/>
+              <!-- For a board that e-mails a code: apply to one, then stop with its tab open rather
+                   than burying it under the next five applications. -->
+              <Button Command="{Binding StartSingleLinkCommand}" Content="Apply to one, then stop" Margin="0,0,8,8"
+                      Style="{StaticResource GhostButton}"
+                      Visibility="{Binding IsAutomaticQueueIdle, Converter={StaticResource BooleanToVisibilityConverter}}"
+                      IsEnabled="{Binding IsAutomaticQueueRunning, Converter={StaticResource InverseBoolean}}"/>
               <Button Command="{Binding StopAutomaticQueueCommand}" Content="Stop automation" Margin="0,0,8,8" Style="{StaticResource GhostButton}"
                       Visibility="{Binding IsAutomaticQueueRunning, Converter={StaticResource BooleanToVisibilityConverter}}"/>
               <!--
@@ -91,8 +97,46 @@
                       ToolTip="Removes every queued link. Links open for review or being worked on right now are kept."/>
             </WrapPanel>
             <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
-            <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,8,0,0">
+            <!--
+              Which links this run takes. Ashby and Lever confirm and are done, so a batch of those
+              can be left alone; most Greenhouse postings e-mail a code afterwards and want a person
+              with an inbox. Ticking by board is what separates the two.
+            -->
+            <WrapPanel Margin="0,8,0,4">
+              <TextBlock Text="{Binding SelectionSummary}" Style="{StaticResource MutedText}"
+                         TextWrapping="Wrap" Margin="0,0,0,6" Width="360"/>
+            </WrapPanel>
+            <WrapPanel Visibility="{Binding HasQueuedLinks, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <Button Command="{Binding SelectAllLinksCommand}" Content="Tick all"
+                      Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
+              <Button Command="{Binding ClearLinkSelectionCommand}" Content="Untick all"
+                      Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
+              <ItemsControl ItemsSource="{Binding QueuedSites}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Content="{Binding}" CommandParameter="{Binding}"
+                            Command="{Binding DataContext.SelectSiteCommand,
+                                      RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </WrapPanel>
+            <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,4,0,0">
               <DataGrid.Columns>
+                <!-- A template column rather than DataGridCheckBoxColumn: the grid is read-only so
+                     every built-in column is too, and this is the one cell that must not be. -->
+                <DataGridTemplateColumn Header="Run" Width="42">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                HorizontalAlignment="Center"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="125"/>
                 <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
                 <DataGridTextColumn Header="Tries" Binding="{Binding Attempts}" Width="48"/>
@@ -101,6 +145,36 @@
             </DataGrid>
           </StackPanel>
         </Border>
+      <!--
+        Links whose description could not be read. Paste one in for any of them, at any time, and
+        the link goes back in the queue to run like any other — rather than waiting for the manual
+        pass to reach it in its own order.
+      -->
+      <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+              Visibility="{Binding HasNeedsJdItems, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <StackPanel>
+          <TextBlock Text="Needs a job description" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding JdTargetSummary}" Style="{StaticResource MutedText}"
+                     TextWrapping="Wrap" Margin="0,4,0,6"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"
+                     Text="Open the posting, copy the description, and paste it here. The link is queued again with that text and never reads the page for itself."/>
+          <ListBox ItemsSource="{Binding NeedsJdItems}" SelectedItem="{Binding JdTarget}"
+                   MaxHeight="90" Margin="0,0,0,6" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBox Text="{Binding PastedJobDescription, UpdateSourceTrigger=PropertyChanged}"
+                   AcceptsReturn="True" Height="120" TextWrapping="Wrap"
+                   VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"
+                   Tag="paste the job description"/>
+          <Button Command="{Binding ApplyPastedJobDescriptionCommand}"
+                  Content="Use this description and queue the link" HorizontalAlignment="Left"/>
+        </StackPanel>
+      </Border>
+
       <!--
         Verification codes. Some sites confirm the application and then e-mail a code, which arrives
         minutes later with the run several links further on. The queue does not wait for it: the

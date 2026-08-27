@@ -329,10 +329,116 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         if (added.Count > 0) _activity.Success("Job Browser", "Job links queued", $"{added.Count} for {profile.Name}");
     }
 
+    /// <summary>
+    /// How many more links this run may open. Ordinarily unbounded; one when the operator asked for
+    /// a single application, which is how a Greenhouse link gets applied to without the queue moving
+    /// on while its verification code is still being fetched from an inbox.
+    /// </summary>
+    private int _runBudget = int.MaxValue;
+
+    /// <summary>
+    /// Links the run is allowed to take. Selecting none means the whole queue, because that is what
+    /// the button meant before selection existed and it is still what it should mean.
+    /// </summary>
+    private IEnumerable<JobLinkQueueItem> Eligible =>
+        SelectedLinkCount == 0
+            ? JobQueue.Where(item => item.Status == JobLinkQueueStatuses.Queued)
+            : JobQueue.Where(item => item.Status == JobLinkQueueStatuses.Queued && item.IsSelected);
+
+    public int SelectedLinkCount => JobQueue.Count(item => item.IsSelected);
+    public bool HasQueuedLinks => JobQueue.Any(item => item.Status == JobLinkQueueStatuses.Queued);
+
+    public string SelectionSummary
+    {
+        get
+        {
+            var eligible = Eligible.Count();
+            if (SelectedLinkCount == 0)
+                return eligible == 0 ? "Nothing is queued." : $"No links ticked, so all {eligible} queued links will run.";
+            return $"{SelectedLinkCount} ticked, {eligible} of them queued and ready to run.";
+        }
+    }
+
+    private void NotifySelectionState()
+    {
+        OnPropertyChanged(nameof(SelectedLinkCount));
+        OnPropertyChanged(nameof(SelectionSummary));
+        OnPropertyChanged(nameof(HasQueuedLinks));
+    }
+
+    /// <summary>Ticks every queued link.</summary>
+    [RelayCommand]
+    private void SelectAllLinks()
+    {
+        foreach (var item in JobQueue.Where(item => item.Status == JobLinkQueueStatuses.Queued))
+            item.IsSelected = true;
+        NotifySelectionState();
+    }
+
+    [RelayCommand]
+    private void ClearLinkSelection()
+    {
+        foreach (var item in JobQueue) item.IsSelected = false;
+        NotifySelectionState();
+    }
+
+    /// <summary>
+    /// Ticks the queued links on one job board and unticks the rest, which is the whole point of the
+    /// selection: apply to every Ashby posting unattended, then come back and do the Greenhouse ones
+    /// one at a time with an inbox open.
+    /// </summary>
+    [RelayCommand]
+    private void SelectSite(string? site)
+    {
+        var wanted = (site ?? "").Trim();
+        if (wanted.Length == 0) return;
+        var matched = 0;
+        foreach (var item in JobQueue)
+        {
+            var mine = item.Status == JobLinkQueueStatuses.Queued &&
+                       JobSiteApplyAdapters.SiteNameFor(item.Url)
+                           .Equals(wanted, StringComparison.OrdinalIgnoreCase);
+            item.IsSelected = mine;
+            if (mine) matched++;
+        }
+        NotifySelectionState();
+        StatusMessage = matched == 0
+            ? $"No queued links are on {wanted}."
+            : $"Ticked {matched} {wanted} link(s). Everything else is unticked.";
+    }
+
+    /// <summary>The job boards actually present in the queue, so the buttons match the links.</summary>
+    public IEnumerable<string> QueuedSites =>
+        JobQueue.Where(item => item.Status == JobLinkQueueStatuses.Queued)
+            .Select(item => JobSiteApplyAdapters.SiteNameFor(item.Url))
+            .Where(name => name.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Applies to one link and stops, leaving its tab open. For a board that asks for a verification
+    /// code: the run does the application, then waits while the code is fetched by hand, rather than
+    /// carrying on and burying that tab under five more.
+    /// </summary>
+    [RelayCommand]
+    private async Task StartSingleLinkAsync()
+    {
+        if (IsAutomaticQueueRunning) return;
+        if (!Eligible.Any()) { StatusMessage = "No queued link is ticked to run."; return; }
+        _runBudget = 1;
+        _stopRequested = false;
+        _consecutiveFailures = 0;
+        IsAutomaticQueueRunning = true;
+        StatusMessage = "Applying to one link, then stopping.";
+        _trace.Step("Queue", "single-link run approved", Eligible.First().Url);
+        await OpenNextWorkItemAsync();
+    }
+
     [RelayCommand]
     private async Task StartAutomaticQueueAsync()
     {
         if (IsAutomaticQueueRunning) return;
+        _runBudget = int.MaxValue;
         _stopRequested = false;
         _consecutiveFailures = 0;
         IsAutomaticQueueRunning = true;
@@ -384,9 +490,30 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
 
+        // Spent, and the operator asked for one application rather than a batch.
+        if (_runBudget <= 0)
+        {
+            _runBudget = int.MaxValue;
+            IsAutomaticQueueRunning = false;
+            CurrentQueueItem = null;
+            _trace.Step("Queue", "single-link run finished", "stopping rather than opening the next");
+            StatusMessage = HasAwaitingCode
+                ? "That application is done and waiting for its code. Paste it in when it arrives."
+                : "That application is done. Start again whenever you want the next one.";
+            return;
+        }
+
+        // Carrying on with the current item is for one that is genuinely mid-flight, or one a retry
+        // just put back in the queue. It used to be for anything that was not submitted, skipped or
+        // failed — which quietly included "Needs JD" and "Ready for review", so pressing start picked
+        // up whatever had been left on screen instead of the links that were ticked. A single-link
+        // run aimed at one Greenhouse posting opened an unrelated Ashby one that had been deferred
+        // an hour earlier.
         var item = CurrentQueueItem;
-        if (item == null || item.Status is JobLinkQueueStatuses.Submitted or JobLinkQueueStatuses.Skipped or JobLinkQueueStatuses.Failed)
-            item = JobQueue.FirstOrDefault(candidate => candidate.Status == JobLinkQueueStatuses.Queued);
+        var resumable = item != null &&
+            (InFlight.Contains(item.Status) ||
+             (item.Status == JobLinkQueueStatuses.Queued && Eligible.Contains(item)));
+        if (!resumable) item = Eligible.FirstOrDefault();
 
         // The automatic pass is over. Anything it set aside for want of a readable description is
         // now worked through with a person present, one link at a time, in the same window.
@@ -406,6 +533,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         }
 
         IsManualJobDescriptionPhase = false;
+        if (_runBudget != int.MaxValue) _runBudget--;
         CurrentQueueItem = item;
         await EnsureAutomationTabAsync(item);
         _trace.Begin(item.Id, item.Url);
@@ -641,7 +769,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         DisposeTab(tab);
         await SaveQueueAsync();
 
-        var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
+        var moreWork = Eligible.Any() || HasDeferredJdLinks;
         if (_stopRequested || !moreWork || IsAutomaticQueueRunning || IsReviewCapacityFull)
         {
             if (!moreWork && ParkedReviewCount == 0) StatusMessage = "Everything is reviewed and the queue is empty.";
@@ -651,6 +779,92 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         IsAutomaticQueueRunning = true;
         StatusMessage = "A review slot freed up. Continuing with the next link.";
         await OpenNextWorkItemAsync();
+    }
+
+    /// <summary>
+    /// Links the extractor could not read a description from, waiting for one to be pasted in.
+    ///
+    /// <para>
+    /// These used to be reachable only during the manual pass that runs after a batch finishes, one
+    /// at a time and in whatever order the queue held them. That is the wrong shape for the job: a
+    /// person with the posting open in another window wants to paste it now, for that link, and have
+    /// the run treat it like any other. So they are listed here and a description can be given to any
+    /// of them at any time — after which the link goes back in the queue and is ordinary again.
+    /// </para>
+    /// </summary>
+    public IEnumerable<JobLinkQueueItem> NeedsJdItems =>
+        JobQueue.Where(item => item.Status == JobLinkQueueStatuses.NeedsJobDescription)
+            .OrderBy(item => item.UpdatedAt);
+
+    public int NeedsJdCount => NeedsJdItems.Count();
+    public bool HasNeedsJdItems => NeedsJdCount > 0;
+
+    private JobLinkQueueItem? _jdTarget;
+    public JobLinkQueueItem? JdTarget
+    {
+        get => _jdTarget ?? NeedsJdItems.FirstOrDefault();
+        set { if (SetProperty(ref _jdTarget, value)) OnPropertyChanged(nameof(JdTargetSummary)); }
+    }
+
+    public string JdTargetSummary
+    {
+        get
+        {
+            var target = JdTarget;
+            if (target == null) return "";
+            return NeedsJdCount > 1
+                ? $"Pasting into {TabTitleFor(target)} — {NeedsJdCount} links need one."
+                : $"Pasting into {TabTitleFor(target)}.";
+        }
+    }
+
+    private string _pastedJobDescription = "";
+    public string PastedJobDescription
+    {
+        get => _pastedJobDescription;
+        set => SetProperty(ref _pastedJobDescription, value);
+    }
+
+    /// <summary>
+    /// Attaches a pasted description to the waiting link and puts it back in the queue, where the
+    /// ordinary run picks it up and never reads the posting for itself.
+    /// </summary>
+    [RelayCommand]
+    private async Task ApplyPastedJobDescriptionAsync()
+    {
+        var target = JdTarget;
+        if (target == null) { StatusMessage = "No link is waiting for a description."; return; }
+        var text = PastedJobDescription.Trim();
+        var rejection = JobPostingExtractor.RejectSupplied(text);
+        if (rejection.Length > 0)
+        {
+            StatusMessage = "That does not look like a job description: " + rejection;
+            return;
+        }
+
+        target.JobDescription = text;
+        target.Error = "";
+        SetStatus(target, JobLinkQueueStatuses.Queued);
+        target.IsSelected = true;
+        PastedJobDescription = "";
+        _jdTarget = null;
+        await SaveQueueAsync();
+        NotifyQueueState();
+        NotifyJdState();
+        _trace.Step("Queue", "description supplied by hand", $"{text.Length} chars for {target.Url}");
+        _activity.Info("Job Browser", "Job description pasted in", target.Url);
+        StatusMessage = HasNeedsJdItems
+            ? $"That link is queued again. {NeedsJdCount} still need a description."
+            : "That link is queued again and will run like any other.";
+    }
+
+    private void NotifyJdState()
+    {
+        OnPropertyChanged(nameof(NeedsJdItems));
+        OnPropertyChanged(nameof(NeedsJdCount));
+        OnPropertyChanged(nameof(HasNeedsJdItems));
+        OnPropertyChanged(nameof(JdTarget));
+        OnPropertyChanged(nameof(JdTargetSummary));
     }
 
     /// <summary>
@@ -990,7 +1204,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     private async Task ContinueAfterParkingAsync(JobLinkQueueItem parked)
     {
         CurrentQueueItem = null;
-        var moreWork = JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued) || HasDeferredJdLinks;
+        var moreWork = Eligible.Any() || HasDeferredJdLinks;
 
         if (!moreWork)
         {
@@ -1586,6 +1800,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         OnPropertyChanged(nameof(FailedLinks));
         OnPropertyChanged(nameof(FailedCount));
         OnPropertyChanged(nameof(HasFailedLinks));
+        NotifySelectionState();
+        OnPropertyChanged(nameof(QueuedSites));
+        NotifyJdState();
         NotifyCodeState();
     }
 

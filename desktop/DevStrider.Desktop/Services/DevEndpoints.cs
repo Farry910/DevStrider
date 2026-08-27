@@ -121,7 +121,8 @@ public sealed class DevEndpoints
             "GET  /dev/text?target=job&selector=body&max=40000    innerText",
             "POST /dev/eval   {\"target\":\"chatgpt\",\"script\":\"...\"}   run script, return its JSON",
             "GET  /dev/shot?target=chatgpt          PNG of what that browser is showing",
-            "POST /dev/command {\"name\":\"stop\"}       start|stop|skip|clear-queue|requeue-failed|add-links",
+            "POST /dev/command {\"name\":\"stop\"}       start|start-one|stop|skip|clear-queue|requeue-failed",
+            "                                       add-links|select-all|select-none|select-site (links=site)",
         },
     };
 
@@ -274,6 +275,14 @@ public sealed class DevEndpoints
                     jobs.QueueLinksInput = argument;
                     jobs.AddLinksToQueueCommand.Execute(null);
                     return "add-links";
+                case "start-one": jobs.StartSingleLinkCommand.Execute(null); return "start-one";
+                case "paste-jd":
+                    jobs.PastedJobDescription = argument;
+                    jobs.ApplyPastedJobDescriptionCommand.Execute(null);
+                    return "paste-jd";
+                case "select-all": jobs.SelectAllLinksCommand.Execute(null); return "select-all";
+                case "select-none": jobs.ClearLinkSelectionCommand.Execute(null); return "select-none";
+                case "select-site": jobs.SelectSiteCommand.Execute(argument); return "select-site " + argument;
                 default: return "";
             }
         });
@@ -283,7 +292,8 @@ public sealed class DevEndpoints
             await WriteJsonAsync(ctx, 400, new
             {
                 error = $"unknown command \"{name}\"",
-                known = new[] { "start", "stop", "skip", "clear-queue", "requeue-failed", "add-links" },
+                known = new[] { "start", "start-one", "stop", "skip", "clear-queue", "requeue-failed",
+                    "add-links", "select-all", "select-none", "select-site" },
             });
             return;
         }

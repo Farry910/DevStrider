@@ -221,6 +221,19 @@ public sealed partial class JobLinkQueueItem : ObservableObject
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Url { get; set; } = "";
+
+    /// <summary>
+    /// Whether the automatic run will pick this link up.
+    ///
+    /// <para>
+    /// Job boards do not all finish the same way. Ashby and Lever confirm and are done, so a batch of
+    /// those can be left to run unattended; most Greenhouse postings e-mail a verification code
+    /// afterwards, which needs a person and their inbox. Running them together means either babysitting
+    /// the whole batch or leaving codes unentered, so the two want separating — and separating them
+    /// is a property of the link, not of the run.
+    /// </para>
+    /// </summary>
+    [ObservableProperty] private bool _isSelected;
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string Intent { get; set; } = JobWorkItemIntents.Apply;

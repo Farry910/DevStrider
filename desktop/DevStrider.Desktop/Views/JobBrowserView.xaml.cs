@@ -158,6 +158,68 @@ public partial class JobBrowserView : UserControl
         }
     }
 
+    /// <summary>
+    /// Whether the browser is showing the posting this work item is about.
+    ///
+    /// <para>
+    /// Nothing used to ask. The fill step asserted only that <em>some</em> http page was open, so a
+    /// navigation that quietly did not land left the run filling the previous job's form with this
+    /// job's answers and submitting it — no error anywhere, and the wrong employer receives it. That
+    /// is not a thing to detect after the fact, so it is checked before the run touches a field.
+    /// </para>
+    ///
+    /// <para>
+    /// Matching is deliberately loose about the things boards legitimately change and strict about
+    /// the one that identifies the posting. A board redirects between its own hosts
+    /// (boards.greenhouse.io to job-boards.greenhouse.io), adds tracking parameters, and appends
+    /// /application to the posting path — none of which makes it a different job. A Greenhouse embed
+    /// keeps the identity in <c>token</c> rather than the path, so when both sides carry one they
+    /// have to agree.
+    /// </para>
+    /// </summary>
+    private static bool SamePosting(string? browserUrl, string? itemUrl)
+    {
+        if (!TryGetHttpUri(browserUrl, out var open) || !TryGetHttpUri(itemUrl, out var wanted))
+            return false;
+
+        var openHost = open.Host.ToLowerInvariant();
+        var wantedHost = wanted.Host.ToLowerInvariant();
+        if (openHost != wantedHost &&
+            !openHost.EndsWith("." + wantedHost, StringComparison.Ordinal) &&
+            !wantedHost.EndsWith("." + openHost, StringComparison.Ordinal) &&
+            RegistrableHost(openHost) != RegistrableHost(wantedHost))
+            return false;
+
+        var openToken = QueryValue(open, "token");
+        var wantedToken = QueryValue(wanted, "token");
+        if (openToken.Length > 0 && wantedToken.Length > 0)
+            return openToken.Equals(wantedToken, StringComparison.OrdinalIgnoreCase);
+
+        var openPath = open.AbsolutePath.TrimEnd('/');
+        var wantedPath = wanted.AbsolutePath.TrimEnd('/');
+        return openPath.StartsWith(wantedPath, StringComparison.OrdinalIgnoreCase) ||
+               wantedPath.StartsWith(openPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The last two labels of a host, so two subdomains of one board compare equal.</summary>
+    private static string RegistrableHost(string host)
+    {
+        var labels = host.Split('.');
+        return labels.Length <= 2 ? host : string.Join('.', labels[^2..]);
+    }
+
+    private static string QueryValue(Uri uri, string name)
+    {
+        foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var split = pair.IndexOf('=');
+            if (split <= 0) continue;
+            if (pair[..split].Equals(name, StringComparison.OrdinalIgnoreCase))
+                return Uri.UnescapeDataString(pair[(split + 1)..]);
+        }
+        return "";
+    }
+
     /// <summary>Any browser with a live page, for diagnostics when no run is in progress.</summary>
     private CoreWebView2? FirstLiveBrowser() =>
         _unassignedBrowser?.CoreWebView2 ??
@@ -440,7 +502,18 @@ public partial class JobBrowserView : UserControl
                 return;
             }
 
-            var jobDescription = await ReadJobDescriptionAsync(contract);
+            // A description supplied by hand replaces the read, rather than being overwritten by it.
+            // That is what makes a link the extractor could not read into an ordinary link: it goes
+            // back in the queue with its description already on it and runs the same way as the rest.
+            var supplied = (vm.CurrentQueueItem?.JobDescription ?? "").Trim();
+            var usable = supplied.Length > 0 && JobPostingExtractor.RejectSupplied(supplied).Length == 0;
+            if (supplied.Length > 0 && !usable)
+                Trace?.Warn("Extract", "the description on this link is too thin to use",
+                    JobPostingExtractor.RejectSupplied(supplied));
+            var jobDescription = usable ? supplied : await ReadJobDescriptionAsync(contract);
+            if (usable)
+                Trace?.Step("Extract", "using the description supplied by hand",
+                    $"{supplied.Length} chars; the posting was not read");
 
             gate = await OpenApplicationFormAsync(contract, uri, posting);
             if (!string.IsNullOrWhiteSpace(gate))
@@ -1159,10 +1232,21 @@ public partial class JobBrowserView : UserControl
         var contract = new FlowContract(Trace);
         try
         {
-            if (!TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out _) && TryGetHttpUri(result.JobUrl, out var target))
+            // The browser has to be on this job's page, not merely on a page. A resume takes minutes,
+            // tabs are created and closed while it runs, and a navigation that did not land leaves
+            // the previous posting on screen — at which point the run fills that form with this
+            // job's answers and submits it to the wrong employer, silently. One re-navigation, then
+            // the link is failed rather than filled.
+            if (!SamePosting(JobSiteBrowser.CoreWebView2.Source, result.JobUrl) &&
+                TryGetHttpUri(result.JobUrl, out var target))
+            {
+                Trace?.Warn("Fill", "the browser is not on this job's page",
+                    $"showing {JobSiteBrowser.CoreWebView2.Source ?? "nothing"}, expected {result.JobUrl}");
                 await NavigateAsync(target);
-            contract.Input("fill", TryGetHttpUri(JobSiteBrowser.CoreWebView2.Source, out _),
-                "an application page open in the browser", JobSiteBrowser.CoreWebView2.Source ?? "nothing");
+            }
+            contract.Input("fill", SamePosting(JobSiteBrowser.CoreWebView2.Source, result.JobUrl),
+                $"the browser on {result.JobUrl}", JobSiteBrowser.CoreWebView2.Source ?? "nothing");
+            Trace?.Step("Fill", "page confirmed", JobSiteBrowser.CoreWebView2.Source ?? "");
 
             // The shell has just brought this workspace forward. Let the layout pass finish so the
             // WebView is at its final size before any script measures the page.

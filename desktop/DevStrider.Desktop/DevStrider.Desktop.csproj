@@ -1128,8 +1128,58 @@
          click to land where it was aimed.
 
          The arguments have to be passed when the environment is created, so this needs a restart to
-         take effect, exactly as the proxy does. -->
-    <Version>10.15.0</Version>
+         take effect, exactly as the proxy does.
+
+         10.16.0 lets a run take some links and leave others, and adds a one-application mode.
+
+         Job boards do not finish the same way. Ashby and Lever confirm and are done, so a batch of
+         those can be left alone; most Greenhouse postings e-mail a verification code afterwards,
+         which needs a person and their inbox. Run together, either the whole batch gets babysat or
+         the codes go unentered — so the queue now has a tick box per link, buttons that tick one
+         board at a time, and a run that only takes what is ticked. Ticking nothing still means all
+         of it, because that is what the button meant before and it is still what it should mean.
+         Alongside it, "Apply to one, then stop": the application goes out, its tab stays open, and
+         the queue does not move on while a code is being fetched by hand.
+
+         Building it turned up an older bug it would otherwise have inherited. The run decided what
+         to open next by carrying on with the current item unless that item was submitted, skipped or
+         failed — which quietly included "Needs JD" and "Ready for review", so pressing start picked
+         up whatever had been left on screen rather than what was queued. Caught live: a single-link
+         run aimed at one ticked Greenhouse posting opened an unrelated Ashby link that had been
+         deferred an hour earlier. Carrying on is now for an item that is genuinely mid-flight, or one
+         a retry has just put back in the queue.
+
+         Verified live both ways: with only Ashby ticked the run took the Ashby link and left the
+         queued Greenhouse one untouched, and with only Greenhouse ticked "apply to one" opened that
+         link, finished it, and stopped with its tab open.
+
+         10.17.0 checks the browser is on the right job before filling it, and lets a description be
+         pasted in for any link that needs one.
+
+         Nothing used to ask which page was open. The fill step asserted only that some http page
+         was — so a navigation that quietly did not land left the run filling the previous posting's
+         form with this job's answers and submitting it, with no error anywhere and the wrong employer
+         receiving it. The page is now identified before a field is touched: one re-navigation, then
+         the link fails rather than being filled. Matching is loose about what boards legitimately
+         change and strict about what identifies the posting — a Greenhouse redirect from
+         boards.greenhouse.io to job-boards.greenhouse.io with tracking parameters bolted on is the
+         same job, /application appended to an Ashby path is the same job, and two embed URLs
+         differing only in their token are not. Seven real URL shapes cover it, including the two
+         that must not match.
+
+         The links whose description could not be read were reachable only during the manual pass
+         that runs after a batch finishes, one at a time and in the queue's own order. That is the
+         wrong shape for the job: a person with the posting open in another window wants to paste it
+         now, for that link. They are listed on their own now, any of them can be given a description
+         at any time, and the link goes straight back in the queue afterwards. The run honours a
+         description supplied that way instead of reading the posting, which is what makes such a
+         link ordinary again rather than a special case that gets re-read and re-deferred. Text too
+         short to be a description is refused with the reason, as it always was.
+
+         Verified live: a dead posting's page text — 138 characters of "Job not found" — refused with
+         "only 138 characters, select the whole description", and a real 6,000-character description
+         accepted, persisted on the link, and the link returned to Queued. -->
+    <Version>10.17.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
