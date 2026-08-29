@@ -64,9 +64,9 @@ public sealed class ProxyConfiguration(AppSettings? settings)
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return "";
         if (!Supported.Contains(uri.Scheme, StringComparer.OrdinalIgnoreCase)) return "";
         if (uri.Host.Length == 0) return "";
-        return uri.IsDefaultPort && uri.Port <= 0
-            ? $"{uri.Scheme}://{uri.Host}"
-            : $"{uri.Scheme}://{uri.Host}:{uri.Port}";
+        // Uri.Port is never <= 0 on an absolute URI — it reports the scheme's default when none was
+        // typed — so the port is always spelled out. Chromium wants it explicit anyway.
+        return $"{uri.Scheme}://{uri.Host}:{uri.Port}";
     }
 
     /// <summary>Why this address cannot be used, or an empty string when it can.</summary>
@@ -106,6 +106,12 @@ public sealed class ProxyConfiguration(AppSettings? settings)
     {
         var entries = (_settings.ProxyBypassList ?? "")
             .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            // This ends up inside --proxy-bypass-list="…" on a Chromium command line. Address is
+            // Uri-normalized and cannot carry a quote; this is raw text from the settings box, and
+            // a double quote in it would close the argument and let whatever followed be read as
+            // further switches. Nothing in the bypass syntax needs quotes or whitespace, so both go.
+            .Select(entry => new string(entry.Where(c => c != '"' && c != '\'' && !char.IsWhiteSpace(c)).ToArray()))
+            .Where(entry => entry.Length > 0)
             .ToList();
 
         if (Uri.TryCreate(PortalApi.Url, UriKind.Absolute, out var portal) &&

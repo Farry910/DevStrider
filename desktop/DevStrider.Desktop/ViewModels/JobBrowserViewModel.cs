@@ -1290,7 +1290,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         }
 
         CurrentQueueItem = item;
-        item.AnswersJson = result.AnswersJson;
+        item.AnswersJson = ScreenAnswers(item, result.AnswersJson, "first");
         item.ResumeFilePath = result.ResumeFilePath;
         item.BidId = result.BidId;
         if (!string.IsNullOrWhiteSpace(result.AnswerConversationUrl))
@@ -1298,7 +1298,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             item.AnswerConversationUrl = result.AnswerConversationUrl;
             item.AnswerConversationId = result.AnswerConversationId;
         }
-        CurrentAnswersJson = result.AnswersJson;
+        // The screened set, not the raw reply: this is what will be typed, so it is what the
+        // review pane and the trace should be showing.
+        CurrentAnswersJson = item.AnswersJson;
         SelectedResumePath = result.ResumeFilePath;
         _trace.Step("ChatGPT", "result received",
             $"answers={CountQuestions(result.AnswersJson)}, resumeFile=" +
@@ -1400,7 +1402,9 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
         CurrentQueueItem = item;
-        item.AnswersJson = MergeAnswers(item.AnswersJson, result.AnswersJson);
+        // Screened before the merge, so a second pass cannot slip in an ungrounded claim the first
+        // pass held back. A site rejecting the field as required does not make the fact known.
+        item.AnswersJson = MergeAnswers(item.AnswersJson, ScreenAnswers(item, result.AnswersJson, "correction"));
         CurrentAnswersJson = item.AnswersJson;
         if (!string.IsNullOrWhiteSpace(result.ConversationUrl))
         {
@@ -1715,6 +1719,53 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var salary = _profiles.Current?.SalaryExpectation?.Trim() ?? "";
         if (salary.Length > 0) values["Salary expectation"] = salary;
         return values;
+    }
+
+    /// <summary>
+    /// Holds back any answer that asserts a checkable fact this person's reference data does not
+    /// contain, and routes the question to Quick answers instead.
+    ///
+    /// <para>
+    /// This is the gate between "the model produced an answer" and "the app types it into a real
+    /// employer's form". Everything it drops is a claim about work authorisation, a degree, a
+    /// clearance, employment dates or the like that came from nowhere — see
+    /// <see cref="ApplicationQuestionPolicy"/> for why that used to happen and why it is worth a
+    /// dedicated stop rather than a stronger sentence in the prompt.
+    /// </para>
+    ///
+    /// <para>
+    /// A dropped answer does not fail the link. The field is simply left empty, the question
+    /// appears in Quick answers with whatever the model wanted to say, and the run carries on to
+    /// human review — where an empty required field is visible and fillable. Answering it there
+    /// writes it to the person's facts, so the same question is grounded and automatic next time,
+    /// which is the mechanism that makes this get quieter with use rather than louder.
+    /// </para>
+    /// </summary>
+    /// <returns>The answers that are safe to type.</returns>
+    private string ScreenAnswers(JobLinkQueueItem item, string? answersJson, string pass)
+    {
+        var (grounded, needsReview) = ApplicationQuestionPolicy.Screen(answersJson, BuildKnownValues());
+        if (needsReview.Count == 0) return grounded;
+
+        var site = string.IsNullOrWhiteSpace(item.AdapterName) ? "Application" : item.AdapterName;
+        _questions.Publish(site, needsReview.Select(entry => entry.Question));
+
+        foreach (var entry in needsReview)
+        {
+            _trace.Warn("Grounding", $"held back a {entry.Topic} answer",
+                string.IsNullOrEmpty(entry.Proposed)
+                    ? $"\"{entry.Question}\" — the model said it could not ground this."
+                    : $"\"{entry.Question}\" — nothing on file states this person's {entry.Topic}; "
+                      + $"the model proposed \"{entry.Proposed}\".");
+        }
+
+        _activity.Warning("Job Browser",
+            $"{needsReview.Count} answer{(needsReview.Count == 1 ? "" : "s")} left for you",
+            $"{item.Url} — {string.Join(", ", needsReview.Select(entry => entry.Topic).Distinct())}. "
+            + "Nothing on file settles these, so they were not filled in. They are in Quick answers; "
+            + $"answering there saves them to this profile for next time. (Pass: {pass}.)");
+
+        return grounded;
     }
 
     /// <summary>

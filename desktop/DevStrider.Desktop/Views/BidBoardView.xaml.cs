@@ -50,7 +50,23 @@ public partial class BidBoardView : UserControl
         if (sender is not Hyperlink h) return;
         var url = h.Tag as string;
         if (string.IsNullOrWhiteSpace(url)) return;
-        try { Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true }); }
+
+        // ShellExecute on an arbitrary string is not "open a link" — it is "run whatever this
+        // names". The row's URL is not ours: it arrives over the local listener, from a folder
+        // import, or from a teammate, since every ds_bids row is team-readable and team-writable.
+        // A value of \\host\share\x.exe, file:///…, or a registered protocol handler would launch
+        // on click. Only the two schemes a job posting can legitimately have get through.
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var target)
+            || (target.Scheme != Uri.UriSchemeHttp && target.Scheme != Uri.UriSchemeHttps))
+        {
+            Debug.WriteLine($"[BidBoardView] Refused to open non-web URL: {url}");
+            MessageBox.Show(
+                $"That row's link is not a web address, so it was not opened:\n\n{url}",
+                "DevStrider · Link not opened", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try { Process.Start(new ProcessStartInfo { FileName = target.AbsoluteUri, UseShellExecute = true }); }
         catch (Exception ex) { Debug.WriteLine($"[BidBoardView] Open URL failed: {ex.Message}"); }
     }
 

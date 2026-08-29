@@ -48,7 +48,10 @@ public sealed class DevEndpoints
     public async Task<bool> TryHandleAsync(HttpListenerContext ctx, string path)
     {
         if (!path.StartsWith("/dev", StringComparison.Ordinal)) return false;
-        if (!_settings.Current.DeveloperTools)
+        // Current is null only before the startup load, which happens before the listener binds.
+        // Treat "not loaded yet" as off rather than dereferencing it: the safe reading of an
+        // unknown setting is the one that refuses.
+        if (_settings.Current is not { DeveloperTools: true })
         {
             await WriteJsonAsync(ctx, 403, new
             {
@@ -131,7 +134,9 @@ public sealed class DevEndpoints
         var jobs = _services.GetService<JobBrowserViewModel>();
         var profiles = _services.GetService<ProfileContext>();
         var session = _services.GetService<SessionContext>();
-        var settings = _settings.Current;
+        // Never null in practice — the listener binds after the startup load — but a state dump is
+        // the last thing that should throw, so the defaults stand in rather than a dereference.
+        var settings = _settings.Current ?? new Models.AppSettings();
 
         return await OnUiAsync<object>(() => new
         {
@@ -343,11 +348,24 @@ public sealed class DevEndpoints
     private static int Int(string? raw, int fallback, int min, int max) =>
         int.TryParse(raw, out var value) ? Math.Clamp(value, min, max) : fallback;
 
+    /// <summary>
+    /// Read a body with the cap enforced <em>while</em> reading. The declared Content-Length is a
+    /// hint only — a chunked request reports -1, which sailed past the up-front check and then
+    /// buffered as much as the caller cared to send. Same loop the main listener uses.
+    /// </summary>
     private static async Task<string> ReadBodyAsync(HttpListenerContext ctx)
     {
         if (ctx.Request.ContentLength64 > MaxScriptBytes) return "";
-        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
-        return await reader.ReadToEndAsync();
+
+        var buffer = new byte[81920];
+        using var accumulated = new MemoryStream();
+        int read;
+        while ((read = await ctx.Request.InputStream.ReadAsync(buffer)) > 0)
+        {
+            if (accumulated.Length + read > MaxScriptBytes) return "";
+            accumulated.Write(buffer, 0, read);
+        }
+        return Encoding.UTF8.GetString(accumulated.ToArray());
     }
 
     private static async Task WriteJsonAsync(HttpListenerContext ctx, int status, object payload)

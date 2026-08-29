@@ -50,19 +50,31 @@
 
 
 -- ── 0. Drop ─────────────────────────────────────────────────────────────────────────
+--
+-- RETIRED, AND DISARMED ON PURPOSE. Since 10.0 the portal owns these tables and creates and
+-- migrates them from hr-system/migrations/postgres/011_devstrider_api.sql on boot. This file is
+-- kept only as a readable description of the shape; nothing runs it any more.
+--
+-- The DROP statements below used to be live. They were nine lines that would take the whole
+-- team's bids and interviews with them — and per this repo's own README, these tables are the
+-- only copy — sitting in a file whose name invites someone to pipe it into psql. A comment
+-- saying "do not run this" is not a safeguard when the hazard is one paste away, so they are
+-- commented out. If you are genuinely rebuilding an empty database from scratch, uncomment
+-- them deliberately and know what you are doing.
+--
 -- Children before parents. CASCADE also removes the foreign keys pointing in.
-DROP TABLE IF EXISTS ds_interviews     CASCADE;
-DROP TABLE IF EXISTS ds_bids           CASCADE;
-DROP TABLE IF EXISTS ds_profiles       CASCADE;
-DROP TABLE IF EXISTS ds_users          CASCADE;
+-- DROP TABLE IF EXISTS ds_interviews     CASCADE;
+-- DROP TABLE IF EXISTS ds_bids           CASCADE;
+-- DROP TABLE IF EXISTS ds_profiles       CASCADE;
+-- DROP TABLE IF EXISTS ds_users          CASCADE;
 
 -- Retired in 8.1.0. Named here so a database created by an earlier version of this file is
 -- cleaned up when it is re-run: the CV moved into each profile's .docm, where it was being
 -- maintained anyway, and the achievement counters had no reader.
-DROP TABLE IF EXISTS ds_achievements   CASCADE;
-DROP TABLE IF EXISTS ds_experiences    CASCADE;
-DROP TABLE IF EXISTS ds_certifications CASCADE;
-DROP TABLE IF EXISTS ds_education      CASCADE;
+-- DROP TABLE IF EXISTS ds_achievements   CASCADE;
+-- DROP TABLE IF EXISTS ds_experiences    CASCADE;
+-- DROP TABLE IF EXISTS ds_certifications CASCADE;
+-- DROP TABLE IF EXISTS ds_education      CASCADE;
 
 -- ⚠ ALREADY HAVE DATA IN ds_*? DO NOT RUN THIS FILE.
 --

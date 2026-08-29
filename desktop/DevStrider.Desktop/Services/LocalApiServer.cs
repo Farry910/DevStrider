@@ -216,9 +216,34 @@ public sealed partial class LocalApiServer : ObservableObject
     {
         try
         {
-            // CORS: extension content-scripts hit us from arbitrary origins. Loopback-only,
-            // no credentials, so wildcard is fine.
-            ctx.Response.AddHeader("Access-Control-Allow-Origin", "*");
+            // Binding to loopback keeps other *machines* out. It does not keep a *browser* out:
+            // every page the user visits can reach 127.0.0.1, and a POST with a safelisted
+            // content type (text/plain) is a simple request, so it arrives with no preflight to
+            // refuse. The wildcard that used to sit here then handed the reply back to the page
+            // that asked, which made every endpoint below — a Word macro run, a synthesized
+            // Ctrl+V, and /dev/eval's arbitrary script in a signed-in browser — callable by any
+            // site the user happened to have open.
+            //
+            // So the origin is the check. A request with no Origin header is not from a page
+            // (curl, the app itself, a script) and is allowed; one that carries an Origin has to
+            // be loopback or the literal "null". Nothing is echoed back for an origin we refuse,
+            // so even a reply that escaped would be unreadable cross-origin.
+            var origin = ctx.Request.Headers["Origin"];
+            if (!IsTrustedOrigin(origin))
+            {
+                _activity.Warning(ExtensionSource, "Request refused",
+                    $"Cross-origin call from {origin} to {ctx.Request.Url?.AbsolutePath}. "
+                    + "This listener only answers this machine's own tools.", silent: true);
+                ctx.Response.StatusCode = 403;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(origin))
+            {
+                ctx.Response.AddHeader("Access-Control-Allow-Origin", origin);
+                ctx.Response.AddHeader("Vary", "Origin");
+            }
             ctx.Response.AddHeader("Access-Control-Allow-Headers", "Content-Type");
             ctx.Response.AddHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
@@ -337,6 +362,25 @@ public sealed partial class LocalApiServer : ObservableObject
             try { ctx.Response.Close(); }
             catch { /* already closed — the normal case */ }
         }
+    }
+
+    /// <summary>
+    /// Whether a request carrying this <c>Origin</c> is allowed to be served.
+    ///
+    /// <para>
+    /// Absent is trusted: only a browser sends <c>Origin</c>, so nothing there means the caller is
+    /// a local tool rather than a page. Present has to be loopback — <c>127.0.0.1</c>, <c>[::1]</c>
+    /// or <c>localhost</c> on any port or scheme — or the literal <c>null</c> a sandboxed frame
+    /// sends. An origin we cannot parse is refused rather than guessed at.
+    /// </para>
+    /// </summary>
+    internal static bool IsTrustedOrigin(string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin)) return true;
+        if (string.Equals(origin, "null", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+        return uri.IsLoopback
+            || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

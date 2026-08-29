@@ -59,21 +59,22 @@ public partial class App : Application
             }).GetAwaiter().GetResult();
 
             // Word left running by an earlier session belongs to nobody and needs no account to
-            // clear, so it happens before the login gate. Resolving the service is what starts its
-            // COM thread and its sweep; leaving it to the first resume meant a machine could sit
-            // with dozens of stranded Word processes for days without anything looking.
-            Services.GetRequiredService<WordMacroService>()
-                .EnsureSingleWordInstance("DevStrider started");
+            // clear, so it happens before the login gate. Resolving the service is all that is
+            // needed: its constructor starts the COM thread and kicks off the sweep on a
+            // thread-pool thread. Calling EnsureSingleWordInstance here as well ran the same sweep
+            // twice over the same processes, and ran the second one *on the UI thread* — which is
+            // the one thing the constructor's own comment says it is backgrounded to avoid.
+            Services.GetRequiredService<WordMacroService>();
 
             // With developer tools on, the listener opens here rather than after sign-in, so /dev
             // can see a login window that never got past itself — which is exactly the state worth
             // being able to look at. The endpoints that act as the signed-in user refuse until
             // there is one; see LocalApiServer.HandleAsync. Off, this does nothing and the listener
             // starts after login as it always has.
-            if (settings.Current.DeveloperTools)
+            if (settings.Current is { DeveloperTools: true } devSettings)
             {
                 var early = Services.GetRequiredService<LocalApiServer>();
-                early.Start(settings.Current.ListenerPort);
+                early.Start(devSettings.ListenerPort);
                 Services.GetRequiredService<ActivityLogService>().Info("Listener",
                     early.IsRunning ? "Developer listener started early" : "Developer listener could not start early",
                     early.Status, silent: true);

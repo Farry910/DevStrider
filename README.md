@@ -1,17 +1,16 @@
-# DevStrider 10.0
+# DevStrider 10.18
 
-A Windows desktop app and a Chrome extension that track job bids for a team, backed by the
-company portal's API.
+A Windows desktop app that tracks job bids for a team, backed by the company portal's API.
 
-One button on a job page reads the description, has ChatGPT tailor a resume, builds it in Word
-silently, and records the bid — while you stay on the page filling in the application.
+It reads a job posting, has ChatGPT tailor a resume, builds it in Word silently, fills the
+application form, and records the bid — with a review step before anything is submitted.
 
 ## Architecture
 
 ```
-Chrome extension ──http://127.0.0.1:8765──▶ DevStrider.exe (WPF) ──HTTPS──▶ hr-system ──▶ PostgreSQL
-   (Bid Assistant)        loopback only         Word via COM        bearer     (the portal)
-                                                                    token
+DevStrider.exe (WPF) ──HTTPS──▶ hr-system ──▶ PostgreSQL
+  embedded WebView2   bearer    (the portal)
+  Word via COM        token
 ```
 
 Two moving parts, and the database is behind neither of them:
@@ -20,6 +19,11 @@ Two moving parts, and the database is behind neither of them:
 |---|---|
 | `desktop/` | The app. WPF on .NET 10. Owns the Word automation and nothing else's data. |
 | the portal | `hr-system`, which owns the `ds_*` tables and serves `/api/devstrider/*`. |
+
+**There is no Chrome extension any more.** The *Bid Assistant* extension was deleted in 9.1.0,
+once the embedded ChatGPT and job-site workspaces did its job from inside the app. The loopback
+listener it used to talk to is still there — see [The local listener](#the-local-listener) — but
+it is a developer and scripting surface now, not a component.
 
 **There is no local database and no local copy.** A teammate's bid is visible the moment they save
 it; there is nothing to sync and no mirror to fall behind.
@@ -57,7 +61,9 @@ the portal's API.
   DevStrider user without a portal account first.
 - **The portal owns the five `ds_*` tables**, keyed on `app_user.id`, created and migrated by
   `hr-system/migrations/postgres/011_devstrider_api.sql` on boot. `desktop/shared-db-schema.sql` is
-  the retired hand-run version — **do not run it**, its `DROP`s are still live.
+  the retired hand-run version, kept as a readable description of the shape. Its `DROP TABLE …
+  CASCADE` lines are commented out as of 10.18 — they would have taken the whole team's only copy
+  with them, and a README note is not a safeguard against a paste.
 - **Every write is pinned to the token's own account.** A request cannot name a user id; the server
   takes it off the signature. Reads across the team are deliberate and confined to
   `/api/devstrider/peers/*`, which is the Peers tab.
@@ -84,9 +90,17 @@ always one-to-one, and a posting with nothing bid on it is exactly what `status 
 
 - **Windows 10/11** and the **.NET 10 SDK**
 - **Microsoft Word** with a macro-enabled template per profile (see *Word template* below)
-- The portal's **address**. Not a database, not a credential — a URL.
-- **Chrome**, for the extension
+- A **portal account**. The portal's address is compiled in (see *The portal address* below), so
+  there is nothing to configure — but you need an account on it before you can sign in.
+- The **WebView2 runtime**, which ships with Windows 11 and current Windows 10.
 - MongoDB is not used at all. The driver went in 9.3.0 along with the last thing that read it.
+
+### The portal address
+
+`https://triospace.org/hr`, as `PortalApi.Url` — a `const`, not a setting. There is no *Portal
+address* panel, no `DEVSTRIDER_PORTAL_URL`, and no field for it in Settings; earlier versions of
+this README described all three, and none of them have existed for several releases. Changing
+which portal a build talks to means editing that constant and rebuilding.
 
 ## Build and run
 
@@ -102,19 +116,16 @@ The built executable is `desktop\DevStrider.Desktop\bin\Debug\net10.0-windows\De
 
 1. **Start the app.** It opens the sign-in window. Nothing has to be created first: the portal
    brings its own tables up when it boots.
-2. **Fill in the portal address.** The sign-in window has a *Portal address* panel — open by
-   default when nothing is configured. Type the address you open the portal at in a browser, e.g.
-   `https://triospace.org/hr`. Press **Test connection**: it proves the portal answers, and that
-   the address does not land on something in front of it. Saved to
-   `%LOCALAPPDATA%\DevStrider\settings.json`.
-
-   This panel is on the login window rather than in Settings because Settings sits behind the
-   login it would be configuring.
-3. **Sign in** with your company portal account. On first successful sign-in the portal creates
-   your `ds_users` row, and the app seeds a profile named *Default*.
-4. **Set up the profile.** Profiles tab: point it at that person's `.docm`, leave the macro name
+2. **Sign in** with your company portal account. There is nothing to configure first — the portal
+   address is compiled in. On first successful sign-in the portal creates your `ds_users` row, and
+   the app seeds a profile named *Default*.
+3. **Set up the profile.** Profiles tab: point it at that person's `.docm`, leave the macro name
    blank to use `UpdateResumeAndSwitchOriginal`, and press *Insert default* for a resume prompt
    that emits every marker the macro expects.
+4. **Fill in the personal facts.** Profiles → personal data: education, career dates, and any
+   custom fields (work authorisation, citizenship, clearance, licences). This is not optional
+   paperwork — it is the grounding set. Anything not stated here, the app will refuse to answer
+   on a form rather than guess. See [Grounded answers](#grounded-answers).
 5. **Sign in to ChatGPT** once in the app's own Resume Studio browser. It keeps its own WebView2
    profile, so that session persists across restarts.
 
@@ -150,6 +161,39 @@ created. Switch from the title-bar dropdown.
 The CV belongs to the `.docm`, not to the profile row — DevStrider stores nothing about it at all:
 it never reads a CV and never renders one.
 
+## Grounded answers
+
+**The app does not make up facts about you.** Application forms mix two kinds of question, and
+they are not the same kind of thing:
+
+- **Facts an employer verifies** — work authorisation, visa sponsorship, citizenship, security
+  clearance, degrees, licences, certifications, employment dates and years of experience, criminal
+  history, salary history, references, date of birth. These are answered **only** from your profile
+  and personal facts. Where those are silent, the question is **not answered**: it is lifted out,
+  the field is left blank, and it appears in **Quick answers** with whatever the model wanted to
+  say, so you can see what it was about to claim.
+- **Choices that are yours to make** — consent to a background check, willingness to relocate or
+  travel, availability, notice period, acknowledgements, desired salary — plus free-text questions.
+  These are answered as before.
+- **Voluntary demographic questions** (gender, race, veteran status, disability) default to
+  *Prefer not to say* unless your facts state otherwise.
+
+Until 10.17 the answer prompt said, of citizenship and work authorisation and degrees and
+clearances: *where the reference data is silent, still answer, and answer so that this application
+stays eligible.* That produced confident claims nobody had checked, under a real person's name, to
+employers — and it did not even work on its own terms, since an invented clearance fails the
+background check it was invented to get past. The claim just fails later, with the applicant's name
+on it.
+
+Two things enforce this. The prompt asks for a sentinel value on anything the data does not settle;
+and because a model that ignores an instruction is exactly the failure being defended against,
+`ApplicationQuestionPolicy.Screen` independently checks that a factual answer has support in your
+reference data before it is allowed near a form.
+
+**This gets quieter with use.** Answering a held-back question in Quick answers writes it to the
+profile's personal facts, so the next form that asks it is grounded and fills automatically. The
+Profiles → personal data tab is where to front-load that.
+
 ## Word template
 
 Each profile has its own `.docm`. It must contain nine bookmarks:
@@ -175,14 +219,22 @@ parameter no longer appears in Word's Alt+F8 list; that is expected, since DevSt
 
 ## The local listener
 
-The desktop app binds `http://127.0.0.1:8765`, loopback only. That binding is what stands in for
-authentication — nothing off the machine can reach it — so requests carry no credential and are
-served as whoever is signed in. It therefore starts only **after** login.
+The desktop app binds `http://127.0.0.1:8765`, loopback only, and starts **after** login. Requests
+carry no credential and are served as whoever is signed in.
+
+**Loopback is not the whole trust boundary, and it never was.** It keeps other machines out; it
+does not keep a *browser* out, because every page the user visits can reach `127.0.0.1`, and a
+`POST` with a safelisted content type arrives with no preflight to refuse. Until 10.17 this
+listener answered `Access-Control-Allow-Origin: *`, which handed the reply back to whoever asked —
+so any open tab could run the Word macro, synthesize a Ctrl+V into the foreground window, or (with
+developer tools on) execute script in the signed-in ChatGPT browser. It now refuses any request
+carrying a cross-origin `Origin` header, and echoes an origin back only when it is loopback. A
+request with no `Origin` — curl, a script, the app itself — is still served.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /health`, `GET /` | Liveness, so the extension popup can tell you the app is up. |
-| `GET /active-profile` | The active profile's resume prompt, for the extension to send to ChatGPT. |
+| `GET /health`, `GET /` | Liveness. |
+| `GET /active-profile` | The active profile's resume prompt. |
 | `POST /prewarm` | Launch Word and open the template while ChatGPT is still writing. |
 | `POST /generate-resume` | Run the macro and record the bid, in one call. |
 | `POST /record-bid` | Record a bid without the macro. `/record-devstrider` is an alias. |
@@ -218,13 +270,16 @@ variables stop mattering. The full list is in the app's About tab; the ones that
 
 | Variable | Seeds |
 |---|---|
-| `DEVSTRIDER_PORTAL_URL` | The portal, e.g. `https://triospace.org/hr` |
 | `DEVSTRIDER_LISTENER_PORT` | Listener port, default 8765 |
 | `DEVSTRIDER_WORD_DOC_PATH` | Word template for the seeded *Default* profile |
+| `DEVSTRIDER_WORD_HOTKEY` | Macro hotkey, default `F9` |
+| `DEVSTRIDER_R2_*` | Account id, bucket, access key id, secret — see `SettingsBootstrap` |
+
+**There is no `DEVSTRIDER_PORTAL_URL`.** Earlier revisions of this file listed one; it has never
+existed in the code. The portal address is the compiled-in `PortalApi.Url`.
 
 The six `DEVSTRIDER_SHARED_DB_*` variables are gone with the direct database connection they
-configured, one of them a password. `DEVSTRIDER_PORTAL_URL` replaces all of them and is not a
-secret, so provisioning a machine is now something you can put in a setup script.
+configured, one of them a password — provisioning a machine no longer involves a secret.
 
 There is no username variable: the account name comes from `app_user`, and no environment on any
 machine gets to name a user.
@@ -267,5 +322,5 @@ Two things are still worth knowing about:
 
 ## Version
 
-**10.0.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**10.18.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

@@ -182,13 +182,27 @@ public sealed class R2StorageService
     {
         if (string.IsNullOrWhiteSpace(objectKey)) return (null, "No resume attached.");
 
+        // The callers open what comes back with ShellExecute, so the extension decides what runs.
+        // Upload has always enforced this list; download did not, and the filename on the row is
+        // not ours — every ds_interviews row is team-writable and the R2 token is shared, so a
+        // name like "offer.pdf.exe" would have been fetched and launched. Sanitize() keeps '.', so
+        // the double extension survives it; only the allow-list stops it.
+        var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
+        if (!AllowedExtensions.Contains(ext))
+        {
+            _activity.Warning("Resume", "Download refused",
+                $"'{fileName}' is not a resume format ({string.Join(", ", AllowedExtensions)}). "
+                + "It was not fetched or opened.");
+            return (null, $"'{fileName}' is not a resume format, so it was not opened.");
+        }
+
         var (client, bucket, error) = await ConnectAsync();
         if (client is null) return (null, error!);
 
         // Own folder per download so two resumes with the same name can't collide.
         var dir = Path.Combine(Path.GetTempPath(), "devstrider-resumes", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        var target = Path.Combine(dir, string.IsNullOrWhiteSpace(fileName) ? "resume" : Sanitize(fileName));
+        var target = Path.Combine(dir, Sanitize(fileName!));
 
         using (client)
         {

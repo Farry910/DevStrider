@@ -541,6 +541,11 @@ public sealed class WordMacroService : IDisposable
 
         if (_ourWordPid > 0)
         {
+            // Write the pid down before the run, not after: the whole point of the ledger is the
+            // crash that never gets to a tidy shutdown, and a pid recorded only on success is a
+            // pid that is never recorded when it matters.
+            LaunchedWordLedger.Remember(_ourWordPid);
+
             // Ours: invisible for its whole life.
             TrySet(_word, "Visible", false);
             TrySet(_word, "DisplayAlerts", 0);
@@ -636,6 +641,9 @@ public sealed class WordMacroService : IDisposable
         if (_word == null) return;
         try { if (Marshal.IsComObject(_word)) Marshal.ReleaseComObject(_word); } catch { /* ignore */ }
         _word = null;
+        // Let go of the pid in the ledger too, so a later sweep isn't carrying a number that is
+        // either dead or about to be handed to something else.
+        if (_ourWordPid > 0) LaunchedWordLedger.Forget(_ourWordPid);
         _ourWordPid = 0;
     }
 
@@ -653,6 +661,7 @@ public sealed class WordMacroService : IDisposable
             proc.Kill(entireProcessTree: true);
         }
         catch { /* already gone */ }
+        finally { LaunchedWordLedger.Forget(pid); }
         return true;
     }
 
@@ -751,50 +760,190 @@ public sealed class WordMacroService : IDisposable
     /// </para>
     ///
     /// <para>
-    /// A Word somebody is actually using has a window, and this never touches those: their unsaved
-    /// documents are not ours to discard. That single test is what makes sweeping safe, so it is
-    /// checked before anything else and a process that fails to answer is left alone.
+    /// <b>Only Word processes this app started.</b> This used to sweep on shape alone — any
+    /// WINWORD with no main window, older than twenty seconds — and "no window" is not the same
+    /// claim as "ours". It is also true of a Word another application is driving over COM, of one
+    /// still opening a large document behind slow add-ins, and, because a window in another
+    /// Windows session is invisible from this one, of every other signed-in user's Word on a
+    /// shared or RDP machine. Each of those is somebody's unsaved work, ended with
+    /// <c>entireProcessTree</c> and no prompt. The ledger below is what makes the claim true: a
+    /// pid is swept only if this app recorded launching it, and only if the process at that pid
+    /// still has the start time that was recorded with it, so a reused pid is not mistaken for
+    /// the original.
+    /// </para>
+    ///
+    /// <para>
+    /// The window test stays as a second gate. Ours are invisible for their whole life, so one
+    /// that has grown a window is one the user has somehow ended up in front of, and it is not
+    /// ours to discard either.
     /// </para>
     /// </summary>
     /// <returns>How many were ended.</returns>
     public int EnsureSingleWordInstance(string reason)
     {
         var keep = Volatile.Read(ref _ourWordPid);
+        var ours = LaunchedWordLedger.Read();
+        if (ours.Count == 0) return 0;
+
         // A Word that has only just started may not have created its window yet, and one we launch
         // never will. Leave the very recent alone rather than racing them.
         var cutoff = DateTime.Now.AddSeconds(-20);
 
-        Process[] running;
-        try { running = Process.GetProcessesByName("WINWORD"); }
-        catch { return 0; }
-
         var ended = 0;
         var kept = 0;
-        foreach (var proc in running)
+        var gone = new List<int>();
+
+        foreach (var (pid, startedAtTicks) in ours)
         {
+            if (pid == keep) continue;
+
+            Process proc;
+            try { proc = Process.GetProcessById(pid); }
+            catch { gone.Add(pid); continue; }   // already dead — drop it from the ledger
+
             using (proc)
             {
                 try
                 {
-                    if (proc.Id == keep || proc.HasExited) continue;
-                    // Somebody is using this one.
+                    if (proc.HasExited) { gone.Add(pid); continue; }
+
+                    // Not the process we recorded: this pid has been recycled onto something else,
+                    // which may not even be Word. Forget it rather than touch it.
+                    if (proc.StartTime.Ticks != startedAtTicks) { gone.Add(pid); continue; }
+                    if (!string.Equals(proc.ProcessName, "WINWORD", StringComparison.OrdinalIgnoreCase))
+                    {
+                        gone.Add(pid);
+                        continue;
+                    }
+
                     if (proc.MainWindowHandle != IntPtr.Zero) { kept++; continue; }
                     if (proc.StartTime > cutoff) continue;
+
                     proc.Kill(entireProcessTree: true);
+                    gone.Add(pid);
                     ended++;
                 }
                 catch { /* gone, or not ours to inspect — either way leave it */ }
             }
         }
 
+        if (gone.Count > 0) LaunchedWordLedger.Forget(gone);
+
         if (ended > 0)
         {
             _trace.Warn("Word", $"closed {ended} stranded Word process(es)", reason);
             _activity.Info("Resume", "Stranded Word processes closed",
-                $"{ended} hidden instance(s) left over from earlier runs — {reason}" +
-                (kept > 0 ? $". {kept} with a window were left alone." : ""));
+                $"{ended} hidden instance(s) this app had left running — {reason}" +
+                (kept > 0 ? $". {kept} that had grown a window were left alone." : ""));
         }
         return ended;
+    }
+
+    /// <summary>
+    /// The pids of Word instances <em>this app launched</em>, on disk so they survive the crash
+    /// that stranded them.
+    ///
+    /// <para>
+    /// A pid alone would be unsafe to act on: Windows reuses them, and by the time a crashed run's
+    /// ledger is read the number may belong to something else entirely. Each entry therefore
+    /// carries the process start time it was recorded with, and a pid whose process no longer
+    /// matches that stamp is dropped rather than killed.
+    /// </para>
+    ///
+    /// <para>
+    /// Per Windows user, beside the other DevStrider state, so one account's sweep can never
+    /// reach into another's — which is the failure the shape-based sweep had on a shared machine.
+    /// </para>
+    /// </summary>
+    internal static class LaunchedWordLedger
+    {
+        private static readonly object Gate = new();
+
+        private static string Path => System.IO.Path.Combine(
+            SettingsStore.DirectoryPath, "word-launched-pids.json");
+
+        public static IReadOnlyList<(int Pid, long StartedAtTicks)> Read()
+        {
+            lock (Gate)
+            {
+                try
+                {
+                    if (!File.Exists(Path)) return [];
+                    var entries = System.Text.Json.JsonSerializer
+                        .Deserialize<List<Entry>>(File.ReadAllText(Path)) ?? [];
+                    return entries.Select(e => (e.Pid, e.StartedAtTicks)).ToList();
+                }
+                catch { return []; }
+            }
+        }
+
+        public static void Remember(int pid)
+        {
+            long ticks;
+            try { using var proc = Process.GetProcessById(pid); ticks = proc.StartTime.Ticks; }
+            catch { return; }
+
+            lock (Gate)
+            {
+                var entries = Load();
+                entries.RemoveAll(e => e.Pid == pid);
+                entries.Add(new Entry { Pid = pid, StartedAtTicks = ticks });
+                Write(entries);
+            }
+        }
+
+        public static void Forget(IEnumerable<int> pids)
+        {
+            var drop = pids.ToHashSet();
+            if (drop.Count == 0) return;
+            lock (Gate)
+            {
+                var entries = Load();
+                if (entries.RemoveAll(e => drop.Contains(e.Pid)) == 0) return;
+                Write(entries);
+            }
+        }
+
+        public static void Forget(int pid) => Forget([pid]);
+
+        private static List<Entry> Load()
+        {
+            try
+            {
+                return File.Exists(Path)
+                    ? System.Text.Json.JsonSerializer.Deserialize<List<Entry>>(File.ReadAllText(Path)) ?? []
+                    : [];
+            }
+            catch { return []; }
+        }
+
+        private static void Write(List<Entry> entries)
+        {
+            try
+            {
+                Directory.CreateDirectory(SettingsStore.DirectoryPath);
+                if (entries.Count == 0)
+                {
+                    if (File.Exists(Path)) File.Delete(Path);
+                    return;
+                }
+                var temp = $"{Path}.{Guid.NewGuid():N}.tmp";
+                File.WriteAllText(temp, System.Text.Json.JsonSerializer.Serialize(entries));
+                File.Move(temp, Path, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                // Losing the ledger costs a stranded Word, not a bid. Never worth throwing from
+                // inside a resume run.
+                Debug.WriteLine($"[Word] couldn't write the launched-pid ledger: {ex.Message}");
+            }
+        }
+
+        private sealed class Entry
+        {
+            public int Pid { get; set; }
+            public long StartedAtTicks { get; set; }
+        }
     }
 
     private static HashSet<int> WinwordPids()

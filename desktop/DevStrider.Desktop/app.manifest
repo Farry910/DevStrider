@@ -15,8 +15,10 @@
   </compatibility>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2,permonitor</dpiAwareness>
+      <!-- DPI awareness is declared by <ApplicationHighDpiMode> in the .csproj instead. WinForms
+           flags it here (WFO0003) because the manifest is applied before the runtime gets to set
+           it, so two declarations is a real conflict rather than a style preference. The mode set
+           there — PerMonitorV2 — is what these two lines were asking for. -->
     </windowsSettings>
   </application>
 </assembly>

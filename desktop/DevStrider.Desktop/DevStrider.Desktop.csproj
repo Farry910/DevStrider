@@ -17,6 +17,10 @@
       run a WinForms message loop, the existing WPF dispatcher handles events.
     -->
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- Was two <dpiAware*> elements in app.manifest, which WFO0003 rejects: the manifest is
+         applied before the runtime can set the mode, so the two declarations conflict. Same
+         behaviour, declared in the one place that wins. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <!--
       ImplicitUsings auto-imports System / System.Collections.Generic / System.Linq /
@@ -1179,7 +1183,43 @@
          Verified live: a dead posting's page text — 138 characters of "Job not found" — refused with
          "only 138 characters, select the whole description", and a real 6,000-character description
          accepted, persisted on the link, and the link returned to Queued. -->
-    <Version>10.17.0</Version>
+    <!-- 10.18.0 stops the app asserting facts about a person that nothing has told it.
+
+         The answer prompts used to say, of citizenship, work authorisation, degrees, licences,
+         clearances and employment dates: "where it is silent, still answer, and answer so that this
+         application stays eligible". That is an instruction to state unverified things about a real
+         applicant to an employer, and it does not even pay: an invented clearance fails the check it
+         was invented to pass, so the application is lost later instead of now, with the applicant's
+         name on the claim. ApplicationQuestionPolicy now classifies each question — verifiable fact,
+         the applicant's own choice, or free text — grounds the first kind in the profile and person
+         facts only, and routes anything it cannot ground to Quick answers with the field left blank.
+         Enforced twice: a sentinel the prompt asks for, and an independent check on the reply, since
+         a model ignoring the instruction is the failure being defended against. Answering in Quick
+         answers writes the fact to the profile, so the same question is automatic next time.
+
+         Also in 10.18.0, from a full review of the app:
+         · The local listener refused nothing cross-origin and answered Access-Control-Allow-Origin:*
+           — so any page the user had open could run the Word macro, synthesize Ctrl+V+Enter into the
+           foreground window, or, with developer tools on, execute script in the signed-in ChatGPT
+           browser and read the result. Loopback keeps other machines out, not other tabs. It now
+           requires a loopback Origin or none at all, and DeveloperTools defaults to off.
+         · The bid board shell-executed a row's URL with no scheme check, and ds_bids is team-writable
+           — \\host\share\x.exe would have run on click. http/https only now.
+         · R2 downloads enforced no extension allow-list (uploads always did), so a teammate-set
+           filename of "offer.pdf.exe" would have been fetched and shell-executed. Same list both ways.
+         · EnsureSingleWordInstance killed any windowless WINWORD older than 20s, entireProcessTree —
+           which is also true of another app's COM automation, of a slow-opening document, and, since
+           windows in other sessions are invisible from this one, of other users' Word on a shared
+           machine. It now sweeps only pids this app recorded launching, matched on start time so a
+           recycled pid is not mistaken for the original. The duplicate startup sweep is gone with it.
+         · PendingBidQueue wrote its journal through a fixed .tmp name with no gate, from three
+           concurrent paths — the exact collision SettingsStore documents having fixed. Same fix.
+         · DevEndpoints' body cap was checked only against Content-Length, which is -1 when chunked.
+         · The proxy bypass list went into a quoted Chromium argument unescaped.
+         · shared-db-schema.sql's DROP TABLE ... CASCADE lines are commented out. The portal has owned
+           these tables since 10.0; the file is a description now, and a README note saying "do not
+           run this" is not a safeguard when the hazard is one paste from a file named like that. -->
+    <Version>10.18.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

@@ -260,14 +260,35 @@ public sealed class PendingBidQueue : IDisposable
     }
 
     /// <summary>
+    /// One journal writer at a time. Enqueues arrive on listener thread-pool threads while the
+    /// interval timer flushes and the board removes, so three independent continuations can land
+    /// together — which is the same collision <see cref="SettingsStore"/> documents hitting on its
+    /// own temp file. Two writers sharing a fixed <c>.tmp</c> name is either "the process cannot
+    /// access the file" or a torn journal, and the gate also keeps an older snapshot from landing
+    /// on top of a newer one, since the snapshot is taken under <see cref="_gate"/> but the write
+    /// happens outside it.
+    /// </summary>
+    private readonly SemaphoreSlim _journalGate = new(1, 1);
+
+    /// <summary>
     /// Rewrite the journal to match the queue. Temp file then move, so a crash mid-write leaves the
     /// previous journal rather than a truncated one that fails to parse.
     /// </summary>
     private async Task SaveJournalAsync()
     {
-        List<UserBid> snapshot;
-        lock (_gate) snapshot = _order.Select(id => _pending[id]).ToList();
+        await _journalGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            List<UserBid> snapshot;
+            lock (_gate) snapshot = _order.Select(id => _pending[id]).ToList();
 
+            await WriteJournalAsync(snapshot).ConfigureAwait(false);
+        }
+        finally { _journalGate.Release(); }
+    }
+
+    private async Task WriteJournalAsync(List<UserBid> snapshot)
+    {
         try
         {
             Directory.CreateDirectory(SettingsStore.DirectoryPath);
@@ -276,9 +297,20 @@ public sealed class PendingBidQueue : IDisposable
                 if (File.Exists(JournalPath)) File.Delete(JournalPath);
                 return;
             }
-            var temp = JournalPath + ".tmp";
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(snapshot, Json));
-            File.Move(temp, JournalPath, overwrite: true);
+            // Unique temp name as well as the gate: the gate is what makes writes safe inside this
+            // process, the name is what keeps a second DevStrider — or one being restarted over
+            // another — from colliding on the same scratch file.
+            var temp = $"{JournalPath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(snapshot, Json));
+                File.Move(temp, JournalPath, overwrite: true);
+            }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); }
+                catch (IOException) { /* the move already took it, or the next run will */ }
+            }
         }
         catch (Exception ex)
         {
@@ -294,5 +326,6 @@ public sealed class PendingBidQueue : IDisposable
         _timer?.Dispose();
         _timer = null;
         _flushLock.Dispose();
+        _journalGate.Dispose();
     }
 }

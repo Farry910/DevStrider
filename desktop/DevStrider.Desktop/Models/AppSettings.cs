@@ -61,12 +61,17 @@ public class AppSettings
     /// This is a development affordance and it is deliberately powerful. Everything hard about this
     /// app happens inside a signed-in ChatGPT session and a live application form — pages nobody can
     /// reproduce off this machine — and without a way to look at them a diagnosis is a guess wrapped
-    /// in a build. It is loopback-only, which is the same trust boundary the rest of this listener
-    /// has always had; but /dev/eval runs arbitrary script in a signed-in browser, so it is a switch
-    /// rather than something always on. Turn it off before this goes to people who are not building it.
+    /// in a build.
+    ///
+    /// <para>
+    /// <b>Off by default.</b> /dev/eval runs arbitrary script in a signed-in browser and /dev/shot
+    /// photographs it, so this is the most powerful switch in the app and it does not get to be on
+    /// for someone who never asked for it. The listener refuses cross-origin callers now
+    /// (<see cref="Services.LocalApiServer.IsTrustedOrigin"/>), but defence in depth is the point:
+    /// a switch that defaults to off is one fewer thing depending on that check being right.
     /// </para>
     /// </summary>
-    public bool DeveloperTools { get; set; } = true;
+    public bool DeveloperTools { get; set; }
 
     /// <summary>Must match the Word macro's OUTPUT_ROOT when automatic upload is desired.</summary>
     /// <summary>
@@ -87,13 +92,12 @@ public class AppSettings
     /// </summary>
     public string SalaryExpectation { get; set; } = "";
 
-    /// <summary>
-    /// Legacy answer bank, kept only so <see cref="Services.FormAnswerService"/> can move it into
-    /// <c>ds_form_answers</c> once and then empty it. Answers live in the shared database now, so
-    /// they follow the account between machines instead of sitting in one settings.json. Nothing
-    /// writes here any more; do not add to it.
-    /// </summary>
-    public Dictionary<string, Dictionary<string, string>> JobFormAnswers { get; set; } = new();
+    // JobFormAnswers was removed here. It was an answer bank whose doc promised a
+    // `FormAnswerService` would migrate it into a `ds_form_answers` table — neither of which
+    // exists, or ever did, so anything a settings file still holds under that key was already
+    // unreachable. UnmappedMemberHandling.Skip means an older settings.json with the block still
+    // loads; the block drops out on the next save. Answers live on the work item (AnswersJson)
+    // and, for the reusable ones, in ds_person_facts.
 
     /// <summary>Per-profile, local job links to process one application at a time.</summary>
     public Dictionary<string, List<JobLinkQueueItem>> JobLinkQueues { get; set; } = new();
@@ -177,9 +181,6 @@ public class AppSettings
         clone.ChatGptResumeSessions = (ChatGptResumeSessions ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Clone());
-        clone.JobFormAnswers = (JobFormAnswers ?? new()).ToDictionary(
-            pair => pair.Key,
-            pair => new Dictionary<string, string>(pair.Value, StringComparer.OrdinalIgnoreCase));
         clone.JobLinkQueues = (JobLinkQueues ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Select(item => item.Clone()).ToList());

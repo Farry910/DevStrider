@@ -678,24 +678,13 @@ public partial class ResumeStudioView : UserControl
         "a project that the reference data does not contain. Describe real work accurately instead. " +
         "Answer in plain text only — no markdown, links, bullet characters or code fences, because " +
         "the text is typed straight into a form field. " +
-        "Screening questions decide whether the application is read by anyone at all, so a required " +
-        "question with options must never come back empty. When the reference data does not settle " +
-        "one, choose the option that keeps the application eligible rather than returning nothing. " +
-        "Consent to a background check or drug test, availability and start date, willingness to " +
-        "relocate or travel, notice period, comfort with the stated work model, and acknowledgements " +
-        "are the applicant's own choice, and the enabling option is the one to pick. " +
-        "Read the direction of the question before choosing, because the eligible answer is not " +
-        "always the word yes: \"do you consent to a background investigation\" is answered yes, while " +
-        "\"will you require visa sponsorship\" is answered no — needing sponsorship is what " +
-        "disqualifies. Pick by what the employer needs to be true, never by the wording. " +
-        "Where the reference data states an eligibility fact — citizenship or work authorisation, a " +
-        "degree, a licence, a certification, a clearance, employment dates — answer with what it says. " +
-        "Where it is silent, still answer, and answer so that this application stays eligible. A " +
-        "screening question returned blank ends the application unread, and an ineligible answer ends " +
-        "it just as surely, so a blank is not the cautious choice here — it is the same outcome with " +
-        "no upside. This person is applying for this role, which is itself the claim that they can " +
-        "hold it. A question that carries options must therefore never come back as an empty string: " +
-        "pick one of the options given. " +
+        "Screening questions decide whether the application is read by anyone at all, so a question " +
+        "that is genuinely the applicant's own choice must never come back empty. Consent to a " +
+        "background check or drug test, availability and start date, willingness to relocate or " +
+        "travel, notice period, and comfort with the stated work model are theirs to decide, and " +
+        "the enabling option is the one to pick. Read the direction of the question before " +
+        "choosing, because the enabling answer is not always the word yes. " +
+        ApplicationQuestionPolicy.PromptRules + " " +
         "Return ONLY valid JSON in this exact shape: {\"answers\":{\"exact question text\":\"answer\"}}, " +
         "keyed on the question text exactly as given and never on the options. " +
         // A question that quotes one of its own options — If you selected "Location not listed"… —
@@ -715,16 +704,14 @@ public partial class ResumeStudioView : UserControl
         "validationErrors and failure values as direct feedback from the job site. For every question with options, " +
         "choose exactly one supplied option and copy it character for character. Do not invent an option. " +
         "For a question without options, return a corrected grounded value that addresses the stated failure. " +
-        "A field the site is rejecting as required must not come back empty a second time: where the " +
-        "reference data does not settle it, choose the option that keeps the application eligible — " +
-        "consent, availability, willingness and acknowledgements are the applicant's own choice. Read " +
-        "the direction first, since the eligible answer is not always yes: consent to a background " +
-        "check is yes, while requiring visa sponsorship is no. Eligibility facts — citizenship or work " +
-        "authorisation, a degree, a licence, a clearance, employment dates — come from the reference " +
-        "data where it states them, and where it is silent take the answer that keeps this application " +
-        "eligible. This is the second pass on a field the site has already rejected once: returning it " +
-        "empty again ends the application, so a question carrying options must come back as one of " +
-        "those options and never as an empty string. " +
+        "A field the site is rejecting as required must not come back empty a second time where the " +
+        "question is the applicant's own choice — consent, availability, willingness and " +
+        "acknowledgements. Read the direction first, since the enabling answer is not always yes. " +
+        ApplicationQuestionPolicy.PromptRules + " " +
+        "That rule is not relaxed by the site rejecting the field. A form insisting on an answer " +
+        "does not make one known: if the reference data does not settle a factual question, it still " +
+        "returns " + ApplicationQuestionPolicy.NeedsReviewSentinel + " on this pass, and a person " +
+        "fills it in. " +
         "Keep facts consistent with the reference and the earlier answers. Return ONLY valid JSON " +
         "in this exact shape: {\"answers\":{\"exact question text\":\"exact option or corrected answer\"}}.\n\n" +
         "Reference data:\n" + request.KnownAnswersJson + "\n\n" +
