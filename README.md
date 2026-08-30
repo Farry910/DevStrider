@@ -1,4 +1,4 @@
-# DevStrider 10.22
+# DevStrider 10.25.1
 
 A Windows desktop app that tracks job bids for a team, backed by the company portal's API.
 
@@ -198,6 +198,25 @@ The key is now profile **and** lane. `ChatGptConversationRegistry` covers what t
 same conversation reaching both lanes anyway, via ChatGPT's own sidebar or a hand-edited settings
 file. First claim wins; the loser starts a fresh chat, which costs one profile prompt and is always
 safe. The Settings card tells you which case you're in and how many conversations are claimed.
+
+## Automatic runs in the background
+
+By default the queue works in workspaces that are **not on screen**, so it doesn't move the page out
+from under you while you're filling a manual bid. Settings → *Automatic runs* turns it off, and then
+each stage brings its workspace to the front as it used to.
+
+This was measured, not assumed. The old behaviour was justified partly on throttling — *"the stage
+that is actually driving a page belongs on screen: it runs unthrottled"*. On the running app a
+hidden WebView2 keeps a real viewport (590×625, not 0×0) and its timers run at full rate: **131 of
+132 expected ticks over six seconds**, against 132 for a visible one. Only `requestAnimationFrame`
+stops — 0 frames against 397 — which is animation rather than logic, and the run reads pages by
+script from outside rather than by anything the page schedules for itself.
+
+**What it costs:** a finished application no longer puts itself in front of you. It parks in its tab
+exactly as it already did, and the review count on the Job Browser is where you see it waiting.
+
+Switches a *person* asks for are unaffected — pressing something that opens a workspace still opens
+it, because a button that silently does nothing is a broken button.
 
 ## Manual bids
 
@@ -442,5 +461,5 @@ Two things are still worth knowing about:
 
 ## Version
 
-**10.22.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**10.25.1** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

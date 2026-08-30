@@ -84,6 +84,32 @@ public class AppSettings
     public int ResumeGenerationsPerChat { get; set; } = 10;
 
     /// <summary>
+    /// Let the automatic queue run without taking the screen.
+    ///
+    /// <para>
+    /// Off, each stage of a run brings its workspace to the front — Resume Studio while ChatGPT
+    /// writes, the Job Browser while the form is filled — which is right when you are watching a
+    /// run and intolerable when you are not: it moves the page out from under you every thirty
+    /// seconds while you are working a manual bid.
+    /// </para>
+    ///
+    /// <para>
+    /// On, the run does the same work in workspaces that are not on screen and you go to them when
+    /// you choose. Measured before enabling this rather than assumed: a hidden WebView2 keeps its
+    /// layout (a real viewport, not 0×0) and its timers run at full rate — 131 of 132 expected
+    /// ticks over six seconds. Only <c>requestAnimationFrame</c> stops, which is animation rather
+    /// than logic, and the run reads the page by script from outside rather than by anything the
+    /// page schedules for itself.
+    /// </para>
+    ///
+    /// <para>
+    /// What it costs: a finished application no longer puts itself in front of you. It parks in its
+    /// tab exactly as it already did, and the queue's review count is where you see it waiting.
+    /// </para>
+    /// </summary>
+    public bool AutomaticRunInBackground { get; set; } = true;
+
+    /// <summary>
     /// Opens the <c>/dev/*</c> endpoints on the local listener: app state, the activity log, and
     /// script/DOM/screenshot access to the embedded browsers.
     ///
@@ -131,6 +157,14 @@ public class AppSettings
 
     /// <summary>Per-profile, local job links to process one application at a time.</summary>
     public Dictionary<string, List<JobLinkQueueItem>> JobLinkQueues { get; set; } = new();
+
+    /// <summary>
+    /// Per-profile links being bid on by hand. A separate list from
+    /// <see cref="JobLinkQueues"/> because manual bids and automatic runs are two tabs doing two
+    /// different jobs — see <see cref="Services.ManualBidStore"/>, which owns this and is the seam
+    /// a failed automatic link crosses to get here.
+    /// </summary>
+    public Dictionary<string, List<JobLinkQueueItem>> ManualBidQueues { get; set; } = new();
 
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at
@@ -217,6 +251,9 @@ public class AppSettings
         clone.ChatGptConversationOwners = new Dictionary<string, string>(
             ChatGptConversationOwners ?? new(), StringComparer.OrdinalIgnoreCase);
         clone.JobLinkQueues = (JobLinkQueues ?? new()).ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Select(item => item.Clone()).ToList());
+        clone.ManualBidQueues = (ManualBidQueues ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Select(item => item.Clone()).ToList());
         return clone;

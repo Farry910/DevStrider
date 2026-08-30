@@ -1,0 +1,102 @@
+<UserControl x:Class="DevStrider.Desktop.Views.ManualBidsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="440"/></Grid.ColumnDefinitions>
+
+    <!-- This tab's own browser. Separate from the Job Browser's, so an automatic run parking a
+         review never competes with a form being filled here, and neither waits on the other. -->
+    <Grid Grid.Column="0" Margin="0,0,12,0">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <TextBlock Grid.Row="0" Margin="0,0,0,8" Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                 Text="This page is yours. Nothing here is clicked, filled or submitted by the app — open a posting, copy its description across, and fill the form yourself."/>
+      <Border Grid.Row="1" BorderThickness="1" CornerRadius="3"
+              BorderBrush="{DynamicResource CardBorder}">
+        <Grid x:Name="BrowserHost"/>
+      </Border>
+    </Grid>
+
+    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel>
+        <TextBlock Text="Manual Bidding" Style="{StaticResource H1}"/>
+        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"
+                   Text="Postings you apply to yourself. Paste the description and the resume is written behind you, on its own ChatGPT account — so this runs at the same time as an automatic queue rather than after it."/>
+
+        <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+          <StackPanel>
+            <TextBlock Text="Add links" FontWeight="SemiBold"/>
+            <TextBox Text="{Binding LinksInput, UpdateSourceTrigger=PropertyChanged}"
+                     AcceptsReturn="True" Height="60" VerticalScrollBarVisibility="Auto"
+                     Margin="0,6,0,8" Tag="One job URL per line"/>
+            <Button Command="{Binding AddLinksCommand}" Content="Add" HorizontalAlignment="Left"/>
+            <TextBlock Text="{Binding Summary}" Style="{StaticResource MutedText}"
+                       TextWrapping="Wrap" Margin="0,8,0,0"/>
+            <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       Visibility="{Binding StatusMessage, Converter={StaticResource NonEmptyToVisible}}"/>
+          </StackPanel>
+        </Border>
+
+        <ItemsControl ItemsSource="{Binding Bids}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+                <StackPanel>
+                  <DockPanel Margin="0,0,0,4">
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontSize="11"
+                               Opacity="0.75" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+                  </DockPanel>
+                  <TextBlock Text="{Binding Error}" FontSize="11" Foreground="#C0392B"
+                             TextWrapping="Wrap" Margin="0,0,0,4"
+                             Visibility="{Binding Error, Converter={StaticResource NonEmptyToVisible}}"/>
+
+                  <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}"
+                           AcceptsReturn="True" Height="80" TextWrapping="Wrap"
+                           VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
+                           Tag="paste this posting's job description"/>
+
+                  <WrapPanel>
+                    <Button Content="Open" Margin="0,0,6,6"
+                            Command="{Binding DataContext.OpenCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"
+                            ToolTip="Opens the posting in this tab's browser and leaves it alone."/>
+                    <Button Content="Queue resume" Margin="0,0,6,6"
+                            Command="{Binding DataContext.QueueResumeCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"
+                            ToolTip="Written in the background, one at a time. The form does not have to be open — a description is all a resume needs."/>
+                    <Button Content="Attach resume" Margin="0,0,6,6"
+                            Command="{Binding DataContext.AttachCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"
+                            ToolTip="Puts the file into this form's upload field. Not automatic — a form can rerender when its file input changes, and that is not something to do underneath you mid-field."/>
+                    <Button Content="Show file" Margin="0,0,6,6"
+                            Command="{Binding DataContext.RevealResumeCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"/>
+                    <Button Content="I submitted this" Margin="0,0,6,6"
+                            Command="{Binding DataContext.MarkSubmittedCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"
+                            ToolTip="Records the bid as applied. The app is not driving this page and cannot see you press submit, so it is told."/>
+                    <Button Content="Remove" Margin="0,0,6,6"
+                            Command="{Binding DataContext.RemoveCommand,
+                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                            CommandParameter="{Binding}"/>
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <Border Style="{StaticResource Card}"
+                Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                     Text="Links the automatic queue cannot apply — a form no adapter matches, a page behind a human gate — arrive here on their own, usually with their job description already read."/>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

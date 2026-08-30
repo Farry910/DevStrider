@@ -146,23 +146,17 @@
                 <TextBlock Text="Bids" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding ShowResumeStudioCommand}" Style="{StaticResource NavButton}">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <TextBlock Text="Resume Studio" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-            <Button Command="{Binding ShowManualResumeStudioCommand}" Style="{StaticResource NavButton}"
-                    ToolTip="The manual lane's own ChatGPT browser. Sign in here if you have given manual bids their own account.">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <TextBlock Text="Resume Studio · manual" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
             <Button Command="{Binding ShowJobBrowserCommand}" Style="{StaticResource NavButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE774;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <TextBlock Text="Job Browser" VerticalAlignment="Center"/>
+                <TextBlock Text="Auto bidding" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowManualBidsCommand}" Style="{StaticResource NavButton}"
+                    ToolTip="Postings you apply to yourself. The app writes the resume behind you.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Manual Bidding" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
             <Button Command="{Binding ShowAssistedAutomationCommand}" Style="{StaticResource NavButton}">
@@ -212,6 +206,26 @@
           <!-- Secondary nav at the bottom -->
           <StackPanel DockPanel.Dock="Bottom">
             <Border Background="{StaticResource BorderSoft}" Height="1" Margin="6,8" SnapsToDevicePixels="True"/>
+            <TextBlock Text="CHATGPT"
+                       Style="{StaticResource MutedText}"
+                       FontWeight="SemiBold"
+                       FontSize="10"
+                       Margin="14,4,0,8"/>
+            <Button Command="{Binding ShowResumeStudioCommand}" Style="{StaticResource NavButton}"
+                    ToolTip="The automatic queue&apos;s ChatGPT browser. Sign in here once; a run drives it on its own after that.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Auto lane" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Command="{Binding ShowManualResumeStudioCommand}" Style="{StaticResource NavButton}"
+                    ToolTip="Manual bidding&apos;s own ChatGPT browser. Sign in here if you have given it a separate account.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Manual lane" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Border Background="{StaticResource BorderSoft}" Height="1" Margin="6,8" SnapsToDevicePixels="True"/>
             <TextBlock Text="ACCOUNT"
                        Style="{StaticResource MutedText}"
                        FontWeight="SemiBold"
@@ -254,6 +268,10 @@
                           Visibility="{Binding IsRegularViewVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
           <views:JobBrowserView DataContext="{Binding JobBrowser}"
                                 Visibility="{Binding DataContext.IsJobBrowserVisible,
+                                  RelativeSource={RelativeSource AncestorType={x:Type Window}},
+                                  Converter={StaticResource BooleanToHidden}}"/>
+          <views:ManualBidsView DataContext="{Binding ManualBids}"
+                                Visibility="{Binding DataContext.IsManualBidsVisible,
                                   RelativeSource={RelativeSource AncestorType={x:Type Window}},
                                   Converter={StaticResource BooleanToHidden}}"/>
           <views:ResumeStudioView DataContext="{Binding ResumeStudio}"

@@ -173,6 +173,7 @@ public partial class App : Application
         services.AddSingleton<PersonFactsService>();
         services.AddSingleton<QuickAnswerService>();
         services.AddSingleton<R2StorageService>();
+        services.AddSingleton<ManualBidStore>();
         services.AddSingleton<ChatGptAccountService>();
         services.AddSingleton<ChatGptConversationRegistry>();
         services.AddSingleton<WordMacroService>();
@@ -203,6 +204,7 @@ public partial class App : Application
         services.AddSingleton<QuickAnswersViewModel>();
         services.AddSingleton<AssistedAutomationViewModel>();
         services.AddSingleton<JobBrowserViewModel>();
+        services.AddSingleton<ManualBidsViewModel>();
         services.AddSingleton<MainWindowViewModel>();
 
         return services.BuildServiceProvider();

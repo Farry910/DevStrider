@@ -17,6 +17,48 @@ public partial class SettingsViewModel : ViewModelBase
 
     public LocalApiServer LocalApi => _localApi;
 
+    /// <summary>
+    /// Whether the automatic queue runs without taking the screen.
+    ///
+    /// <para>
+    /// Read straight off the live settings rather than mirrored into a field, because the shell
+    /// asks this on every stage of a run and a mirror would answer with whatever was true when the
+    /// Settings tab was last built. Written through the ordinary edit-and-save path, so it persists
+    /// and the next launch opens the same way.
+    /// </para>
+    /// </summary>
+    public bool RunsInBackground
+    {
+        get => _settings.Current?.AutomaticRunInBackground ?? true;
+        set
+        {
+            if (RunsInBackground == value) return;
+            _ = SetRunsInBackgroundAsync(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RunsInBackgroundNote));
+        }
+    }
+
+    public string RunsInBackgroundNote => RunsInBackground
+        ? "The queue works in workspaces that are not on screen. Finished applications park in their "
+          + "tabs and wait — the review count on the Job Browser is where you see them."
+        : "Each stage brings its workspace to the front: Resume Studio while ChatGPT writes, the Job "
+          + "Browser when a form is filled. Good for watching a run, disruptive while you are working.";
+
+    private async Task SetRunsInBackgroundAsync(bool value)
+    {
+        var settings = await _settings.GetForEditAsync();
+        settings.AutomaticRunInBackground = value;
+        await _settings.SaveAsync(settings);
+        _activity.Info("Settings",
+            value ? "Automatic runs will stay in the background" : "Automatic runs will come to the front",
+            value
+                ? "The queue no longer switches workspace on you. Applications still park for review."
+                : "Each stage of a run brings its workspace to the front.");
+        OnPropertyChanged(nameof(RunsInBackground));
+        OnPropertyChanged(nameof(RunsInBackgroundNote));
+    }
+
     // ── ChatGPT accounts ────────────────────────────────────────────────────
     //
     // The management centre. An automatic run and a manual bid each drive their own ChatGPT

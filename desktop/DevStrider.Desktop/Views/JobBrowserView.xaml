@@ -65,7 +65,7 @@
     </Grid>
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
-        <TextBlock Text="Application Queue" Style="{StaticResource H1}"/>
+        <TextBlock Text="Auto bidding" Style="{StaticResource H1}"/>
         <TextBlock Text="Paste links once. After approval, DevStrider processes them in order and pauses before every final submission."
                    Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
         <Border Style="{StaticResource Card}" Margin="0,0,0,12">
@@ -98,55 +98,80 @@
             </WrapPanel>
             <TextBlock Text="{Binding QueueSummary}" Style="{StaticResource MutedText}" TextWrapping="Wrap"/>
             <!--
-              Which links this run takes. Ashby and Lever confirm and are done, so a batch of those
-              can be left alone; most Greenhouse postings e-mail a code afterwards and want a person
-              with an inbox. Ticking by board is what separates the two.
+              Links grouped by the board they are on. Every posting on one site is the same form
+              behind the same adapter, so they succeed together and they fail together — which is
+              what makes the grouping worth looking at before a run rather than after. Six Deel
+              links you already know defeat the generic adapter are six failures you can decline to
+              pay for, in one action.
             -->
-            <WrapPanel Margin="0,8,0,4">
-              <TextBlock Text="{Binding SelectionSummary}" Style="{StaticResource MutedText}"
-                         TextWrapping="Wrap" Margin="0,0,0,6" Width="360"/>
-            </WrapPanel>
-            <WrapPanel Visibility="{Binding HasQueuedLinks, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <TextBlock Text="{Binding SelectionSummary}" Style="{StaticResource MutedText}"
+                       TextWrapping="Wrap" Margin="0,8,0,6"/>
+            <WrapPanel Visibility="{Binding HasQueuedLinks, Converter={StaticResource BooleanToVisibilityConverter}}"
+                       Margin="0,0,0,6">
               <Button Command="{Binding SelectAllLinksCommand}" Content="Tick all"
                       Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
               <Button Command="{Binding ClearLinkSelectionCommand}" Content="Untick all"
                       Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
-              <ItemsControl ItemsSource="{Binding QueuedSites}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <Button Content="{Binding}" CommandParameter="{Binding}"
-                            Command="{Binding DataContext.SelectSiteCommand,
-                                      RelativeSource={RelativeSource AncestorType=UserControl}}"
-                            Style="{StaticResource GhostButton}" Margin="0,0,6,6"/>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
             </WrapPanel>
-            <DataGrid ItemsSource="{Binding JobQueue}" SelectedItem="{Binding SelectedQueueItem}"
-                      AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,4,0,0">
-              <DataGrid.Columns>
-                <!-- A template column rather than DataGridCheckBoxColumn: the grid is read-only so
-                     every built-in column is too, and this is the one cell that must not be. -->
-                <DataGridTemplateColumn Header="Run" Width="42">
-                  <DataGridTemplateColumn.CellTemplate>
-                    <DataTemplate>
-                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                HorizontalAlignment="Center"/>
-                    </DataTemplate>
-                  </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="125"/>
-                <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
-                <DataGridTextColumn Header="Tries" Binding="{Binding Attempts}" Width="48"/>
-                <DataGridTextColumn Header="Last error" Binding="{Binding Error}" Width="220"/>
-              </DataGrid.Columns>
-            </DataGrid>
-            <Button Command="{Binding StartManualBidCommand}" Content="Bid on the selected link by hand"
-                    HorizontalAlignment="Left" Margin="0,8,0,0"
-                    ToolTip="Opens the posting and leaves it alone. You fill the form; the app writes the resume in the background."/>
+
+            <ItemsControl ItemsSource="{Binding LinkGroups}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Expander IsExpanded="True" Margin="0,0,0,6">
+                    <Expander.Header>
+                      <DockPanel LastChildFill="False" Width="370">
+                        <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" FontSize="12"
+                                   VerticalAlignment="Center"/>
+                        <Button DockPanel.Dock="Right" Content="Move all to Manual Bidding"
+                                Style="{StaticResource GhostButton}" FontSize="11" Padding="6,2"
+                                Command="{Binding DataContext.MoveGroupToManualCommand,
+                                  RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                                CommandParameter="{Binding}"
+                                ToolTip="These are one form behind one adapter. If one defeats the automation the rest will too, so they move together."/>
+                      </DockPanel>
+                    </Expander.Header>
+                    <StackPanel Margin="14,4,0,6">
+                      <TextBlock Text="{Binding Note}" Style="{StaticResource MutedText}"
+                                 FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                      <ItemsControl ItemsSource="{Binding Links}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <DockPanel Margin="0,0,0,3" LastChildFill="True">
+                              <CheckBox DockPanel.Dock="Left" Margin="0,0,6,0" VerticalAlignment="Center"
+                                        IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        ToolTip="Ticked links are the ones an automatic run takes."/>
+                              <TextBlock DockPanel.Dock="Right" Text="{Binding Attempts}" FontSize="10"
+                                         Opacity="0.55" VerticalAlignment="Center" Margin="6,0,0,0"
+                                         ToolTip="Attempts so far"/>
+                              <TextBlock Text="{Binding Url}" FontSize="11" VerticalAlignment="Center"
+                                         TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}"/>
+                            </DockPanel>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Expander>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"
+                       Visibility="{Binding HasNoLinkGroups, Converter={StaticResource BooleanToVisibilityConverter}}"
+                       Text="No links queued. Paste some above; they will be grouped by job board."/>
+
+            <!-- Links that are not queued any more still need somewhere to be read. -->
+            <Expander Header="Everything in the queue" IsExpanded="False" Margin="0,8,0,0">
+              <DataGrid ItemsSource="{Binding JobQueue}" SelectedItem="{Binding SelectedQueueItem}"
+                        AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                        Height="150" Margin="0,4,0,0">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="125"/>
+                  <DataGridTextColumn Header="Job link" Binding="{Binding Url}" Width="*"/>
+                  <DataGridTextColumn Header="Tries" Binding="{Binding Attempts}" Width="48"/>
+                  <DataGridTextColumn Header="Last error" Binding="{Binding Error}" Width="220"/>
+                </DataGrid.Columns>
+              </DataGrid>
+            </Expander>
           </StackPanel>
         </Border>
 
@@ -362,40 +387,6 @@
             </WrapPanel>
           </StackPanel>
         </Border>
-        <Expander Header="Manual and recovery tools" IsExpanded="False"
-                  Visibility="{Binding ShowManualTools, Converter={StaticResource BooleanToVisibilityConverter}}">
-          <StackPanel Margin="0,8,0,0">
-            <WrapPanel>
-              <Button Click="OnStartBid" Content="Run current page flow" Margin="0,0,8,8"/>
-              <Button Click="OnExtract" Content="Extract visible text" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-              <Button Command="{Binding OpenNextQueuedLinkCommand}" Content="Open next manually" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-              <Button Command="{Binding RetryCurrentCommand}" Content="Retry current" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-            </WrapPanel>
-            <TextBlock Text="Extracted JD" FontWeight="SemiBold"/>
-            <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
-                     Height="180" VerticalScrollBarVisibility="Auto" Margin="0,4,0,6"/>
-            <Button Command="{Binding CopyExtractedJobDescriptionCommand}" Content="Copy JD" HorizontalAlignment="Left" Style="{StaticResource GhostButton}"/>
-            <TextBlock Text="Application answers" FontWeight="SemiBold" Margin="0,14,0,2"/>
-            <WrapPanel>
-              <Button Click="OnExtractQuestions" Content="Extract questions" Margin="0,0,8,8"/>
-              <Button Command="{Binding CopyQuestionsForChatGptCommand}" Content="Copy question prompt" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-              <Button Click="OnFill" Content="Fill fields" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-            </WrapPanel>
-            <TextBox Text="{Binding CurrentAnswersJson, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
-                     Height="100" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
-            <TextBlock Text="Resume file" FontWeight="SemiBold" Margin="0,14,0,2"/>
-            <TextBox Text="{Binding SelectedResumePath}" IsReadOnly="True"/>
-            <WrapPanel Margin="0,8,0,0">
-              <Button Click="OnChooseResume" Content="Choose resume..." Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-              <Button Click="OnUploadResume" Content="Upload resume" Margin="0,0,8,8"/>
-            </WrapPanel>
-            <TextBlock Text="Personal reference data sent to ChatGPT (read-only)" FontWeight="SemiBold" Margin="0,10,0,2"/>
-            <TextBlock Text="Edit these in Profiles → Personal info. Shown here so you can see exactly what ChatGPT was given when an answer looks wrong."
-                       Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-            <TextBox Text="{Binding SavedAnswersJson}" IsReadOnly="True" AcceptsReturn="True"
-                     Height="100" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
-          </StackPanel>
-        </Expander>
       </StackPanel>
     </ScrollViewer>
   </Grid>

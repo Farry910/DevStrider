@@ -132,6 +132,16 @@
         </StackPanel>
       </Border>
 
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="Automatic runs" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <CheckBox IsChecked="{Binding RunsInBackground}" Margin="0,0,0,6"
+                    Content="Run the queue in the background"/>
+          <TextBlock Text="{Binding RunsInBackgroundNote}" Style="{StaticResource MutedText}"
+                     TextWrapping="Wrap"/>
+        </StackPanel>
+      </Border>
+
       <!--
         ChatGPT accounts. Automatic runs and manual bids each drive their own ChatGPT browser so
         they can run at once, and a browser's identity is its user-data folder — so assigning a lane

@@ -125,6 +125,7 @@ public sealed class DevEndpoints
             "POST /dev/eval   {\"target\":\"chatgpt\",\"script\":\"...\"}   run script, return its JSON",
             "GET  /dev/shot?target=chatgpt          PNG of what that browser is showing",
             "POST /dev/command {\"name\":\"stop\"}       start|start-one|stop|skip|clear-queue|requeue-failed",
+            "                                       fail-link|fail-machinery (drives a real failure on the first queued link)",
             "                                       add-links|select-all|select-none|select-site (links=site)",
         },
     };
@@ -148,6 +149,7 @@ public sealed class DevEndpoints
             {
                 settings.ListenerPort,
                 settings.DeveloperTools,
+                settings.AutomaticRunInBackground,
                 proxy = new { settings.ProxyEnabled, settings.ProxyScope, settings.ProxyAddress },
             },
             automation = jobs == null ? null : new
@@ -287,7 +289,25 @@ public sealed class DevEndpoints
                     return "paste-jd";
                 case "select-all": jobs.SelectAllLinksCommand.Execute(null); return "select-all";
                 case "select-none": jobs.ClearLinkSelectionCommand.Execute(null); return "select-none";
-                case "select-site": jobs.SelectSiteCommand.Execute(argument); return "select-site " + argument;
+                // Drives the real failure path against the first queued link, so the handoff from
+                // an automatic run to the manual board can be exercised without applying to
+                // anybody's posting. "link" is the posting-level failure that moves a link to the
+                // manual board; "machinery" is the kind that stays Failed and retryable. Both call
+                // the same MarkAutomationFailureAsync the run itself calls — a simulated *cause*,
+                // not a simulated effect, which is the only version of this worth having.
+                case "fail-link":
+                case "fail-machinery":
+                {
+                    var target = jobs.JobQueue.FirstOrDefault(item =>
+                        item.Status == Models.JobLinkQueueStatuses.Queued);
+                    if (target == null) return "fail: nothing is queued";
+                    var scope = name.Equals("fail-link", StringComparison.OrdinalIgnoreCase)
+                        ? JobBrowserViewModel.FailureScope.Link
+                        : JobBrowserViewModel.FailureScope.Machinery;
+                    _ = jobs.MarkAutomationFailureAsync(target.Id,
+                        $"simulated {scope} failure from /dev/command", scope);
+                    return $"{name} on {target.Url}";
+                }
                 default: return "";
             }
         });
@@ -298,7 +318,8 @@ public sealed class DevEndpoints
             {
                 error = $"unknown command \"{name}\"",
                 known = new[] { "start", "start-one", "stop", "skip", "clear-queue", "requeue-failed",
-                    "add-links", "select-all", "select-none", "select-site" },
+                    "add-links", "select-all", "select-none", "select-site",
+                    "fail-link", "fail-machinery" },
             });
             return;
         }

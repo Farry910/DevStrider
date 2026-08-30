@@ -1371,7 +1371,124 @@
          link → board), the handoff keeping the job description, closing the automation tab and
          opening no new one, no manual status eligible for the automatic run, and a moved link
          staying moved across a restart rather than quietly rejoining the queue. -->
-    <Version>10.22.0</Version>
+    <!-- 10.22.1 fixes a lane mix-up found by running the app rather than reasoning about it.
+
+         Both Resume Studio workspaces read their lane off the view-model to decide which ChatGPT
+         account to sign in as, and at startup Loaded fires before the DataContext binding reaches
+         the child views — so both read null, both defaulted to Auto, both opened the automatic
+         lane's browser profile, and both registered with /dev under the name "chatgpt", the second
+         silently replacing the first. Two browsers, one identity, and the per-lane account
+         assignment in Settings quietly doing nothing at all.
+
+         A workspace cannot start before it knows which lane it is, because the lane picks the
+         folder. It now declines to guess and waits for DataContextChanged. Verified live:
+         /dev/browsers lists chatgpt and chatgpt-manual separately, each logging its own lane.
+
+         Also: an init failure only reached StatusMessage, which is invisible on a workspace
+         designed never to be shown — a manual lane whose browser never started would have queued
+         every resume behind it in silence. It logs to Activity now.
+
+         And /dev/command gains fail-link and fail-machinery, which drive the real
+         MarkAutomationFailureAsync so the handoff to the manual board can be exercised without
+         applying to anybody's posting. -->
+    <!-- 10.23.0 lets the automatic queue run without taking the screen.
+
+         Every stage of a run brought its workspace to the front — Resume Studio while ChatGPT
+         writes, the Job Browser when a form is filled. That is right when you are watching a run
+         and intolerable when you are not, because it moves the page out from under you every time
+         the queue changes stage, which is exactly what a manual bid is trying to work through.
+
+         The old comment justified the switching partly on throttling: "the stage that is actually
+         driving a page belongs on screen: it runs unthrottled". Measured on the running app rather
+         than argued about — a hidden WebView2 keeps a real viewport (590x625, not 0x0) and its
+         timers run at full rate: 131 of 132 expected ticks over six seconds, against 132 for a
+         visible one. Only requestAnimationFrame stops, 0 frames against 397. That is animation,
+         not logic, and the run reads pages by script from outside rather than by anything the page
+         schedules for itself. So the switching is a preference, and now a setting.
+
+         Run-driven handoffs go through ShowForRun, which honours it and reads it per call so a
+         toggle takes effect on the next stage rather than the next restart. Person-driven ones
+         still switch unconditionally: a button that silently does nothing is a broken button.
+         Default on, since not being interrupted is the point.
+
+         What it costs, and the setting says so: a finished application no longer puts itself in
+         front of you. It parks in its tab as it already did, and the review count is where you see
+         it waiting. /dev/state reports the flag. -->
+    <!-- 10.24.0 splits bidding into two tabs, because it is two jobs.
+
+         Manual bids were a board inside the Job Browser, which made that tab answer to both an
+         automatic run and a person filling a form by hand. They are separate work: a run is a
+         machine driving a form with a person reviewing, a manual bid is a person driving the form
+         with the machine writing a resume. Two sidebar tabs now, different UI in each.
+
+         Manual Bids owns its own browser — its own environment and user-data folder, not the Job
+         Browser's tab pool — so an automatic run parking a review never competes with a form being
+         filled, and neither waits on the other for a slot. ManualTabReserve goes with it.
+
+         They run at the same time, which is the point, and the reason that holds is worth writing
+         down: the run drives pages through DevTools Input events addressed to its own CoreWebView2,
+         not the OS input queue. It takes no focus and cannot type into anything else. The only
+         thing in the app that does use global SendInput is /refresh-word, the deleted extension's
+         endpoint, which is not a stage of any run. What the two flows genuinely share is Word —
+         one warm instance on one COM thread, so two macros queue — and both spend minutes with a
+         person in a form, which is what keeps that from being felt.
+
+         The lists are separate too. ManualBidStore owns the manual one and is the seam a failed
+         link crosses: the Job Browser hands a posting-level failure over and drops it, the Manual
+         Bids tab is listening. Neither view-model references the other. Whatever the run got comes
+         across — most fail at opening the form, which is after the description was read, so a row
+         usually arrives with its job description already in place.
+
+         Verified on the running app: a Link-scope failure moves a link out of the automatic queue
+         and into the manual list (7 -> 6, 0 -> 1); a link carrying a 7,411-character description
+         arrives with it intact; no link appears in both lists; five moved rows survive a restart
+         while the automatic queue keeps only its own two; no duplicate rows; no startup errors. -->
+    <!-- 10.25.0 groups the queue by job board, and moves links by the group.
+
+         A flat list of thirty URLs says nothing about which of them the automation can do. The
+         board does: every posting on one site is the same form behind the same adapter, so they
+         succeed together and they fail together. The queue is grouped by board now, with the count
+         in the heading, and each group carries one action - move all of these to Manual Bidding.
+
+         That rule holds on the failure path too, and more strongly there. A posting-level failure
+         on one link is not a fact about the link, it is a fact about the board; leaving its five
+         siblings queued spends five more runs rediscovering it, which is the waste the hand-off
+         exists to stop. So a Link-scope failure now takes the whole group across. The manual
+         button is a guess about a board; this one already failed on it.
+
+         Also: the manual-and-recovery panel is gone, Job Browser is now "Auto bidding" and Manual
+         Bids is "Manual Bidding", and the site-selection chips are replaced by the grouping they
+         were approximating. The flat grid stays, collapsed, because links that are no longer
+         queued still need somewhere to be read.
+
+         One dead binding removed with them: the by-hand button still bound StartManualBidCommand,
+         which was deleted when the board moved out of this tab in 10.24. XAML binding failures are
+         silent at runtime, so it had been doing nothing at all.
+
+         Verified live on seven real links: six groups, with deel.com correctly collapsing to one
+         group of two; failing one deel link moved both to Manual Bidding and left the other five
+         boards alone; no startup errors. -->
+    <!-- 10.25.1 moves the two ChatGPT workspaces to the bottom of the sidebar.
+
+         They are machinery rather than places work gets done: you go there to sign in, and
+         occasionally to watch. Under a CHATGPT heading at the bottom, beside ACCOUNT, they stop
+         competing with the tabs that are actually the work.
+
+         Full size, deliberately. The alternative considered was a small view docked in a corner of
+         the bidding tabs, and it would break generation: a WebView2's viewport drives page layout,
+         so ChatGPT in a corner widget renders its narrow layout - a different DOM, with a composer
+         the scripts in ChatGptComposer were not written against. Signing in needs the room too,
+         password and 2FA and whatever challenge follows. Demoted, not shrunk.
+
+         Labelled "Auto lane" and "Manual lane" under that heading, which says what they serve
+         rather than repeating the workspace's own name twice.
+
+         Auto bidding also now sits above Manual Bidding in the workspace list, matching the order
+         the work actually happens in.
+
+         Verified live: both lanes still register and initialise - /dev/browsers lists chatgpt and
+         chatgpt-manual ready - and no startup errors. -->
+    <Version>10.25.1</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

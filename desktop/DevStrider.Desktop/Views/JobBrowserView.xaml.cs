@@ -423,8 +423,6 @@ public partial class JobBrowserView : UserControl
             {
                 vm.QueueNavigationRequested += NavigateToQueuedLink;
                 vm.ManualJobDescriptionRequested += OpenLinkForManualJobDescription;
-                vm.ManualTabRequested += OpenManualTabAsync;
-                vm.ManualResumeAttachRequested += AttachManualResumeAsync;
                 vm.ApplicationFillRequested += FillApplicationAutomatically;
                 vm.ApplicationRefillRequested += RefillApplicationAutomatically;
                 vm.AutomationTabRequested += OpenAutomationTabAsync;
@@ -2674,89 +2672,7 @@ public partial class JobBrowserView : UserControl
     /// would be the exact problem this mode exists to avoid.
     /// </para>
     /// </summary>
-    /// <summary>
-    /// Gives a manual bid its own browser tab and navigates it there, then does nothing else to it.
-    ///
-    /// <para>
-    /// Deliberately not <see cref="OpenAutomationTabAsync"/>: that one makes the new browser the
-    /// automation browser, which is what every script targets. This leaves
-    /// <c>_automationBrowser</c> alone, so an automatic run carries on driving its own tab while
-    /// this one sits there being filled in by a person. No adapter is resolved against it, no form
-    /// hunted for, nothing typed and nothing pressed.
-    /// </para>
-    /// </summary>
-    private async Task OpenManualTabAsync(Guid workItemId, string url)
-    {
-        if (DataContext is not JobBrowserViewModel vm) return;
-        if (!TryGetHttpUri(url, out var uri))
-        {
-            vm.StatusMessage = $"That link is not a web address: {url}";
-            return;
-        }
-        try
-        {
-            if (!_browsers.TryGetValue(workItemId, out var browser))
-            {
-                if (_unassignedBrowser != null)
-                {
-                    browser = _unassignedBrowser;
-                    _unassignedBrowser = null;
-                }
-                else browser = await CreateBrowserAsync();
-                _browsers[workItemId] = browser;
-            }
-            ShowOnly(browser);
-            if (browser.CoreWebView2 != null &&
-                !string.Equals(browser.CoreWebView2.Source, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
-                browser.CoreWebView2.Navigate(uri.AbsoluteUri);
-            Trace?.Step("Manual", "posting opened in its own tab, hands off", uri.AbsoluteUri);
-        }
-        catch (Exception ex)
-        {
-            vm.StatusMessage = $"Couldn't open the posting: {ex.Message}";
-            Trace?.Warn("Manual", "could not open the posting", ex.Message);
-        }
-    }
 
-    /// <summary>
-    /// Puts the manual bid's finished resume into the form's upload field, when asked.
-    ///
-    /// <para>
-    /// Routed through the same <see cref="UploadResumeAsync"/> the automatic path uses, so a form
-    /// that needs the file input found by scoring rather than by selector behaves identically in
-    /// both. The only difference is who decided the moment.
-    /// </para>
-    /// </summary>
-    private async Task AttachManualResumeAsync(Guid workItemId, string resumePath)
-    {
-        if (DataContext is not JobBrowserViewModel vm) return;
-        if (string.IsNullOrWhiteSpace(resumePath))
-        {
-            vm.StatusMessage = "There is no generated resume to attach yet.";
-            return;
-        }
-        // The upload finds the file input on whichever browser is in front, so the bid's own tab
-        // has to be the one showing — otherwise the resume lands in a different application's form.
-        if (!_browsers.TryGetValue(workItemId, out var browser))
-        {
-            vm.StatusMessage = "That bid's tab is not open. Open it first, then attach.";
-            return;
-        }
-        ShowOnly(browser);
-
-        try
-        {
-            vm.SelectedResumePath = resumePath;
-            var attached = await UploadResumeAsync(vm, reportStatus: true, browser);
-            if (attached)
-                vm.StatusMessage = "Resume attached. Check the form shows it, then submit when you are ready.";
-        }
-        catch (Exception ex)
-        {
-            vm.StatusMessage = $"Couldn't attach the resume: {ex.Message}. Use \"Show the file\" and attach it by hand.";
-            Trace?.Warn("Manual", "attach failed", ex.Message);
-        }
-    }
 
     private async void OnUploadResume(object sender, RoutedEventArgs e)
     {

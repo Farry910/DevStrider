@@ -39,6 +39,9 @@ public partial class MainWindowViewModel : ViewModelBase
     public AssistedAutomationViewModel AssistedAutomation { get; }
     public JobBrowserViewModel JobBrowser { get; }
 
+    /// <summary>The Manual Bids tab. Its own browser, its own list, its own ChatGPT lane.</summary>
+    public ManualBidsViewModel ManualBids { get; }
+
     public ProfileContext ProfileContext { get; }
 
     /// <summary>Bound to the title-bar ComboBox. Changing it switches profile and reloads everything.</summary>
@@ -72,6 +75,7 @@ public partial class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsJobBrowserVisible));
             OnPropertyChanged(nameof(IsResumeStudioVisible));
             OnPropertyChanged(nameof(IsManualResumeStudioVisible));
+            OnPropertyChanged(nameof(IsManualBidsVisible));
             OnPropertyChanged(nameof(IsRegularViewVisible));
             OnPropertyChanged(nameof(RegularCurrent));
         }
@@ -80,8 +84,9 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool IsJobBrowserVisible => ReferenceEquals(Current, JobBrowser);
     public bool IsResumeStudioVisible => ReferenceEquals(Current, ResumeStudio);
     public bool IsManualResumeStudioVisible => ReferenceEquals(Current, ManualResumeStudio);
+    public bool IsManualBidsVisible => ReferenceEquals(Current, ManualBids);
     public bool IsRegularViewVisible =>
-        !IsJobBrowserVisible && !IsResumeStudioVisible && !IsManualResumeStudioVisible;
+        !IsJobBrowserVisible && !IsResumeStudioVisible && !IsManualResumeStudioVisible && !IsManualBidsVisible;
     public ViewModelBase? RegularCurrent => IsRegularViewVisible ? Current : null;
 
     /// <summary>
@@ -101,6 +106,23 @@ public partial class MainWindowViewModel : ViewModelBase
     /// is bad; the operator can see what happened and retry the link.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Brings a workspace to the front because <em>the run</em> reached a stage there — as opposed
+    /// to because a person asked for it.
+    ///
+    /// <para>
+    /// Honours <see cref="AppSettings.AutomaticRunInBackground"/>, and reads it per call rather
+    /// than caching it, so toggling the setting takes effect on the next stage instead of at the
+    /// next restart. Only run-driven switches go through here; anything a person pressed still
+    /// shows them what they asked for, because a button that silently does nothing is broken.
+    /// </para>
+    /// </summary>
+    private void ShowForRun(ViewModelBase workspace)
+    {
+        if (Settings.RunsInBackground) return;
+        Current = workspace;
+    }
+
     private void Handoff(string what, Task work)
     {
         _ = work.ContinueWith(finished =>
@@ -127,6 +149,7 @@ public partial class MainWindowViewModel : ViewModelBase
         ResumeStudioWorkspaces resumeStudios,
         AssistedAutomationViewModel assistedAutomation,
         JobBrowserViewModel jobBrowser,
+        ManualBidsViewModel manualBids,
         ProfileContext profileContext)
     {
         Bids = bids;
@@ -143,14 +166,22 @@ public partial class MainWindowViewModel : ViewModelBase
         ManualResumeStudio = resumeStudios.Manual;
         AssistedAutomation = assistedAutomation;
         JobBrowser = jobBrowser;
+        ManualBids = manualBids;
         ProfileContext = profileContext;
         Current = bids;
-        // Each handoff brings its workspace to the front. Hidden keeps a WebView usable, but the
-        // stage that is actually driving a page belongs on screen: it runs unthrottled, and the
-        // user watches the resume being written and then sees the filled form they have to review.
+        // Each handoff used to bring its workspace to the front unconditionally, on the reasoning
+        // that the stage driving a page belongs on screen — it runs unthrottled, and the user
+        // watches the resume being written and then sees the form to review.
+        //
+        // The throttling half of that turns out not to hold. A hidden WebView2 keeps a real
+        // viewport and its timers run at full rate; only requestAnimationFrame stops, and the run
+        // reads pages by script from outside rather than by anything the page schedules. So the
+        // switching is a preference, not a requirement — and it is the wrong preference while
+        // somebody is filling a manual bid, because it moves the page out from under them every
+        // time the queue changes stage. Settings decides; see AppSettings.AutomaticRunInBackground.
         JobBrowser.ResumeGenerationRequested += request =>
         {
-            Current = ResumeStudio;
+            ShowForRun(ResumeStudio);
             ResumeStudio.PrepareAutomaticApplication(
                 request.WorkItemId,
                 request.JobUrl,
@@ -162,23 +193,27 @@ public partial class MainWindowViewModel : ViewModelBase
         // Stopping the queue has to reach the ChatGPT driver too: the resume wait is the longest
         // thing a run has in flight, and it is owned by the other workspace.
         JobBrowser.RunCancellationRequested += ResumeStudio.CancelActiveRun;
-        JobBrowser.ApplicationFillRequested += _ => Current = JobBrowser;
-        JobBrowser.ApplicationRefillRequested += _ => Current = JobBrowser;
+        JobBrowser.ApplicationFillRequested += _ => ShowForRun(JobBrowser);
+        JobBrowser.ApplicationRefillRequested += _ => ShowForRun(JobBrowser);
+        // Not ShowForRun: this one is raised by a person pressing something on the board, and a
+        // button that does nothing visible because a background run is going is a broken button.
         JobBrowser.QueueNavigationRequested += () => Current = JobBrowser;
         // A manual bid asks for its resume from the Job Browser and stays there. It goes to the
         // manual workspace — its own browser, and its own conversation — so it can run while an
         // automatic queue is mid-generation in the other one. No view change: the difference
         // between generating in the background and generating in front of you.
-        JobBrowser.ManualBidResumeRequested += request =>
+        // The manual lane belongs to the Manual Bids tab end to end. No view change on any of
+        // these: the whole point is that a resume is written while somebody is filling a form.
+        ManualBids.ResumeRequested += request =>
             ManualResumeStudio.PrepareManualBidResume(request.WorkItemId, request.JobUrl, request.JobDescription);
         ManualResumeStudio.ResumeAutomationCompleted += result =>
-            Handoff("Accepting the manual bid's resume", JobBrowser.AcceptResumeResultAsync(result));
+            Handoff("Accepting the manual bid's resume", ManualBids.AcceptResumeAsync(result));
         ManualResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
             Handoff("Recording a manual resume failure",
-                JobBrowser.MarkAutomationFailureAsync(workItemId, message));
+                ManualBids.MarkResumeFailedAsync(workItemId, message));
         JobBrowser.AnswerCorrectionRequested += request =>
         {
-            Current = ResumeStudio;
+            ShowForRun(ResumeStudio);
             ResumeStudio.PrepareAnswerCorrection(request);
         };
         ResumeStudio.ResumeAutomationCompleted += result =>
@@ -222,6 +257,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowPeers() => Current = Peers;
     [RelayCommand] private void ShowResumeStudio() => Current = ResumeStudio;
     [RelayCommand] private void ShowManualResumeStudio() => Current = ManualResumeStudio;
+    [RelayCommand] private void ShowManualBids() => Current = ManualBids;
     [RelayCommand] private void ShowAssistedAutomation() => Current = AssistedAutomation;
     [RelayCommand] private void ShowJobBrowser() => Current = JobBrowser;
 }
