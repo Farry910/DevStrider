@@ -45,10 +45,40 @@ public class AppSettings
     public string WordHotkey { get; set; } = "F9";
 
     /// <summary>
-    /// Per-profile preferences for the user-driven ChatGPT Resume Studio. They contain no
-    /// credentials and are machine preferences, so they belong beside the active-profile choice.
+    /// Preferences for the ChatGPT Resume Studio workspaces. They contain no credentials and are
+    /// machine preferences, so they belong beside the active-profile choice.
+    ///
+    /// <para>
+    /// Keyed per profile <em>and per lane</em> — see
+    /// <see cref="Services.ChatGptConversationRegistry.SessionKey"/>. It used to be the profile id
+    /// alone, which stopped working the moment automatic runs and manual bids each got a browser:
+    /// both read the same remembered conversation at startup and both continued that one chat,
+    /// interleaving two jobs into it. Entries written by an older build still deserialize; they are
+    /// simply not read under the new key, so each lane starts one fresh chat and carries on.
+    /// </para>
     /// </summary>
     public Dictionary<string, ChatGptResumeSessionSettings> ChatGptResumeSessions { get; set; } = new();
+
+    /// <summary>
+    /// The signed-in ChatGPT identities available to this machine. Seeded on first read with a
+    /// "Default" adopting the browser profile the single pre-10.21 browser already used, so
+    /// upgrading signs nobody out. See <see cref="Services.ChatGptAccountService"/>.
+    /// </summary>
+    public List<Services.ChatGptAccount> ChatGptAccounts { get; set; } = new();
+
+    /// <summary>
+    /// Which account each lane signs in as, keyed by <see cref="Services.ChatGptLanes"/>. Both lanes
+    /// land on the default until told otherwise, which is safe: sharing an account is supported, it
+    /// just means the conversation registry has work to do.
+    /// </summary>
+    public Dictionary<string, string> ChatGptLaneAccounts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Which lane holds which conversation, keyed <c>accountId|conversationId</c>. Persisted so a
+    /// restart does not hand one lane the chat the other was using — see
+    /// <see cref="Services.ChatGptConversationRegistry"/>.
+    /// </summary>
+    public Dictionary<string, string> ChatGptConversationOwners { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Maximum successful resume generations kept in one ChatGPT conversation.</summary>
     public int ResumeGenerationsPerChat { get; set; } = 10;
@@ -181,6 +211,11 @@ public class AppSettings
         clone.ChatGptResumeSessions = (ChatGptResumeSessions ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Clone());
+        clone.ChatGptAccounts = (ChatGptAccounts ?? new()).Select(account => account.Clone()).ToList();
+        clone.ChatGptLaneAccounts = new Dictionary<string, string>(
+            ChatGptLaneAccounts ?? new(), StringComparer.OrdinalIgnoreCase);
+        clone.ChatGptConversationOwners = new Dictionary<string, string>(
+            ChatGptConversationOwners ?? new(), StringComparer.OrdinalIgnoreCase);
         clone.JobLinkQueues = (JobLinkQueues ?? new()).ToDictionary(
             pair => pair.Key,
             pair => pair.Value.Select(item => item.Clone()).ToList());
@@ -288,6 +323,24 @@ public static class JobWorkItemIntents
 {
     public const string Apply = "Apply";
     public const string ResumeOnly = "Resume only";
+
+    /// <summary>
+    /// You drive the form; the app only writes the resume and records the bid.
+    ///
+    /// <para>
+    /// For the boards with no adapter behind them, where hunting for the form is a guess and
+    /// filling it is a worse one. The app opens the link and then keeps its hands off the page:
+    /// you copy the description across, and the resume is generated in the background while you
+    /// fill the fields yourself. The waiting and the typing happen at the same time instead of one
+    /// after the other, which is the whole point of it.
+    /// </para>
+    ///
+    /// <para>
+    /// Distinct from <see cref="ResumeOnly"/>, which deliberately records no bid — that one is for
+    /// a resume with no posting behind it. A manual bid is still a bid.
+    /// </para>
+    /// </summary>
+    public const string Manual = "Manual";
 }
 
 public static class JobLinkQueueStatuses
@@ -307,6 +360,31 @@ public static class JobLinkQueueStatuses
     /// the code still has to be pasted in — and not stale either, so a restart leaves it alone.
     /// </summary>
     public const string AwaitingCode = "Needs a code";
+
+    /// <summary>
+    /// You are filling this one in yourself. The app has the page open and is staying out of it.
+    ///
+    /// <para>
+    /// Survives a restart, unlike every other in-flight status: those describe work a run was
+    /// holding and nothing is holding them afterwards, whereas this describes a decision you made
+    /// about the link. Coming back to find it quietly requeued for automatic processing would undo
+    /// that decision without saying so.
+    /// </para>
+    /// </summary>
+    public const string ManualBid = "Manual — yours to fill";
+
+    /// <summary>
+    /// Resume queued for the manual lane, waiting its turn. Generation is one at a time — there is
+    /// one ChatGPT browser per lane — so a board with several bids on it has a line.
+    /// </summary>
+    public const string ManualResumeQueued = "Manual — resume queued";
+
+    /// <summary>Resume being written in the background while the manual form is filled in.</summary>
+    public const string ManualResumeRunning = "Manual — writing resume";
+
+    /// <summary>Resume is ready and waiting to be attached to the form you are filling in.</summary>
+    public const string ManualResumeReady = "Manual — resume ready";
+
     public const string Submitted = "Submitted";
     public const string ResumeReady = "Resume ready";
     public const string Failed = "Failed";

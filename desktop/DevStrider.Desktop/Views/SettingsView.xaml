@@ -132,6 +132,70 @@
         </StackPanel>
       </Border>
 
+      <!--
+        ChatGPT accounts. Automatic runs and manual bids each drive their own ChatGPT browser so
+        they can run at once, and a browser's identity is its user-data folder — so assigning a lane
+        to an account is the same thing as choosing which folder its browser opens.
+      -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Text="ChatGPT accounts" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8" TextWrapping="Wrap"
+                     Text="Automatic runs and manual bids each get their own ChatGPT browser, so a manual bid's resume can be written while the queue is mid-generation. Give them separate accounts and the two never contend at all — separate conversations and separate rate limits. Leave them on one account and they still run at once; the app just keeps them out of each other's chat."/>
+
+          <TextBlock Text="Accounts" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,4"/>
+          <ListBox ItemsSource="{Binding ChatGptAccounts}" SelectedItem="{Binding SelectedChatGptAccount}"
+                   MaxHeight="110" Margin="0,0,0,6" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel>
+                  <TextBlock Text="{Binding Name}" FontSize="12"/>
+                  <TextBlock Text="{Binding UserDataFolder}" FontSize="10" Opacity="0.6"
+                             TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBox Text="{Binding NewChatGptAccountName, UpdateSourceTrigger=PropertyChanged}"
+                     Width="180" Margin="0,0,8,0" Tag="new account name"/>
+            <Button Command="{Binding AddChatGptAccountCommand}" Content="Add" Margin="0,0,8,0"/>
+            <Button Command="{Binding RenameChatGptAccountCommand}" Content="Rename to typed name"
+                    Margin="0,0,8,0"
+                    ToolTip="Renames the selected account. Its browser profile does not move — moving it would sign the account out."/>
+            <Button Command="{Binding RemoveChatGptAccountCommand}" Content="Remove"
+                    ToolTip="Forgets the account. Its browser profile is left on disk, so the signed-in session survives if you add it back."/>
+          </StackPanel>
+
+          <TextBlock Text="Who signs in as what" FontWeight="SemiBold" FontSize="12" Margin="0,4,0,4"/>
+          <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="140"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Automatic runs" VerticalAlignment="Center"/>
+            <ComboBox Grid.Row="0" Grid.Column="1" Margin="0,0,0,4"
+                      ItemsSource="{Binding ChatGptAccounts}" DisplayMemberPath="Name"
+                      SelectedItem="{Binding AutoLaneAccount}"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Manual bids" VerticalAlignment="Center"/>
+            <ComboBox Grid.Row="1" Grid.Column="1"
+                      ItemsSource="{Binding ChatGptAccounts}" DisplayMemberPath="Name"
+                      SelectedItem="{Binding ManualLaneAccount}"/>
+          </Grid>
+
+          <TextBlock Text="{Binding ChatGptSharingNote}" Style="{StaticResource MutedText}"
+                     TextWrapping="Wrap" Margin="0,0,0,6"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,6"
+                     Text="A new account starts signed out. Open its workspace — Resume Studio, or Resume Studio · manual — and sign in once; the session persists because the browser profile does. Changing an assignment takes effect when that workspace's browser next starts."/>
+          <TextBlock Text="{Binding ChatGptStatus}" TextWrapping="Wrap"
+                     Visibility="{Binding ChatGptStatus, Converter={StaticResource NonEmptyToVisible}}"/>
+        </StackPanel>
+      </Border>
+
       <Border Style="{StaticResource Card}">
         <StackPanel>
           <TextBlock Text="Cloud storage (Cloudflare R2)" FontWeight="SemiBold" Margin="0,0,0,8"/>

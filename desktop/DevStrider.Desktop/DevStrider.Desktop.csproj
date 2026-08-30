@@ -1219,7 +1219,159 @@
          · shared-db-schema.sql's DROP TABLE ... CASCADE lines are commented out. The portal has owned
            these tables since 10.0; the file is a description now, and a README note saying "do not
            run this" is not a safeguard when the hazard is one paste from a file named like that. -->
-    <Version>10.18.0</Version>
+    <!-- 10.19.0 makes finding the application form a loop instead of a guess.
+
+         The generic adapter was one shot: click the first control whose text is exactly "apply" or
+         whose id/class contains the word, then count fillable controls and give up below three.
+         That describes one shape of careers page and none of the others. The button often says
+         "I'm interested" or "Join our team". The description and the form are frequently two tabs
+         of one page, so the form is present but unpainted and the count is of the wrong panel. And
+         a posting page may genuinely have no form, the application being one or two navigations
+         further on. Deel failed this way seven times, reporting "1 control" each time — true of the
+         page it was standing on, silent about the one it should have gone to.
+
+         AgenticApplyNavigator replaces it with survey → score → act → re-survey, bounded at four
+         hops. The page reports its own tabs, its fillable controls and every clickable thing on it;
+         each candidate is scored on apply wording, href and attributes, with structural shape as a
+         tie-breaker only — a bonus for looking like a button cannot qualify a candidate that has no
+         apply signal, or a job index offers up its first job title and the run wanders to a
+         different job. Unselected tabs are searched before any navigation, since a form already on
+         the page beats a page change that may not come back. Candidates are addressed by a
+         data-ds-nav stamp the survey writes, so a re-render invalidates the reference instead of
+         silently matching whatever drifted into that position. Every hop is traced with the score
+         and the reasons behind it, and a dead end names the page and what was tried rather than
+         repeating the control count.
+
+         Submit/next/continue wording is scored to -100 and never clicked: this loop looks for the
+         way in and must never become the thing that presses send.
+
+         Description gathering follows the same page. Tabs are opened one at a time and their panels
+         appended to the description, so a posting that splits Overview / Responsibilities /
+         Benefits across a strip reaches ChatGPT whole instead of as whichever panel happened to be
+         painted; panels carrying form controls are skipped, since an Application tab is a form and
+         its field labels are the noise the structural description test exists to exclude. The
+         originally selected tab is restored afterwards.
+
+         Verified against DOM fixtures driving the shipped scripts: "I'm interested" chosen over
+         "Save this job" and "Sign in"; a three-tab posting enumerated with the form found on the
+         unselected Application tab after activation; "Submit application" never offered as a way
+         in; a job index yielding no candidate at all; a real Apply link outranking "Join our team";
+         a short button beating a long prose link containing the word apply; a stale stamp reported
+         rather than mis-clicked; panel reads scoped to their own tab; hidden controls excluded. -->
+    <!-- 10.20.0 adds the manual bid: you fill the form, the app writes the resume beside you.
+
+         Greenhouse, Lever and Ashby apply correctly on their own. Everything else is a board with
+         no adapter, where hunting for the form is a guess and filling it is a worse one. This is
+         the other way round for those, and it is a deliberate stopgap until the generic adapter is
+         finished — not a fallback the app falls into, but a mode chosen per link.
+
+         Pick a link, press "Bid on the selected link by hand", and the app navigates to the posting
+         and stops. No adapter is resolved, no form hunted for, nothing typed and nothing pressed.
+         Copy the description across into the box, press start, and the resume is generated in the
+         ChatGPT workspace while the form is filled in by the person looking at it — the minute of
+         ChatGPT and the several minutes of typing overlap instead of queueing. When the resume
+         lands it is offered, not attached: a controlled form can rerender when its file input
+         changes, and doing that underneath somebody mid-field is how a half-filled application is
+         lost. "I submitted this" records it, because the app cannot watch a page it is not driving.
+
+         Mechanically it is a Background flag on ChatGptResumeRequest/ResumeAutomationResult that
+         suppresses the workspace switching an automatic run relies on, plus a third intent
+         (JobWorkItemIntents.Manual) and three statuses. Background is not ResumeOnly: ResumeOnly
+         deliberately records no bid, and a manual bid is still a bid. Submission reuses
+         CompleteSubmittedItemAsync, so a manual bid reaches the board by the same path as any
+         other rather than a second dialect of it, and attaching reuses UploadResumeAsync, so the
+         file-input scoring is identical in both modes.
+
+         The manual statuses survive a restart, unlike the in-flight ones: those describe work a run
+         was holding and nothing holds them afterwards, whereas this describes a decision about the
+         link, and quietly requeueing it for automatic processing would undo that decision without
+         saying so. The exception is ManualResumeRunning, whose generation died with the process —
+         that drops back to ManualBid with the pasted description still on the item. A failed
+         background resume likewise leaves the link open rather than marking it Failed: the form on
+         screen is still filled in and still the person's.
+
+         Verified: manual statuses distinct and absent from the InFlight set; ManualResumeRunning →
+         ManualBid across a restart while ManualBid and ManualResumeReady survive; no manual status
+         eligible for the automatic run; the panel headline following each state transition. -->
+    <!-- 10.21.0 gives each lane its own ChatGPT browser, and adds the account management centre.
+
+         A manual bid exists so the typing and the generating overlap, and an automatic run wants
+         the composer at the same moment. One browser cannot serve both: the second request
+         navigates the pane out from under the first, and the run that was waiting on a reply reads
+         whatever the other one produced. So there are two Resume Studio workspaces now — same
+         driver, different lane — reachable as "Resume Studio" and "Resume Studio · manual".
+
+         The account is the browser profile folder, because that is where the cookies are: two
+         browsers on one folder are one signed-in user, two on different folders are two.
+         ChatGptAccountService manages that — add, rename (the folder never moves, moving it would
+         sign the account out), remove (the folder is left on disk), and assign a lane to an
+         account. The seeded Default adopts the pre-10.21 folder, so upgrading signs nobody out.
+
+         Separate accounts means the lanes cannot interfere at all. One account shared means they
+         still run at once but share a conversation list, and that is the part that needed real
+         work: the remembered chat was keyed on profile id alone, so both lanes read the same URL
+         at startup and both continued it — two jobs' descriptions interleaved into one thread, each
+         reading the other's reply as its own, and nothing about the result looking wrong. The key
+         is now profile-and-lane, and ChatGptConversationRegistry arbitrates the case that key
+         cannot cover: the same id reaching both lanes anyway, via ChatGPT's own sidebar or a
+         hand-edited settings file. First claim wins; the loser starts a fresh chat, which costs one
+         profile prompt and is always safe.
+
+         The decision is read synchronously from settings already in memory, because it is needed on
+         the UI thread inside the synchronous request builder and blocking there on the claim — a
+         chain that saves to disk — is a deadlock waiting for a slow write. The asynchronous claim
+         follows and records it; a race costs a fresh chat, never a shared one.
+
+         Two WebView2 controls may share a user-data folder only through the same environment
+         object, so environments are cached per (folder, arguments) — building a second one over the
+         same directory is a lock conflict, and that is the ordinary case whenever both lanes are on
+         one account. /dev registers the manual browser as "chatgpt-manual" rather than letting the
+         two overwrite each other under one name.
+
+         Verified against the shipped statics: lane-scoped session keys differing from each other,
+         from other profiles, and from the bare profile id that both lanes used to share; an
+         unclaimed or self-owned conversation allowed and the other lane refused; the same id under
+         a different account never colliding; pruning dropping a lane's abandoned claims while
+         leaving the other lane's and other accounts' alone. That last test caught a real bug —
+         the prune matched the kept slot by EndsWith("|" + id), which spares any claim whose id ends
+         with the kept one, so keeping "abc" would also keep "xyzabc". It compares whole keys now. -->
+    <!-- 10.22.0 turns manual bids into a board, and gives the automatic run somewhere to hand off to.
+
+         The 10.20 manual bid was one open bid at a time, which saves almost nothing: the only thing
+         overlapping is that single resume with that single form, about a minute. So it is a board
+         now — several bids at once, each with its own tab and its own form, their resumes written
+         one after another behind them. You are never waiting on ChatGPT; you are filling the next
+         form while it works. ManualBoard is a view over JobQueue filtered on Intent == Manual, so
+         persistence, restart recovery and status handling are the queue's and are not duplicated.
+
+         Generation is serial per lane and the board is what makes that legible — you can see which
+         resume is being written and which are waiting. Queueing one does not need its form open: a
+         description is all a resume needs, so several can be lined up and then worked through.
+         Manual bids no longer wait on the automatic run either. Each gets a tab marked
+         IsAutomation = false, which is deliberately not OpenAutomationTabAsync — that one makes its
+         browser the automation browser, which is what every script targets. So a run keeps driving
+         its own tab while a person fills another, and with two ChatGPT lanes each has a resume in
+         flight at once.
+
+         And the flow between them: a Link-scoped failure — the posting is what the automation
+         cannot do, an unreadable description, a form no adapter matches, a page behind a human gate
+         — now moves the link to the manual board instead of a Failed list. That list was a pile
+         rather than a queue: nothing worked through it, and the postings in it were usually fine and
+         just needed a person. Whatever the run already got comes across, so a link that failed at
+         opening the form arrives with its description already read and its resume one button away.
+         Machinery failures still stop at Failed and stay retryable: ChatGPT signed out or Word
+         unavailable breaks the manual lane in exactly the same way, so handing it over would hand
+         over the problem too.
+
+         One bug worth naming: UploadResumeAsync attached through JobSiteBrowser, which is the
+         automation browser. With several tabs open, attaching a manual bid's resume would have put
+         it into whatever form the run was driving at that moment. It takes an explicit target now.
+
+         Verified against the shipped source: the routing wired as described (machinery → Failed,
+         link → board), the handoff keeping the job description, closing the automation tab and
+         opening no new one, no manual status eligible for the automatic run, and a moved link
+         staying moved across a restart rather than quietly rejoining the queue. -->
+    <Version>10.22.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

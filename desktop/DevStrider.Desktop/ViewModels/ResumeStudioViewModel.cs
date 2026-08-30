@@ -19,6 +19,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private readonly WordMacroService _word;
     private readonly ActivityLogService _activity;
     private readonly BidTraceService _trace;
+    private readonly ChatGptAccountService _accounts;
+    private readonly ChatGptConversationRegistry _conversations;
 
     /// <summary>The run trace, so the ChatGPT view can log the steps it drives.</summary>
     public BidTraceService Trace => _trace;
@@ -175,13 +177,26 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     private string _activeAnswerConversationUrl = "";
     private bool _chatGptBrowserReady;
 
+    /// <summary>
+    /// Which kind of work this workspace serves — <see cref="ChatGptLanes.Auto"/> or
+    /// <see cref="ChatGptLanes.Manual"/>. It decides which ChatGPT account the browser signs in as,
+    /// and which conversation this instance remembers, so the two never continue the same chat.
+    /// </summary>
+    public string Lane { get; }
+
+    /// <summary>The account id this lane is signed in as, for the conversation claims.</summary>
+    private string _accountId = ChatGptAccountService.DefaultAccountId;
+
     public ResumeStudioViewModel(
         SettingsService settings,
         ProfileContext profiles,
         BidBoardService bids,
         WordMacroService word,
         ActivityLogService activity,
-        BidTraceService trace)
+        BidTraceService trace,
+        ChatGptAccountService accounts,
+        ChatGptConversationRegistry conversations,
+        string lane = ChatGptLanes.Auto)
     {
         _settings = settings;
         _profiles = profiles;
@@ -189,6 +204,9 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         _word = word;
         _activity = activity;
         _trace = trace;
+        _accounts = accounts;
+        _conversations = conversations;
+        Lane = lane;
         _profiles.ProfileChanged += () =>
         {
             CancelAutomation();
@@ -223,6 +241,20 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         QueueResumeRequest(workItemId, jobUrl, jobDescription, questionsJson, knownAnswersJson,
             resumeOnly: false, "", answerConversationUrl);
 
+    /// <summary>
+    /// A resume for a link the user is filling in by hand, generated without taking the screen.
+    ///
+    /// <para>
+    /// <c>resumeOnly: false</c> so the bid is recorded — a manual bid is still a bid, and skipping
+    /// the capture is the one thing that separates this from <see cref="PrepareRecruiterResume"/>.
+    /// No questions are sent, because the app is not answering any: the user is looking at the form
+    /// and will fill it themselves.
+    /// </para>
+    /// </summary>
+    public void PrepareManualBidResume(Guid workItemId, string jobUrl, string jobDescription) =>
+        QueueResumeRequest(workItemId, jobUrl, jobDescription, "[]", "{}",
+            resumeOnly: false, "", "", background: true);
+
     private void QueueResumeRequest(
         Guid workItemId,
         string jobUrl,
@@ -231,7 +263,8 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         string knownAnswersJson,
         bool resumeOnly,
         string label,
-        string answerConversationUrl = "")
+        string answerConversationUrl = "",
+        bool background = false)
     {
         var profile = _profiles.Current;
         if (profile == null || string.IsNullOrWhiteSpace(profile.ResumePrompt))
@@ -256,7 +289,23 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         if (lostTheChat)
             _trace.Warn("ChatGPT", "resume chat url was never captured", "starting a fresh chat instead");
 
-        var startFreshChat = !ResumeChatStarted || lostTheChat || CompletedInChat >= GenerationLimit;
+        // The other lane may hold this conversation — both can be signed in as one account, and
+        // ChatGPT's own sidebar will happily reopen a chat that belongs to the other workspace.
+        // Losing it is not a failure: it costs one profile prompt and keeps two jobs out of one
+        // thread. Read from settings already in memory rather than awaited, because this runs on
+        // the UI thread and the decision feeds startFreshChat immediately below.
+        var mayContinue = _conversations.MayUse(_accountId, ConversationId(ResumeConversationUrl), Lane);
+        if (!mayContinue)
+        {
+            _trace.Warn("ChatGPT", "remembered chat belongs to the other workspace",
+                $"{ChatGptLanes.Label(Lane)} is starting its own instead");
+            _activity.Info("ChatGPT", "Started a separate chat",
+                $"{ChatGptLanes.Label(Lane)} and the other workspace are on one account, so they were "
+                + "kept out of each other's conversation.");
+        }
+
+        var startFreshChat = !ResumeChatStarted || lostTheChat || !mayContinue
+                             || CompletedInChat >= GenerationLimit;
         if (startFreshChat)
         {
             ResumeChatStarted = true;
@@ -282,7 +331,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
         var request = new ChatGptResumeRequest(
             workItemId, prompt, freshPrompt, jobUrl, jd, questionsJson, knownAnswersJson,
             startFreshChat, resumeOnly, label, startFreshChat ? "" : ResumeConversationUrl,
-            answerConversationUrl);
+            answerConversationUrl, background);
 
         _trace.Step("ChatGPT", startFreshChat
                 ? "new chat: sending the resume prompt with this job description"
@@ -643,15 +692,19 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
             ? (string.IsNullOrWhiteSpace(filePath)
                 ? "Resume generated and ready to share. Configure the output root in Settings to show its file path."
                 : $"Resume ready to share: {filePath}")
-            : "Resume generated. Returning to the application form...";
+            : request.Background
+                ? $"Resume ready for the manual bid: {filePath}"
+                : "Resume generated. Returning to the application form...";
 
         _activity.Success("Resume Studio", "Resume generated",
             parsed == null ? request.Label : $"{parsed.Company} - {parsed.Role}");
-        _trace.Ok("ChatGPT", "handing back to job browser", $"resumeOnly={request.ResumeOnly}");
+        _trace.Ok("ChatGPT", "handing back to job browser",
+            $"resumeOnly={request.ResumeOnly}, background={request.Background}");
         ResumeAutomationCompleted?.Invoke(new ResumeAutomationResult(
             request.WorkItemId, request.JobUrl, resumeContent,
             _activeAnswersJson, filePath, bidId, request.ResumeOnly,
-            _activeAnswerConversationUrl, ConversationId(_activeAnswerConversationUrl)));
+            _activeAnswerConversationUrl, ConversationId(_activeAnswerConversationUrl),
+            request.Background));
         _activeAnswersJson = "{}";
         _activeBidId = "";
         _activeAnswerConversationUrl = "";
@@ -752,6 +805,7 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
     {
         var settings = await _settings.GetAsync();
         GenerationLimit = Math.Clamp(settings.ResumeGenerationsPerChat, 1, 50);
+        _accountId = (await _accounts.ForLaneAsync(Lane)).Id;
         ResumeConversationUrl = Session(settings)?.ResumeConversationUrl ?? "";
         // The URL is remembered across restarts; the count of resumes already written in it is not.
         // Treating the remembered conversation as "started" therefore meant every launch resumed an
@@ -767,13 +821,17 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
                 "its generation count did not survive the restart; starting fresh");
     }
 
-    /// <summary>The active profile's ChatGPT session settings, or null when there is no profile.</summary>
+    /// <summary>
+    /// This lane's ChatGPT session settings for the active profile, or null when there is no
+    /// profile. Keyed on profile <em>and</em> lane, which is what stops two workspaces on one
+    /// account reading the same remembered conversation and both continuing it.
+    /// </summary>
     private ChatGptResumeSessionSettings? Session(AppSettings settings)
     {
         var profile = _profiles.Current;
         if (profile == null) return null;
-        return settings.ChatGptResumeSessions.TryGetValue(profile.Id.ToString(), out var session)
-            ? session : null;
+        var key = ChatGptConversationRegistry.SessionKey(profile.Id.ToString(), Lane);
+        return settings.ChatGptResumeSessions.TryGetValue(key, out var session) ? session : null;
     }
 
     /// <summary>
@@ -790,12 +848,24 @@ public sealed partial class ResumeStudioViewModel : ViewModelBase
 
         ResumeConversationUrl = url;
         var settings = await _settings.GetForEditAsync();
-        var key = profile.Id.ToString();
+        var key = ChatGptConversationRegistry.SessionKey(profile.Id.ToString(), Lane);
         if (!settings.ChatGptResumeSessions.TryGetValue(key, out var session))
             settings.ChatGptResumeSessions[key] = session = new ChatGptResumeSessionSettings();
         session.ResumeConversationUrl = url;
         await _settings.SaveAsync(settings);
+
+        // Stake this lane's claim on the conversation. Two lanes on one account share a chat list,
+        // and the id is the only thing that tells one of their conversations from the other's.
+        var id = ConversationId(url);
+        if (id.Length > 0) await _conversations.TryClaimAsync(_accountId, id, Lane);
     }
+
+    /// <summary>
+    /// Gives up this lane's conversation claims. Called when the workspace rotates to a fresh chat,
+    /// so an abandoned id does not sit claimed and keep the other lane off a chat nobody is using.
+    /// </summary>
+    public Task ReleaseConversationClaimAsync() =>
+        _conversations.ReleaseLaneAsync(_accountId, Lane);
 
     /// <summary>
     /// The answers object from a rendered ChatGPT reply, or <c>{}</c>. Delegates to
@@ -832,8 +902,16 @@ public sealed record ChatGptResumeRequest(
     bool ResumeOnly,
     string Label,
     string ConversationUrl = "",
-    string AnswerConversationUrl = "");
+    string AnswerConversationUrl = "",
+    bool Background = false);
 
+/// <param name="Background">
+/// This run must not take the screen. A manual bid generates its resume while the user is typing
+/// into the application form in the other workspace, so the window switching that serves an
+/// automatic run — jumping to Resume Studio to show the reply, then back to fill the form —
+/// would move the page out from under them mid-field. Nothing about the generation differs; only
+/// what the shell is allowed to do when it finishes.
+/// </param>
 public sealed record ResumeAutomationResult(
     Guid WorkItemId,
     string JobUrl,
@@ -843,7 +921,20 @@ public sealed record ResumeAutomationResult(
     string BidId,
     bool ResumeOnly,
     string AnswerConversationUrl = "",
-    string AnswerConversationId = "");
+    string AnswerConversationId = "",
+    bool Background = false);
+
+/// <summary>
+/// A request for a resume to be written in the background, for a link being applied to by hand.
+/// No questions and no answers: the person looking at the form is filling it in themselves.
+/// </summary>
+public sealed record ManualBidResumeRequest(Guid WorkItemId, string JobUrl, string JobDescription);
+
+/// <summary>
+/// The two Resume Studio workspaces, so the container can hand out both without either resolving
+/// by type — they are the same class and differ only by their lane.
+/// </summary>
+public sealed record ResumeStudioWorkspaces(ResumeStudioViewModel Auto, ResumeStudioViewModel Manual);
 
 public sealed record ChatGptAnswerCorrectionRequest(
     Guid WorkItemId,

@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
 using DevStrider.Desktop.Services;
@@ -16,6 +17,106 @@ public partial class SettingsViewModel : ViewModelBase
 
     public LocalApiServer LocalApi => _localApi;
 
+    // ── ChatGPT accounts ────────────────────────────────────────────────────
+    //
+    // The management centre. An automatic run and a manual bid each drive their own ChatGPT
+    // browser, and a browser's identity is its user-data folder — so "which account does this lane
+    // sign in as" is the same question as "which folder does its browser use".
+    //
+    // Two lanes on two accounts cannot interfere at all: separate cookies, separate conversation
+    // lists, separate rate limits. Two lanes on one account share everything, which is fine for the
+    // browser and not fine for the conversation — both would continue the same chat and interleave
+    // two jobs into it. That case is arbitrated by ChatGptConversationRegistry, and the panel says
+    // so plainly rather than leaving it as something to find out.
+
+    private readonly ChatGptAccountService _chatGptAccounts;
+    private readonly ChatGptConversationRegistry _conversations;
+
+    public System.Collections.ObjectModel.ObservableCollection<ChatGptAccount> ChatGptAccounts { get; } = new();
+
+    [ObservableProperty] private string _newChatGptAccountName = "";
+    [ObservableProperty] private ChatGptAccount? _selectedChatGptAccount;
+    [ObservableProperty] private ChatGptAccount? _autoLaneAccount;
+    [ObservableProperty] private ChatGptAccount? _manualLaneAccount;
+    [ObservableProperty] private string _chatGptStatus = "";
+    [ObservableProperty] private string _chatGptSharingNote = "";
+    [ObservableProperty] private bool _chatGptLanesShareAnAccount;
+
+    /// <summary>Reloads the accounts, the lane assignments, and the note that explains them.</summary>
+    public async Task ReloadChatGptAsync()
+    {
+        var accounts = await _chatGptAccounts.ListAsync();
+        var auto = await _chatGptAccounts.ForLaneAsync(ChatGptLanes.Auto);
+        var manual = await _chatGptAccounts.ForLaneAsync(ChatGptLanes.Manual);
+
+        ChatGptAccounts.Clear();
+        foreach (var account in accounts) ChatGptAccounts.Add(account);
+
+        // Bind to the instances in the collection, or the ComboBoxes show blank: their SelectedItem
+        // is matched by reference and ForLaneAsync hands back a clone.
+        AutoLaneAccount = ChatGptAccounts.FirstOrDefault(a => a.Id == auto.Id);
+        ManualLaneAccount = ChatGptAccounts.FirstOrDefault(a => a.Id == manual.Id);
+        SelectedChatGptAccount ??= ChatGptAccounts.FirstOrDefault();
+
+        ChatGptLanesShareAnAccount = auto.Id == manual.Id;
+        var claims = await _conversations.ListClaimsAsync();
+        ChatGptSharingNote = ChatGptLanesShareAnAccount
+            ? $"Both lanes sign in as \"{auto.Name}\". They can run at the same time, and the app keeps "
+              + "them out of each other's conversation — whichever asks second starts its own chat. "
+              + $"{claims.Count} conversation(s) currently claimed."
+            : $"Automatic runs use \"{auto.Name}\"; manual bids use \"{manual.Name}\". Separate accounts, "
+              + "so nothing has to be arbitrated — and two accounts means two rate limits.";
+    }
+
+    [RelayCommand]
+    private async Task AddChatGptAccountAsync()
+    {
+        var (ok, message, _) = await _chatGptAccounts.AddAsync(NewChatGptAccountName);
+        ChatGptStatus = message;
+        if (!ok) return;
+        NewChatGptAccountName = "";
+        await ReloadChatGptAsync();
+    }
+
+    [RelayCommand]
+    private async Task RenameChatGptAccountAsync()
+    {
+        if (SelectedChatGptAccount == null) { ChatGptStatus = "Pick an account to rename."; return; }
+        var (_, message) = await _chatGptAccounts.RenameAsync(
+            SelectedChatGptAccount.Id, SelectedChatGptAccount.Name);
+        ChatGptStatus = message;
+        await ReloadChatGptAsync();
+    }
+
+    [RelayCommand]
+    private async Task RemoveChatGptAccountAsync()
+    {
+        if (SelectedChatGptAccount == null) { ChatGptStatus = "Pick an account to remove."; return; }
+        var (_, message) = await _chatGptAccounts.RemoveAsync(SelectedChatGptAccount.Id);
+        ChatGptStatus = message;
+        SelectedChatGptAccount = null;
+        await ReloadChatGptAsync();
+    }
+
+    partial void OnAutoLaneAccountChanged(ChatGptAccount? value) =>
+        _ = AssignLaneAsync(ChatGptLanes.Auto, value);
+
+    partial void OnManualLaneAccountChanged(ChatGptAccount? value) =>
+        _ = AssignLaneAsync(ChatGptLanes.Manual, value);
+
+    private async Task AssignLaneAsync(string lane, ChatGptAccount? account)
+    {
+        if (account == null) return;
+        var current = await _chatGptAccounts.ForLaneAsync(lane);
+        // ReloadChatGptAsync writes these properties, which fires the change handlers again. Without
+        // this the reload below re-enters and the two lanes ping-pong assignments at each other.
+        if (current.Id == account.Id) return;
+
+        var (_, message) = await _chatGptAccounts.AssignAsync(lane, account.Id);
+        ChatGptStatus = message;
+        await ReloadChatGptAsync();
+    }
+
     public SettingsViewModel(
         SettingsService settings,
         SessionContext session,
@@ -23,11 +124,17 @@ public partial class SettingsViewModel : ViewModelBase
         ActivityLogService activity,
         PortalApi api,
         AuthService auth,
-        R2StorageService storage)
+        R2StorageService storage,
+        ChatGptAccountService chatGptAccounts,
+        ChatGptConversationRegistry conversations)
     {
         _settings = settings;
         _session = session;
         _localApi = localApi;
+        _chatGptAccounts = chatGptAccounts;
+        _conversations = conversations;
+        _chatGptAccounts.Changed += () => _ = ReloadChatGptAsync();
+        _ = ReloadChatGptAsync();
         _activity = activity;
         _api = api;
         _auth = auth;

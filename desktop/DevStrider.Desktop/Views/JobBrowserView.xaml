@@ -125,7 +125,8 @@
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
             </WrapPanel>
-            <DataGrid ItemsSource="{Binding JobQueue}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,4,0,0">
+            <DataGrid ItemsSource="{Binding JobQueue}" SelectedItem="{Binding SelectedQueueItem}"
+                      AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="150" Margin="0,4,0,0">
               <DataGrid.Columns>
                 <!-- A template column rather than DataGridCheckBoxColumn: the grid is read-only so
                      every built-in column is too, and this is the one cell that must not be. -->
@@ -143,8 +144,88 @@
                 <DataGridTextColumn Header="Last error" Binding="{Binding Error}" Width="220"/>
               </DataGrid.Columns>
             </DataGrid>
+            <Button Command="{Binding StartManualBidCommand}" Content="Bid on the selected link by hand"
+                    HorizontalAlignment="Left" Margin="0,8,0,0"
+                    ToolTip="Opens the posting and leaves it alone. You fill the form; the app writes the resume in the background."/>
           </StackPanel>
         </Border>
+
+      <!--
+        The manual bid board. For boards with no adapter behind them, where hunting for the form is
+        a guess and filling it is a worse one.
+
+        A board, not one open bid at a time: several sit here at once, each with its own tab and its
+        own form, and their resumes are written one after another behind them. Generation is serial
+        because there is one ChatGPT browser per lane — which is exactly why this is a list you can
+        watch rather than a single panel that makes you wait.
+      -->
+      <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+              Visibility="{Binding HasManualBids, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <StackPanel>
+          <TextBlock Text="Manual bids — these pages are yours" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding ManualBoardSummary}" Style="{StaticResource MutedText}"
+                     TextWrapping="Wrap" Margin="0,4,0,6"/>
+          <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"
+                     Text="The app never clicks, fills or submits on these. Paste each description, queue its resume, and keep filling forms while they are written — one at a time, in order."/>
+
+          <ItemsControl ItemsSource="{Binding ManualBoard}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border BorderThickness="1" CornerRadius="3" Padding="8" Margin="0,0,0,8"
+                        BorderBrush="{DynamicResource CardBorder}">
+                  <StackPanel>
+                    <DockPanel Margin="0,0,0,4">
+                      <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontSize="11"
+                                 Opacity="0.75" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                      <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" FontSize="12"/>
+                    </DockPanel>
+                    <TextBlock Text="{Binding Error}" FontSize="11" Foreground="#C0392B"
+                               TextWrapping="Wrap" Margin="0,0,0,4"
+                               Visibility="{Binding Error, Converter={StaticResource NonEmptyToVisible}}"/>
+
+                    <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True" Height="70" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
+                             Tag="paste this posting's job description"/>
+
+                    <WrapPanel>
+                      <Button Content="Open its tab" Margin="0,0,6,0"
+                              Command="{Binding DataContext.ShowManualBidCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"/>
+                      <Button Content="Queue resume" Margin="0,0,6,0"
+                              Command="{Binding DataContext.QueueManualResumeCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"
+                              ToolTip="Generates in the background. The form does not have to be open — a description is all a resume needs."/>
+                      <Button Content="Attach resume" Margin="0,0,6,0"
+                              Command="{Binding DataContext.AttachManualResumeCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"
+                              ToolTip="Puts the file into this tab's upload field. Not automatic — a form can rerender when its file input changes, and that is not something to do underneath you mid-field."/>
+                      <Button Content="Show file" Margin="0,0,6,0"
+                              Command="{Binding DataContext.RevealManualResumeCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"/>
+                      <Button Content="I submitted this" Margin="0,0,6,0"
+                              Command="{Binding DataContext.MarkManualBidSubmittedCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"
+                              ToolTip="Records the bid as applied. The app cannot see you press submit on a page it is not driving, so it is told."/>
+                      <Button Content="Close"
+                              Command="{Binding DataContext.CancelManualBidCommand,
+                                RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
+                              CommandParameter="{Binding}"
+                              ToolTip="Takes it off the board without submitting. The link goes back in the automatic queue."/>
+                    </WrapPanel>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
       <!--
         Links whose description could not be read. Paste one in for any of them, at any time, and
         the link goes back in the queue to run like any other — rather than waiting for the manual

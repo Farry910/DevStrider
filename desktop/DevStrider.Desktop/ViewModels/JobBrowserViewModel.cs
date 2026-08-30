@@ -227,6 +227,381 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         }
     }
 
+    // ── the manual bid board ────────────────────────────────────────────────
+    //
+    // Greenhouse, Lever and Ashby apply on their own. Everything else is a board with no adapter,
+    // where hunting for the form is a guess and filling it is a worse one — so those are bid on by
+    // hand, and the app's job shrinks to writing the resume and recording the bid.
+    //
+    // A board rather than one open bid at a time, because one at a time saves almost nothing: the
+    // only thing overlapping is that single resume with that single form, about a minute. What
+    // actually costs the day is waiting — so several bids sit here at once, each with its own tab
+    // and its own form, and their resumes are written one after another behind them. You are never
+    // waiting on ChatGPT; you are filling the next form while it works.
+    //
+    // Generation is serial on purpose. It is driven through the ChatGPT UI and there is one of
+    // those per lane, which is exactly the constraint ApplicationTabViewModel already describes for
+    // automatic runs: generation one at a time, reviewing overlapped. The board is what makes that
+    // legible — you can see which resume is being written and which are waiting.
+
+    private JobLinkQueueItem? _selectedQueueItem;
+
+    /// <summary>The row highlighted in the queue grid. What "bid on this one by hand" acts on.</summary>
+    public JobLinkQueueItem? SelectedQueueItem
+    {
+        get => _selectedQueueItem;
+        set => SetProperty(ref _selectedQueueItem, value);
+    }
+
+    /// <summary>Every link being bid on by hand, newest last. A view over the queue, not a copy.</summary>
+    public ObservableCollection<JobLinkQueueItem> ManualBoard { get; } = new();
+
+    public bool HasManualBids => ManualBoard.Count > 0;
+
+    /// <summary>
+    /// Work items whose resume is waiting for the manual lane, oldest first. Only one is generated
+    /// at a time; this is what the others are waiting in.
+    /// </summary>
+    private readonly Queue<Guid> _manualResumeQueue = new();
+
+    /// <summary>The manual bid whose resume is being written right now, or null.</summary>
+    private Guid? _manualResumeInFlight;
+
+    /// <summary>
+    /// Tab slots kept back for manual bids.
+    ///
+    /// <para>
+    /// The eight slots are shared with the automatic run's parked reviews, and a busy queue will
+    /// take every one of them. Reserving a couple means starting a manual bid never has to wait on
+    /// somebody finishing a review of something else — which would defeat the point of the board.
+    /// </para>
+    /// </summary>
+    private const int ManualTabReserve = 3;
+
+    public string ManualBoardSummary
+    {
+        get
+        {
+            if (ManualBoard.Count == 0) return "No manual bids open.";
+            var writing = _manualResumeInFlight != null ? 1 : 0;
+            var waiting = _manualResumeQueue.Count;
+            var ready = ManualBoard.Count(item => item.Status == JobLinkQueueStatuses.ManualResumeReady);
+            var parts = new List<string> { $"{ManualBoard.Count} open" };
+            if (writing > 0) parts.Add("1 resume being written");
+            if (waiting > 0) parts.Add($"{waiting} waiting");
+            if (ready > 0) parts.Add($"{ready} ready to attach");
+            return string.Join(" · ", parts) + ".";
+        }
+    }
+
+    /// <summary>Moves a link onto the manual board and opens it in its own tab.</summary>
+    [RelayCommand]
+    private async Task StartManualBidAsync(JobLinkQueueItem? item)
+    {
+        var target = item ?? SelectedQueueItem;
+        if (target == null) { StatusMessage = "Pick a link in the queue to bid on by hand."; return; }
+        if (target.Intent == JobWorkItemIntents.Manual)
+        {
+            StatusMessage = "That link is already on the manual board.";
+            return;
+        }
+        // Deliberately no check on whether the automatic run is going. It drives its own tab and,
+        // since 10.21, its own ChatGPT browser; a manual bid contends with neither. Making them
+        // exclusive was the single-bid design's limitation, not a real conflict.
+        if (Tabs.Count >= 8)
+        {
+            StatusMessage = "Every tab slot is in use. Close a reviewed application first.";
+            return;
+        }
+
+        target.Intent = JobWorkItemIntents.Manual;
+        target.Error = "";
+        SetStatus(target, JobLinkQueueStatuses.ManualBid);
+        RefreshManualBoard();
+        await SaveQueueAsync();
+
+        _trace.Step("Manual", "manual bid opened", target.Url);
+        _activity.Info("Job Browser", "Manual bid started", target.Url);
+        StatusMessage = "Opening the posting in its own tab. The app will not touch that page.";
+        QueueNavigationRequested?.Invoke();
+        await OpenManualTabAsync(target);
+    }
+
+    /// <summary>
+    /// Gives a manual bid its own job-site tab, and navigates it. The tab is marked non-automation,
+    /// so nothing scripted ever runs against it — no adapter, no fill, no submit.
+    /// </summary>
+    private async Task OpenManualTabAsync(JobLinkQueueItem item)
+    {
+        var existing = Tabs.FirstOrDefault(tab => tab.WorkItemId == item.Id);
+        if (existing == null)
+        {
+            existing = new ApplicationTabViewModel(item.Id, item.Url, TabTitleFor(item))
+            {
+                IsAutomation = false,
+                Status = "Yours to fill",
+            };
+            Tabs.Add(existing);
+            NotifyTabState();
+        }
+        SelectedTab = existing;
+        if (ManualTabRequested != null) await ManualTabRequested(item.Id, item.Url);
+    }
+
+    /// <summary>Opens a browser for a manual bid's tab and navigates it, driving nothing after that.</summary>
+    public event Func<Guid, string, Task>? ManualTabRequested;
+
+    /// <summary>Asks the view to attach a finished resume to the form in that bid's tab.</summary>
+    public event Func<Guid, string, Task>? ManualResumeAttachRequested;
+
+    /// <summary>Brings a manual bid's tab to the front so its form can be filled in.</summary>
+    [RelayCommand]
+    private async Task ShowManualBidAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        QueueNavigationRequested?.Invoke();
+        await OpenManualTabAsync(item);
+    }
+
+    /// <summary>
+    /// Takes the description typed against a row and queues its resume.
+    ///
+    /// <para>
+    /// The form does not have to be open, or even started — a description is all a resume needs. So
+    /// several can be queued in a row and then worked through, which is the order that wastes the
+    /// least time.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    private async Task QueueManualResumeAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        var text = (item.JobDescription ?? "").Trim();
+        var rejection = JobPostingExtractor.RejectSupplied(text);
+        if (rejection.Length > 0)
+        {
+            item.Error = "That does not look like a job description: " + rejection;
+            StatusMessage = item.Error;
+            return;
+        }
+        if (_manualResumeInFlight == item.Id || _manualResumeQueue.Contains(item.Id))
+        {
+            StatusMessage = "That resume is already queued.";
+            return;
+        }
+
+        item.Error = "";
+        item.ResumeFilePath = "";
+        _manualResumeQueue.Enqueue(item.Id);
+        SetStatus(item, JobLinkQueueStatuses.ManualResumeQueued);
+        await SaveQueueAsync();
+        NotifyManualState();
+
+        _trace.Step("Manual", "resume queued", $"{text.Length} chars for {item.Url}");
+        await PumpManualResumeQueueAsync();
+    }
+
+    /// <summary>
+    /// Starts the next queued manual resume if the lane is free.
+    ///
+    /// <para>
+    /// One at a time: the manual lane has one ChatGPT browser and a second request would navigate
+    /// the first one's pane out from under it. The automatic lane has its own browser, so this does
+    /// not wait on the queue and the queue does not wait on this.
+    /// </para>
+    /// </summary>
+    private async Task PumpManualResumeQueueAsync()
+    {
+        if (_manualResumeInFlight != null) return;
+        while (_manualResumeQueue.Count > 0)
+        {
+            var next = _manualResumeQueue.Dequeue();
+            var item = ManualBoard.FirstOrDefault(candidate => candidate.Id == next);
+            // Removed from the board while it waited — a cancelled bid, or one marked submitted.
+            if (item == null) continue;
+
+            _manualResumeInFlight = next;
+            SetStatus(item, JobLinkQueueStatuses.ManualResumeRunning);
+            await SaveQueueAsync();
+            NotifyManualState();
+
+            _activity.Info("Job Browser", "Manual bid: resume generating",
+                $"{item.Url} — the form is yours to fill while this runs.");
+            ManualBidResumeRequested?.Invoke(
+                new ManualBidResumeRequest(item.Id, item.Url, (item.JobDescription ?? "").Trim()));
+            return;
+        }
+        NotifyManualState();
+    }
+
+    /// <summary>
+    /// Attaches a finished resume to the form in that bid's tab. Asked for, never volunteered — a
+    /// controlled form can rerender when its file input changes, and doing that underneath somebody
+    /// mid-field is how a half-filled application is lost.
+    /// </summary>
+    [RelayCommand]
+    private async Task AttachManualResumeAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        if (string.IsNullOrWhiteSpace(item.ResumeFilePath))
+        {
+            StatusMessage = "That bid's resume is not ready yet.";
+            return;
+        }
+        await OpenManualTabAsync(item);
+        if (ManualResumeAttachRequested != null)
+            await ManualResumeAttachRequested(item.Id, item.ResumeFilePath);
+    }
+
+    /// <summary>Opens the resume's folder, for a form that wants the file picked by hand.</summary>
+    [RelayCommand]
+    private void RevealManualResume(JobLinkQueueItem? item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.ResumeFilePath)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe",
+                $"/select,\"{item.ResumeFilePath}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex) { StatusMessage = $"Couldn't open the folder: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// You submitted it. The app cannot see that happen on a page it is not driving, so it is told.
+    /// </summary>
+    [RelayCommand]
+    private async Task MarkManualBidSubmittedAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        DropFromManualQueue(item.Id);
+        // The same completion the automatic path uses, so a manual bid reaches the board the same
+        // way as any other: link submitted, bid row moved draft → applied, tab closed, queue saved.
+        await CompleteSubmittedItemAsync(item, "filled in by hand", automatic: false);
+        RefreshManualBoard();
+        _trace.Ok("Manual", "manual bid marked submitted", item.Url);
+        StatusMessage = "Recorded as submitted. The bid is on the board.";
+        await PumpManualResumeQueueAsync();
+    }
+
+    /// <summary>Takes a bid off the board without submitting it, and requeues the link.</summary>
+    [RelayCommand]
+    private async Task CancelManualBidAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        DropFromManualQueue(item.Id);
+        item.Intent = JobWorkItemIntents.Apply;
+        SetStatus(item, JobLinkQueueStatuses.Queued);
+        TabCloseRequested?.Invoke(item.Id);
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab != null) Tabs.Remove(tab);
+        RefreshManualBoard();
+        NotifyTabState();
+        await SaveQueueAsync();
+        _trace.Step("Manual", "manual bid closed", item.Url);
+        StatusMessage = "Closed. The link is queued again for an automatic run.";
+        await PumpManualResumeQueueAsync();
+    }
+
+    /// <summary>Forgets a pending or in-flight generation for a bid that has left the board.</summary>
+    private void DropFromManualQueue(Guid workItemId)
+    {
+        if (_manualResumeInFlight == workItemId) _manualResumeInFlight = null;
+        if (!_manualResumeQueue.Contains(workItemId)) return;
+        var kept = _manualResumeQueue.Where(id => id != workItemId).ToList();
+        _manualResumeQueue.Clear();
+        foreach (var id in kept) _manualResumeQueue.Enqueue(id);
+    }
+
+    /// <summary>
+    /// Takes a finished background resume. Records where the file is and starts the next one — no
+    /// fill, no navigation, no view change, because the person is still typing into a form.
+    /// </summary>
+    private async Task AcceptManualBidResumeAsync(JobLinkQueueItem item, ResumeAutomationResult result)
+    {
+        item.ResumeFilePath = result.ResumeFilePath ?? "";
+        item.BidId = result.BidId;
+        SetStatus(item, JobLinkQueueStatuses.ManualResumeReady);
+        if (_manualResumeInFlight == item.Id) _manualResumeInFlight = null;
+        await SaveQueueAsync();
+
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab != null) tab.Status = "Resume ready";
+
+        _trace.Ok("Manual", "background resume ready", item.ResumeFilePath);
+        _activity.Success("Job Browser", "Manual bid: resume ready",
+            $"{item.Url} — attach it when the form is ready for it.");
+        StatusMessage = $"Resume ready for {TabTitleFor(item)}. Attach it when you want it.";
+        NotifyManualState();
+        await PumpManualResumeQueueAsync();
+    }
+
+    /// <summary>
+    /// Hands a link the automatic run could not apply to the manual board.
+    ///
+    /// <para>
+    /// A posting-level failure means the automation is done with this link — the description could
+    /// not be read, no form was found, a human gate is in the way — and retrying changes none of
+    /// that. Before this, such links went to a Failed list, which is a pile rather than a queue:
+    /// nothing worked through it, and the postings in it were usually fine and just needed a person.
+    /// The manual board is that person's queue, so they go there.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Whatever the run got is kept.</b> Most of these fail at opening the form, which is after
+    /// the description was read — so the row usually lands on the board with its job description
+    /// already filled in and its resume one button away. Throwing that away would make the handover
+    /// cost more than the failure did.
+    /// </para>
+    ///
+    /// <para>
+    /// No tab is opened. The run may still be going, and popping a browser tab for every skipped
+    /// link would bury whatever it is actually working on. The row waits on the board until asked.
+    /// </para>
+    /// </summary>
+    private async Task MoveToManualBoardAsync(JobLinkQueueItem item, string reason)
+    {
+        item.Intent = JobWorkItemIntents.Manual;
+        item.Error = $"The automatic run couldn't apply this: {reason}";
+        SetStatus(item, JobLinkQueueStatuses.ManualBid);
+
+        // The automation's tab for this link is finished with, and holding it would keep a slot the
+        // run needs. The manual bid opens its own when somebody asks for it.
+        var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);
+        if (tab != null)
+        {
+            TabCloseRequested?.Invoke(item.Id);
+            Tabs.Remove(tab);
+            NotifyTabState();
+        }
+
+        RefreshManualBoard();
+        await SaveQueueAsync();
+
+        var hasJd = !string.IsNullOrWhiteSpace(item.JobDescription);
+        _trace.Step("Manual", "link handed to the manual board",
+            $"{item.Url} — {reason}" + (hasJd ? "; its description came across with it" : ""));
+        _activity.Info("Job Browser", "Moved to manual bids",
+            $"{item.Url} — the automatic run couldn't apply it. "
+            + (hasJd
+                ? "Its job description came across, so its resume can be queued straight away."
+                : "It needs a job description pasting in before its resume can be queued."));
+    }
+
+    /// <summary>Rebuilds the board from the queue. The queue is the storage; this is the view.</summary>
+    private void RefreshManualBoard()
+    {
+        var manual = JobQueue.Where(item => item.Intent == JobWorkItemIntents.Manual).ToList();
+        ManualBoard.Clear();
+        foreach (var item in manual) ManualBoard.Add(item);
+        NotifyManualState();
+    }
+
+    private void NotifyManualState()
+    {
+        OnPropertyChanged(nameof(HasManualBids));
+        OnPropertyChanged(nameof(ManualBoardSummary));
+    }
+
     public bool QueueInputReadOnly => IsAutomaticQueueRunning;
     public bool IsAutomaticQueueIdle => !IsAutomaticQueueRunning;
     public bool NeedsJobDescription => CurrentQueueItem?.Status == JobLinkQueueStatuses.NeedsJobDescription;
@@ -275,6 +650,14 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
 
     /// <summary>Raised for the manual pass: open this link, but do not try to read the JD from it.</summary>
     public event Action? ManualJobDescriptionRequested;
+
+    /// <summary>
+    /// Asks the shell to start a background resume for a link being filled in by hand. Carried as
+    /// an event rather than a direct call for the same reason the rest of these are: the two
+    /// workspaces do not reference each other, and the shell is what owns the seam between them.
+    /// </summary>
+    public event Action<ManualBidResumeRequest>? ManualBidResumeRequested;
+
     public event Action<JobResumePreparation>? ResumeGenerationRequested;
     public event Action<ResumeAutomationResult>? ApplicationFillRequested;
     public event Action<ChatGptAnswerCorrectionRequest>? AnswerCorrectionRequested;
@@ -1289,6 +1672,14 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             return;
         }
 
+        // A manual bid's resume arrives while its form is being filled in by hand. It is recorded
+        // and offered; it does not drive anything, and it must not move the view or the page.
+        if (result.Background || item.Intent == JobWorkItemIntents.Manual)
+        {
+            await AcceptManualBidResumeAsync(item, result);
+            return;
+        }
+
         CurrentQueueItem = item;
         item.AnswersJson = ScreenAnswers(item, result.AnswersJson, "first");
         item.ResumeFilePath = result.ResumeFilePath;
@@ -1571,23 +1962,61 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     {
         var item = JobQueue.FirstOrDefault(x => x.Id == workItemId);
         if (item == null) return;
+
+        // A manual bid's background resume failed. Its form is still filled in and still the
+        // person's, so the row stays on the board for another attempt rather than being marked
+        // Failed and closed — the description is still on it and its button just goes live again.
+        // The lane is freed either way, so one bid's failure does not stall the rest of the queue.
+        if (item.Intent == JobWorkItemIntents.Manual)
+        {
+            if (_manualResumeInFlight == item.Id) _manualResumeInFlight = null;
+            item.Error = message;
+            SetStatus(item, JobLinkQueueStatuses.ManualBid);
+            await SaveQueueAsync();
+            _trace.Fail("Manual", "background resume failed", message);
+            _activity.Error("Job Browser", "Manual bid: resume failed",
+                $"{item.Url} — {message} The form is untouched; queue the resume again to retry.");
+            StatusMessage = $"The resume for {TabTitleFor(item)} failed. Its form is untouched.";
+            NotifyManualState();
+            NotifyQueueState();
+            await PumpManualResumeQueueAsync();
+            return;
+        }
+
         CurrentQueueItem = item;
         item.Error = message;
         item.Attempts++;
-        SetStatus(item, JobLinkQueueStatuses.Failed);
         _trace.Fail("Run", "work item failed", message);
         _trace.End("failed", message);
-        await SaveQueueAsync();
         RecordFailure("Application automation failed", $"{item.Url}: {message}");
 
-        if (scope == FailureScope.Machinery) _consecutiveFailures++;
-        else _trace.Step("Run", "link skipped", "a posting-level failure; the run keeps going");
+        if (scope == FailureScope.Machinery)
+        {
+            // Something every link depends on has broken — ChatGPT signed out, Word unavailable, no
+            // profile. Handing this to the manual board would be handing over a problem the manual
+            // lane has too: its resume goes through the same ChatGPT and the same Word. So it stays
+            // Failed and retryable, which is what fixing the machinery makes possible.
+            _consecutiveFailures++;
+            SetStatus(item, JobLinkQueueStatuses.Failed);
+        }
+        else
+        {
+            // The posting is what the automation cannot do — an unreadable description, a form no
+            // adapter matches, a page behind a human gate. Retrying it changes nothing, and
+            // "Failed" was where such links stopped: a list nobody worked through, holding postings
+            // that were fine and just needed a person. That is exactly what the manual board is,
+            // so it goes there instead of into a pile.
+            await MoveToManualBoardAsync(item, message);
+        }
+        await SaveQueueAsync();
 
         var keepGoing = IsAutomaticQueueRunning && _consecutiveFailures < ConsecutiveFailureLimit &&
                         JobQueue.Any(x => x.Status == JobLinkQueueStatuses.Queued);
         if (keepGoing)
         {
-            StatusMessage = $"Collected a failed link and moved on: {message}";
+            StatusMessage = scope == FailureScope.Link
+                ? $"Moved a link the automation couldn't apply to the manual board, and carried on: {message}"
+                : $"Collected a failed link and moved on: {message}";
             CurrentQueueItem = null;
             await OpenNextWorkItemAsync();
             return;
@@ -1799,6 +2228,15 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
             // card for a page that no longer exists.
             if (item.Status == JobLinkQueueStatuses.ReadyForReview) item.Status = JobLinkQueueStatuses.Queued;
             if (item.Status == JobLinkQueueStatuses.Completed) item.Status = JobLinkQueueStatuses.Submitted;
+            // A manual bid is a decision about the link, not work a run was holding, so it survives
+            // a restart where the in-flight statuses below do not — coming back to find it quietly
+            // requeued for automatic processing would undo that decision without saying so. The
+            // exceptions are the two generation states: a resume that was being written died with
+            // the process, and a queued one lost the queue it was waiting in. Both drop back to
+            // waiting to be started again, with the pasted description still on the item.
+            if (item.Status is JobLinkQueueStatuses.ManualResumeRunning
+                             or JobLinkQueueStatuses.ManualResumeQueued)
+                item.Status = JobLinkQueueStatuses.ManualBid;
             // Every status that only exists while a run is holding the link. Nothing is holding it
             // after a restart, so the status is a description of work that stopped — and one nothing
             // ever cleared: Start only picks up "Queued", so a link killed mid-resume sat reading
@@ -1822,6 +2260,12 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         }
         if (JobQueue.Count != items.Count || revived > 0) await SaveQueueAsync();
         CurrentQueueItem = JobQueue.FirstOrDefault(item => item.Status is not (JobLinkQueueStatuses.Queued or JobLinkQueueStatuses.Submitted or JobLinkQueueStatuses.Skipped));
+
+        // Put the manual board back. The statuses survived the restart, so the rows that go with
+        // them should too — otherwise links read "Manual" in the queue with no board to act on.
+        // Their tabs did not survive; opening one re-creates it on demand.
+        RefreshManualBoard();
+
         NotifyQueueState();
     }
 

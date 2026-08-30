@@ -423,6 +423,8 @@ public partial class JobBrowserView : UserControl
             {
                 vm.QueueNavigationRequested += NavigateToQueuedLink;
                 vm.ManualJobDescriptionRequested += OpenLinkForManualJobDescription;
+                vm.ManualTabRequested += OpenManualTabAsync;
+                vm.ManualResumeAttachRequested += AttachManualResumeAsync;
                 vm.ApplicationFillRequested += FillApplicationAutomatically;
                 vm.ApplicationRefillRequested += RefillApplicationAutomatically;
                 vm.AutomationTabRequested += OpenAutomationTabAsync;
@@ -680,13 +682,140 @@ public partial class JobBrowserView : UserControl
         var read = JobPostingExtractor.Read(document.RootElement);
         Trace?.Step("Extract", "description read",
             $"{read.Text.Length} chars via {read.Source}; {read.Sentences} sentence(s), {read.Controls} form control(s)");
-        Trace?.Payload("Extract", "description", read.Text);
+
+        // Whatever the tabs are hiding belongs to the description too. On a tabbed posting the
+        // first panel is usually a summary and the substance — responsibilities, requirements,
+        // benefits — is behind Overview / Description / About, so reading only what is painted
+        // sends ChatGPT the thinnest part of the page and tailors the resume against it.
+        var described = await HarvestTabbedDescriptionAsync(read.Text.Trim());
+
+        Trace?.Payload("Extract", "description", described);
 
         var rejection = JobPostingExtractor.Reject(read);
+        // A thin first panel is no longer fatal if the tabs made up the difference: the reject test
+        // ran against one panel's worth of text and failed postings whose description was simply
+        // somewhere else on the same page.
+        if (rejection.Length > 0 && described.Length >= 400 && described.Length > read.Text.Trim().Length)
+        {
+            Trace?.Step("Extract", "thin panel rescued by tabs",
+                $"first panel was rejected ({rejection}); tabs brought the total to {described.Length} chars");
+            rejection = "";
+        }
+
         contract.Output("job description", rejection.Length == 0,
             "prose from the posting with no form controls in it",
             rejection.Length == 0 ? "a job description" : rejection);
-        return read.Text.Trim();
+        return described;
+    }
+
+    /// <summary>
+    /// Reads every tab on the posting and returns the description with the other panels appended.
+    ///
+    /// <para>
+    /// Tabs are switched one at a time and the revealed panel is read, so a page that splits
+    /// Overview / Responsibilities / Benefits across a strip comes back whole. The originally
+    /// selected tab is restored at the end — the next step hunts for the apply control, and leaving
+    /// the page on a tab the user never chose changes what that hunt sees.
+    /// </para>
+    ///
+    /// <para>
+    /// Panels carrying form controls are skipped rather than appended. An <i>Application</i> tab is
+    /// a form, and its field labels are exactly the noise the structural description test exists to
+    /// keep out of the prompt.
+    /// </para>
+    ///
+    /// <para>
+    /// Best-effort throughout: a posting with no tabs, or one whose tabs do not respond, returns
+    /// the description it already had. Nothing here can fail a link.
+    /// </para>
+    /// </summary>
+    private async Task<string> HarvestTabbedDescriptionAsync(string primary)
+    {
+        try
+        {
+            var survey = await SurveyPageAsync();
+            if (survey == null || survey.Tabs.Count < 2) return primary;
+
+            Trace?.Step("Extract", $"posting has {survey.Tabs.Count} tab(s)",
+                string.Join(" · ", survey.Tabs.Select(tab => tab.Label + (tab.Selected ? " (open)" : ""))));
+
+            var originally = survey.Tabs.FirstOrDefault(tab => tab.Selected);
+            var sections = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // The panel already read is the one that is open; do not append it to itself.
+            if (primary.Length > 0) seen.Add(Fingerprint(primary));
+
+            foreach (var tab in survey.Tabs)
+            {
+                if (tab.Selected) continue;
+
+                var activated = await ActivateAsync(tab.Ref);
+                if (!activated) continue;
+                await Task.Delay(700);
+
+                var panelRaw = await JobSiteBrowser.ExecuteScriptAsync(
+                    AgenticApplyNavigator.BuildReadPanelScript(tab.Ref));
+                string text;
+                int controls;
+                try
+                {
+                    using var panel = JsonDocument.Parse(panelRaw);
+                    text = panel.RootElement.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                    controls = panel.RootElement.TryGetProperty("controls", out var c) && c.TryGetInt32(out var n) ? n : 0;
+                }
+                catch (JsonException) { continue; }
+
+                text = text.Trim();
+                if (text.Length < 120)
+                {
+                    Trace?.Step("Extract", $"tab \"{tab.Label}\" skipped", $"only {text.Length} chars");
+                    continue;
+                }
+                if (controls >= AgenticApplyNavigator.FormControlThreshold)
+                {
+                    Trace?.Step("Extract", $"tab \"{tab.Label}\" is the form",
+                        $"{controls} control(s) — kept out of the description, and it is where the form lives");
+                    continue;
+                }
+                if (!seen.Add(Fingerprint(text)))
+                {
+                    Trace?.Step("Extract", $"tab \"{tab.Label}\" skipped", "same text as a panel already read");
+                    continue;
+                }
+
+                sections.Add($"## {tab.Label}\n{text}");
+                Trace?.Step("Extract", $"tab \"{tab.Label}\" read", $"{text.Length} chars");
+            }
+
+            // Put the page back the way it was found.
+            if (originally != null)
+            {
+                await ActivateAsync(originally.Ref);
+                await Task.Delay(400);
+            }
+
+            if (sections.Count == 0) return primary;
+            var combined = (primary.Length > 0 ? primary + "\n\n" : "") + string.Join("\n\n", sections);
+            Trace?.Step("Extract", $"description assembled from {sections.Count + 1} panel(s)",
+                $"{primary.Length} chars on the open tab, {combined.Length} in total");
+            return combined.Trim();
+        }
+        catch (Exception ex)
+        {
+            // Enriching the description is an improvement on what was read, never a precondition.
+            Trace?.Warn("Extract", "tab harvest failed", ex.Message);
+            return primary;
+        }
+    }
+
+    /// <summary>
+    /// Cheap identity for a panel's text, so two tabs rendering the same content are not appended
+    /// twice. Whitespace and case are dropped because a re-render is rarely byte-identical.
+    /// </summary>
+    private static string Fingerprint(string text)
+    {
+        var condensed = new string(text.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        return condensed.Length <= 400 ? condensed : condensed[..400];
     }
 
     /// <summary>
@@ -704,6 +833,9 @@ public partial class JobBrowserView : UserControl
         }
         else if (TryGetHttpUri(JobSiteBrowser.CoreWebView2?.Source, out var current))
         {
+            // The adapter's own selectors first — a site with a written adapter knows its own
+            // markup better than any heuristic. Only when that produces nothing does the search
+            // widen, which is the case for every link with no adapter behind it.
             var openResult = await JobSiteBrowser.ExecuteScriptAsync(
                 JobSiteApplyAdapters.BuildOpenApplicationScript(current));
             Trace?.Step("Extract", "open-application script", openResult);
@@ -716,21 +848,175 @@ public partial class JobBrowserView : UserControl
         var gate = await CheckHumanGateAsync();
         if (!string.IsNullOrWhiteSpace(gate)) return gate;
 
-        // Give a slow form time to render before deciding it never arrived. Abandoning a good link
-        // because a React form took another second is the expensive mistake here, not the wait.
-        var controls = 0;
-        for (var attempt = 0; attempt < 6 && controls < 3; attempt++)
+        var found = await HuntForApplicationFormAsync();
+
+        Trace?.Step("Extract", "application form on screen", $"{found.Controls} fillable control(s)");
+        contract.Output("open application", found.Ok,
+            "an application form with at least 3 fillable controls", found.Detail);
+        return "";
+    }
+
+    /// <summary>
+    /// Follows the page until the application form is on screen, or until the budget runs out.
+    ///
+    /// <para>
+    /// The old code clicked once and counted. That is right for a posting whose Apply button leads
+    /// straight to the form and wrong for everything else — a button labelled <i>I'm interested</i>,
+    /// a form sitting on an unselected tab, or an application two navigations away behind an
+    /// interstitial. Deel failed this way seven times and reported "1 control" each time, which
+    /// describes the page it was standing on and not the one it should have gone to.
+    /// </para>
+    ///
+    /// <para>
+    /// Each hop surveys the live page, takes the highest-scoring way in that has not been tried,
+    /// clicks it, and surveys again. Progress is measured, not assumed: a hop that leaves the
+    /// control count where it was is recorded as tried so the next hop picks something else. Tabs
+    /// are searched before navigating away, because a form already on the page is always better
+    /// than a page change that might not come back.
+    /// </para>
+    /// </summary>
+    private async Task<(bool Ok, int Controls, string Detail)> HuntForApplicationFormAsync()
+    {
+        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AgenticApplyNavigator.Survey? survey = null;
+
+        for (var hop = 0; hop <= AgenticApplyNavigator.MaxHops; hop++)
+        {
+            survey = await SettleAndSurveyAsync();
+            if (survey == null)
+                return (false, 0, "the page could not be surveyed");
+
+            if (survey.LooksLikeForm)
+            {
+                Trace?.Step("Navigate", $"form reached after {hop} hop(s)", survey.Describe);
+                return (true, survey.Controls, $"{survey.Controls} control(s)");
+            }
+
+            if (hop == AgenticApplyNavigator.MaxHops) break;
+
+            visited.Add(survey.Url);
+            Trace?.Step("Navigate", $"hop {hop + 1}: no form yet", survey.Describe);
+
+            // A tab that is not selected may already hold the form. Cheaper and safer than a
+            // navigation, so it is tried first.
+            var tabbed = await TryTabsForFormAsync(survey, tried);
+            if (tabbed is { } tabResult) return tabResult;
+
+            var next = survey.Affordances
+                .Where(a => !tried.Contains(AgenticApplyNavigator.TriedKey(survey.Url, a)))
+                .OrderByDescending(a => a.Score)
+                .FirstOrDefault();
+
+            if (next == null)
+            {
+                Trace?.Step("Navigate", "nothing left to try on this page", survey.Describe);
+                break;
+            }
+
+            tried.Add(AgenticApplyNavigator.TriedKey(survey.Url, next));
+            Trace?.Step("Navigate", $"clicking \"{next.Label}\"",
+                $"score {next.Score} ({next.Why}){(next.Href.Length > 0 ? " → " + next.Href : "")}");
+
+            if (!await ActivateAsync(next.Ref))
+            {
+                Trace?.Warn("Navigate", $"\"{next.Label}\" could not be clicked", "moving to the next candidate");
+                continue;
+            }
+            await Task.Delay(1200);
+        }
+
+        var deadEnd = survey == null
+            ? "the page could not be surveyed"
+            : AgenticApplyNavigator.DescribeDeadEnd(survey, tried.Count, tried);
+        Trace?.Fail("Navigate", "no application form found", deadEnd);
+        return (false, survey?.Controls ?? 0, deadEnd);
+    }
+
+    /// <summary>
+    /// Opens each unselected tab looking for the form, and stops on the first that has one.
+    ///
+    /// <para>
+    /// This is the <i>Overview / Application</i> shape: both panels are on the page and only one is
+    /// painted, so a control count taken on arrival is a count of the wrong panel. Returns null
+    /// when no tab held a form, having left the page as it was found.
+    /// </para>
+    /// </summary>
+    private async Task<(bool Ok, int Controls, string Detail)?> TryTabsForFormAsync(
+        AgenticApplyNavigator.Survey survey, HashSet<string> tried)
+    {
+        foreach (var tab in survey.Tabs)
+        {
+            if (tab.Selected) continue;
+            var key = $"tab|{survey.Url}|{tab.Label.ToLowerInvariant()}";
+            if (!tried.Add(key)) continue;
+
+            if (!await ActivateAsync(tab.Ref)) continue;
+            await Task.Delay(800);
+
+            var after = await SurveyPageAsync();
+            if (after == null) continue;
+            if (after.LooksLikeForm)
+            {
+                Trace?.Step("Navigate", $"form was on the \"{tab.Label}\" tab", after.Describe);
+                return (true, after.Controls, $"{after.Controls} control(s) on the \"{tab.Label}\" tab");
+            }
+            Trace?.Step("Navigate", $"tab \"{tab.Label}\" has no form", after.Describe);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Surveys once the page has stopped changing, so a slow React form is not mistaken for an
+    /// absent one. Polls until the control count reaches the threshold or the budget expires —
+    /// abandoning a good link because the form took another second is the expensive mistake here.
+    /// </summary>
+    private async Task<AgenticApplyNavigator.Survey?> SettleAndSurveyAsync()
+    {
+        AgenticApplyNavigator.Survey? survey = null;
+        for (var attempt = 0; attempt < 6; attempt++)
         {
             if (attempt > 0) await Task.Delay(500);
-            var formJson = await JobSiteBrowser.ExecuteScriptAsync(FormPresenceScript);
-            using var form = contract.Json("open application", formJson, JsonValueKind.Object,
-                "an object counting the controls on the page");
-            controls = form.RootElement.TryGetProperty("controls", out var count) ? count.GetInt32() : 0;
+            survey = await SurveyPageAsync();
+            if (survey is { LooksLikeForm: true }) return survey;
         }
-        Trace?.Step("Extract", "application form on screen", $"{controls} fillable control(s)");
-        contract.Output("open application", controls >= 3,
-            "an application form with at least 3 fillable controls", $"{controls} control(s)");
-        return "";
+        return survey;
+    }
+
+    /// <summary>One survey of the live page, or null when the script did not come back usable.</summary>
+    private async Task<AgenticApplyNavigator.Survey?> SurveyPageAsync()
+    {
+        try
+        {
+            var raw = await JobSiteBrowser.ExecuteScriptAsync(AgenticApplyNavigator.SurveyScript);
+            if (string.IsNullOrWhiteSpace(raw) || raw == "null") return null;
+            using var document = JsonDocument.Parse(raw);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            return AgenticApplyNavigator.ReadSurvey(document.RootElement);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            Trace?.Warn("Navigate", "survey failed", ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>Clicks a stamped control. False when it has gone or refused the click.</summary>
+    private async Task<bool> ActivateAsync(int reference)
+    {
+        try
+        {
+            var raw = await JobSiteBrowser.ExecuteScriptAsync(
+                AgenticApplyNavigator.BuildActivateScript(reference));
+            using var document = JsonDocument.Parse(raw);
+            return document.RootElement.TryGetProperty("clicked", out var clicked)
+                   && clicked.ValueKind == JsonValueKind.True;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            Trace?.Warn("Navigate", "activate failed", ex.Message);
+            return false;
+        }
     }
 
     /// <summary>Counts what a form would have, so "the form opened" is checked and not assumed.</summary>
@@ -2377,6 +2663,101 @@ public partial class JobBrowserView : UserControl
         }
     }
 
+    /// <summary>
+    /// Opens a posting for a manual bid, and does nothing else to it.
+    ///
+    /// <para>
+    /// Deliberately not <see cref="NavigateToQueuedLink"/>: that one navigates and then runs the
+    /// extract-open-fill pipeline over the page. Here the navigation <i>is</i> the whole operation.
+    /// No adapter is resolved, no form is hunted for, nothing is typed and nothing is pressed —
+    /// the person is going to do all of that, and an app that helpfully clicked something first
+    /// would be the exact problem this mode exists to avoid.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Gives a manual bid its own browser tab and navigates it there, then does nothing else to it.
+    ///
+    /// <para>
+    /// Deliberately not <see cref="OpenAutomationTabAsync"/>: that one makes the new browser the
+    /// automation browser, which is what every script targets. This leaves
+    /// <c>_automationBrowser</c> alone, so an automatic run carries on driving its own tab while
+    /// this one sits there being filled in by a person. No adapter is resolved against it, no form
+    /// hunted for, nothing typed and nothing pressed.
+    /// </para>
+    /// </summary>
+    private async Task OpenManualTabAsync(Guid workItemId, string url)
+    {
+        if (DataContext is not JobBrowserViewModel vm) return;
+        if (!TryGetHttpUri(url, out var uri))
+        {
+            vm.StatusMessage = $"That link is not a web address: {url}";
+            return;
+        }
+        try
+        {
+            if (!_browsers.TryGetValue(workItemId, out var browser))
+            {
+                if (_unassignedBrowser != null)
+                {
+                    browser = _unassignedBrowser;
+                    _unassignedBrowser = null;
+                }
+                else browser = await CreateBrowserAsync();
+                _browsers[workItemId] = browser;
+            }
+            ShowOnly(browser);
+            if (browser.CoreWebView2 != null &&
+                !string.Equals(browser.CoreWebView2.Source, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+                browser.CoreWebView2.Navigate(uri.AbsoluteUri);
+            Trace?.Step("Manual", "posting opened in its own tab, hands off", uri.AbsoluteUri);
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = $"Couldn't open the posting: {ex.Message}";
+            Trace?.Warn("Manual", "could not open the posting", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Puts the manual bid's finished resume into the form's upload field, when asked.
+    ///
+    /// <para>
+    /// Routed through the same <see cref="UploadResumeAsync"/> the automatic path uses, so a form
+    /// that needs the file input found by scoring rather than by selector behaves identically in
+    /// both. The only difference is who decided the moment.
+    /// </para>
+    /// </summary>
+    private async Task AttachManualResumeAsync(Guid workItemId, string resumePath)
+    {
+        if (DataContext is not JobBrowserViewModel vm) return;
+        if (string.IsNullOrWhiteSpace(resumePath))
+        {
+            vm.StatusMessage = "There is no generated resume to attach yet.";
+            return;
+        }
+        // The upload finds the file input on whichever browser is in front, so the bid's own tab
+        // has to be the one showing — otherwise the resume lands in a different application's form.
+        if (!_browsers.TryGetValue(workItemId, out var browser))
+        {
+            vm.StatusMessage = "That bid's tab is not open. Open it first, then attach.";
+            return;
+        }
+        ShowOnly(browser);
+
+        try
+        {
+            vm.SelectedResumePath = resumePath;
+            var attached = await UploadResumeAsync(vm, reportStatus: true, browser);
+            if (attached)
+                vm.StatusMessage = "Resume attached. Check the form shows it, then submit when you are ready.";
+        }
+        catch (Exception ex)
+        {
+            vm.StatusMessage = $"Couldn't attach the resume: {ex.Message}. Use \"Show the file\" and attach it by hand.";
+            Trace?.Warn("Manual", "attach failed", ex.Message);
+        }
+    }
+
     private async void OnUploadResume(object sender, RoutedEventArgs e)
     {
         if (DataContext is not JobBrowserViewModel vm || JobSiteBrowser.CoreWebView2 == null) return;
@@ -2388,8 +2769,15 @@ public partial class JobBrowserView : UserControl
         }
     }
 
-    private async Task<bool> UploadResumeAsync(JobBrowserViewModel vm, bool reportStatus)
+    /// <param name="target">
+    /// The browser to attach into. Defaults to the automation tab, which is right for an automatic
+    /// run; a manual bid passes its own tab, because the automation browser may well be driving a
+    /// different application at that moment and the resume would land in that form instead.
+    /// </param>
+    private async Task<bool> UploadResumeAsync(JobBrowserViewModel vm, bool reportStatus,
+        WebView2? target = null)
     {
+        var browser = target ?? JobSiteBrowser;
         if (string.IsNullOrWhiteSpace(vm.SelectedResumePath) || !File.Exists(vm.SelectedResumePath))
         {
             if (reportStatus) vm.StatusMessage = "Choose an existing resume file first.";
@@ -2397,7 +2785,7 @@ public partial class JobBrowserView : UserControl
         }
         var extension = Path.GetExtension(vm.SelectedResumePath).ToLowerInvariant();
         if (extension is not (".pdf" or ".doc" or ".docx")) return false;
-        var input = await FindResumeFileInputAsync();
+        var input = await FindResumeFileInputAsync(browser);
         Trace?.Step("Upload", "resume input search",
             input == null ? "no suitable file input" : $"backendNodeId={input.Value.BackendNodeId}, score={input.Value.Score}");
         if (input == null)
@@ -2411,10 +2799,10 @@ public partial class JobBrowserView : UserControl
             // Bounded on purpose. If the page rerendered between finding the node and setting it,
             // or the browser is showing a picker of its own, this call can simply never come back —
             // and an unbounded await here stops the application with nothing on screen to explain it.
-            await JobSiteBrowser.CoreWebView2
+            await browser.CoreWebView2!
                 .CallDevToolsProtocolMethodAsync("DOM.setFileInputFiles", parameters)
                 .WaitAsync(TimeSpan.FromSeconds(15));
-            await NotifyFileInputAsync(input.Value.BackendNodeId).WaitAsync(TimeSpan.FromSeconds(10));
+            await NotifyFileInputAsync(browser, input.Value.BackendNodeId).WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (TimeoutException)
         {
@@ -2456,10 +2844,10 @@ public partial class JobBrowserView : UserControl
         return true;
     }
 
-    private async Task<(int BackendNodeId, int Score)?> FindResumeFileInputAsync()
+    private async Task<(int BackendNodeId, int Score)?> FindResumeFileInputAsync(WebView2 browser)
     {
-        await JobSiteBrowser.CoreWebView2.CallDevToolsProtocolMethodAsync("DOM.enable", "{}");
-        var json = await JobSiteBrowser.CoreWebView2.CallDevToolsProtocolMethodAsync("DOM.getFlattenedDocument", "{\"depth\":-1,\"pierce\":true}");
+        await browser.CoreWebView2!.CallDevToolsProtocolMethodAsync("DOM.enable", "{}");
+        var json = await browser.CoreWebView2!.CallDevToolsProtocolMethodAsync("DOM.getFlattenedDocument", "{\"depth\":-1,\"pierce\":true}");
         using var document = JsonDocument.Parse(json);
         (int BackendNodeId, int Score)? best = null;
         foreach (var node in document.RootElement.GetProperty("nodes").EnumerateArray())
@@ -2479,9 +2867,9 @@ public partial class JobBrowserView : UserControl
         return best is { Score: >= 0 } ? best : null;
     }
 
-    private async Task NotifyFileInputAsync(int backendNodeId)
+    private async Task NotifyFileInputAsync(WebView2 browser, int backendNodeId)
     {
-        var resolvedJson = await JobSiteBrowser.CoreWebView2.CallDevToolsProtocolMethodAsync("DOM.resolveNode", JsonSerializer.Serialize(new { backendNodeId }));
+        var resolvedJson = await browser.CoreWebView2!.CallDevToolsProtocolMethodAsync("DOM.resolveNode", JsonSerializer.Serialize(new { backendNodeId }));
         using var resolved = JsonDocument.Parse(resolvedJson);
         if (!resolved.RootElement.GetProperty("object").TryGetProperty("objectId", out var objectId)) return;
         var parameters = JsonSerializer.Serialize(new

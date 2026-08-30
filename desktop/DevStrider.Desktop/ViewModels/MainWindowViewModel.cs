@@ -21,7 +21,21 @@ public partial class MainWindowViewModel : ViewModelBase
     public ActivityViewModel Activity { get; }
     public ProfilesViewModel ProfilesPage { get; }
     public PeersViewModel Peers { get; }
+    /// <summary>The workspace the automatic queue drives. Comes to the front while it runs.</summary>
     public ResumeStudioViewModel ResumeStudio { get; }
+
+    /// <summary>
+    /// The workspace manual bids use. Its own browser, its own ChatGPT account if you assign one,
+    /// and its own conversation — so a manual bid's resume can be written while an automatic run is
+    /// mid-generation without either one navigating the other's pane out from under it.
+    ///
+    /// <para>
+    /// Never brought to the front by a handoff. The point of a manual bid is that the person is
+    /// looking at the application form while this runs behind them.
+    /// </para>
+    /// </summary>
+    public ResumeStudioViewModel ManualResumeStudio { get; }
+
     public AssistedAutomationViewModel AssistedAutomation { get; }
     public JobBrowserViewModel JobBrowser { get; }
 
@@ -57,6 +71,7 @@ public partial class MainWindowViewModel : ViewModelBase
             if (!SetProperty(ref _current, value)) return;
             OnPropertyChanged(nameof(IsJobBrowserVisible));
             OnPropertyChanged(nameof(IsResumeStudioVisible));
+            OnPropertyChanged(nameof(IsManualResumeStudioVisible));
             OnPropertyChanged(nameof(IsRegularViewVisible));
             OnPropertyChanged(nameof(RegularCurrent));
         }
@@ -64,7 +79,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public bool IsJobBrowserVisible => ReferenceEquals(Current, JobBrowser);
     public bool IsResumeStudioVisible => ReferenceEquals(Current, ResumeStudio);
-    public bool IsRegularViewVisible => !IsJobBrowserVisible && !IsResumeStudioVisible;
+    public bool IsManualResumeStudioVisible => ReferenceEquals(Current, ManualResumeStudio);
+    public bool IsRegularViewVisible =>
+        !IsJobBrowserVisible && !IsResumeStudioVisible && !IsManualResumeStudioVisible;
     public ViewModelBase? RegularCurrent => IsRegularViewVisible ? Current : null;
 
     /// <summary>
@@ -107,7 +124,7 @@ public partial class MainWindowViewModel : ViewModelBase
         ActivityViewModel activity,
         ProfilesViewModel profilesPage,
         PeersViewModel peers,
-        ResumeStudioViewModel resumeStudio,
+        ResumeStudioWorkspaces resumeStudios,
         AssistedAutomationViewModel assistedAutomation,
         JobBrowserViewModel jobBrowser,
         ProfileContext profileContext)
@@ -122,7 +139,8 @@ public partial class MainWindowViewModel : ViewModelBase
         Activity = activity;
         ProfilesPage = profilesPage;
         Peers = peers;
-        ResumeStudio = resumeStudio;
+        ResumeStudio = resumeStudios.Auto;
+        ManualResumeStudio = resumeStudios.Manual;
         AssistedAutomation = assistedAutomation;
         JobBrowser = jobBrowser;
         ProfileContext = profileContext;
@@ -147,6 +165,17 @@ public partial class MainWindowViewModel : ViewModelBase
         JobBrowser.ApplicationFillRequested += _ => Current = JobBrowser;
         JobBrowser.ApplicationRefillRequested += _ => Current = JobBrowser;
         JobBrowser.QueueNavigationRequested += () => Current = JobBrowser;
+        // A manual bid asks for its resume from the Job Browser and stays there. It goes to the
+        // manual workspace — its own browser, and its own conversation — so it can run while an
+        // automatic queue is mid-generation in the other one. No view change: the difference
+        // between generating in the background and generating in front of you.
+        JobBrowser.ManualBidResumeRequested += request =>
+            ManualResumeStudio.PrepareManualBidResume(request.WorkItemId, request.JobUrl, request.JobDescription);
+        ManualResumeStudio.ResumeAutomationCompleted += result =>
+            Handoff("Accepting the manual bid's resume", JobBrowser.AcceptResumeResultAsync(result));
+        ManualResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
+            Handoff("Recording a manual resume failure",
+                JobBrowser.MarkAutomationFailureAsync(workItemId, message));
         JobBrowser.AnswerCorrectionRequested += request =>
         {
             Current = ResumeStudio;
@@ -159,6 +188,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 Current = ResumeStudio;
                 return;
             }
+            // A manual bid's resume was written while the user was typing into the application form
+            // in the other workspace. Handing it over must not move them: no view change here, and
+            // AcceptResumeResultAsync does not start a fill for it either. The Job Browser shows
+            // that the resume is ready and waits to be asked for it.
             Handoff("Accepting the generated resume", JobBrowser.AcceptResumeResultAsync(result));
         };
         ResumeStudio.ResumeAutomationFailed += (workItemId, message) =>
@@ -188,6 +221,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand] private void ShowProfiles() => Current = ProfilesPage;
     [RelayCommand] private void ShowPeers() => Current = Peers;
     [RelayCommand] private void ShowResumeStudio() => Current = ResumeStudio;
+    [RelayCommand] private void ShowManualResumeStudio() => Current = ManualResumeStudio;
     [RelayCommand] private void ShowAssistedAutomation() => Current = AssistedAutomation;
     [RelayCommand] private void ShowJobBrowser() => Current = JobBrowser;
 }

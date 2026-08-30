@@ -1,4 +1,4 @@
-# DevStrider 10.18
+# DevStrider 10.22
 
 A Windows desktop app that tracks job bids for a team, backed by the company portal's API.
 
@@ -161,6 +161,126 @@ created. Switch from the title-bar dropdown.
 The CV belongs to the `.docm`, not to the profile row — DevStrider stores nothing about it at all:
 it never reads a CV and never renders one.
 
+## ChatGPT accounts and the two workspaces
+
+Automatic runs and manual bids each drive **their own ChatGPT browser**, so a manual bid's resume
+can be written while the queue is mid-generation. They appear as **Resume Studio** and **Resume
+Studio · manual**.
+
+An account *is* a browser profile folder — that's where the cookies live. Two browsers on one
+folder are one signed-in user; two on different folders are two. Settings → **ChatGPT accounts**
+manages them:
+
+- **Add** — creates an empty profile. Open that workspace and sign in once; the session persists
+  because the folder does.
+- **Rename** — display name only. The folder never moves, because moving it would sign the account
+  out.
+- **Remove** — forgets the account. The folder is left on disk, so adding it back recovers the
+  session. Lanes pointing at it fall back to a remaining account rather than silently changing
+  identity.
+- **Assign** — which lane signs in as which account. Takes effect when that workspace's browser
+  next starts.
+
+The seeded *Default* adopts the folder the single pre-10.21 browser used, so upgrading signs nobody
+out.
+
+### Sharing one account
+
+**Separate accounts** is the clean case: separate conversations, separate rate limits, nothing to
+arbitrate.
+
+**One account** still runs both at once, but they share a conversation list — and that needed real
+work. The remembered chat used to be keyed on profile id alone, so both lanes read the same URL at
+startup and both continued it: two jobs' descriptions interleaved into one thread, each reading the
+other's reply as its own, and nothing about the result looking wrong.
+
+The key is now profile **and** lane. `ChatGptConversationRegistry` covers what that key can't — the
+same conversation reaching both lanes anyway, via ChatGPT's own sidebar or a hand-edited settings
+file. First claim wins; the loser starts a fresh chat, which costs one profile prompt and is always
+safe. The Settings card tells you which case you're in and how many conversations are claimed.
+
+## Manual bids
+
+Greenhouse, Lever and Ashby apply correctly on their own. For everything else — a board with no
+adapter, where hunting for the form is a guess and filling it is a worse one — there is the
+**manual bid board**: you fill the forms, the app writes the resumes beside you.
+
+Several bids sit on the board at once, each with its own tab and its own form. Per row:
+
+1. **Open its tab** — navigates there and stops. No adapter, nothing typed, nothing pressed.
+2. **Paste the job description** into that row's box.
+3. **Queue resume** — generates in the background. The form doesn't have to be open; a description
+   is all a resume needs, so you can line several up and then work through them.
+4. **Attach resume** when it lands, or **Show file** to pick it by hand.
+5. **I submitted this** — moves the bid draft → applied and takes the row off the board.
+
+The point is that you are never waiting. While one resume is being written you are filling the next
+form, and the board tells you where each one is: *"3 open · 1 resume being written · 2 waiting."*
+
+**Generation is serial per lane** — one ChatGPT browser each — which is exactly why this is a board
+you can watch rather than a panel that makes you wait. Automatic runs and manual bids each get one
+resume in flight, concurrently, since 10.21 gave them separate browsers.
+
+### Links the automatic run couldn't apply
+
+They come here. A **posting-level** failure — an unreadable description, a form no adapter matches,
+a page behind a human gate — means the automation is done with that link and retrying changes
+nothing. It moves to the board with its error on the row, and **whatever the run already got comes
+with it**: most fail at opening the form, which is after the description was read, so the row
+usually arrives with its job description filled in and its resume one button away.
+
+No tab is opened for it — the run may still be going, and popping a tab per skipped link would bury
+whatever it's actually working on. The row waits until you ask for it.
+
+**Machinery failures don't come here.** ChatGPT signed out, Word unavailable, no profile — those
+break the manual lane in exactly the same way, so handing them over would hand over the problem.
+They stay in the Failed list and stay retryable, which is what fixing the machinery makes possible.
+
+Two deliberate choices, unchanged: **the resume is offered, not attached** (a controlled form can
+rerender when its file input changes, and doing that underneath you mid-field is how a half-filled
+application gets lost), and **you confirm the submission** (the app isn't driving the page, so it
+can't watch you press submit and shouldn't claim to).
+
+Manual rows survive a restart — the status is a decision about the link, not work a run was holding.
+A resume that was queued or mid-generation drops back to waiting, with your description still on it.
+
+## Finding the application form
+
+Five sites have written adapters — `greenhouse.io`, `ashbyhq.com`, `lever.co`, `applytojob.com`,
+`teamtailor.com` — matched on host. Everything else falls to the generic path, which is most
+postings in practice.
+
+The generic path is a loop, not a guess. It surveys the live page for its tabs, its fillable
+controls and everything clickable on it; scores each candidate on apply wording, `href` and
+attributes; clicks the best untried one; and surveys again to find out whether that helped. Up to
+four hops, so `posting → apply → form` works, and a hop that changed nothing is remembered so the
+next one tries something else.
+
+What that buys over the old single-shot click:
+
+- **The button doesn't have to say "Apply."** *I'm interested*, *Express interest*, *Register your
+  interest*, *Join our team*, *Quick apply*, *Start your application* all score.
+- **Tabs are searched first.** An `Overview` / `Application` split leaves the form on the page but
+  unpainted, so a control count taken on arrival counts the wrong panel. Unselected tabs are opened
+  and checked before any navigation.
+- **Multi-step flows work.** A posting page with only a description and a button leads to the
+  application page, which is where filling starts.
+- **It won't wander.** Structural shape ("looks like a button", "short label") only breaks ties —
+  it can't qualify a candidate with no apply signal. Without that rule a job index page offers its
+  first job title as the way in and the run applies to a different job.
+- **It can't press send.** `Submit`, `Send application`, `Next`, `Continue` and friends score −100
+  and are never clicked. This loop finds the way in; it is not allowed to become the way out.
+- **Dead ends say something useful.** `1 control` was true of all seven Deel failures and told
+  nobody what to do. Now the trace names the page, the candidates it saw and what it tried.
+
+Descriptions are gathered the same way: each tab is opened and its panel appended, so a posting
+split across `Overview` / `Responsibilities` / `Benefits` reaches ChatGPT whole rather than as
+whichever panel loaded first. Panels containing form controls are skipped — an `Application` tab is
+a form, and its field labels are exactly what the description test exists to keep out of the prompt.
+
+Adding a site-specific adapter is still worth it where one exists; this is what happens when one
+doesn't.
+
 ## Grounded answers
 
 **The app does not make up facts about you.** Application forms mix two kinds of question, and
@@ -322,5 +442,5 @@ Two things are still worth knowing about:
 
 ## Version
 
-**10.18.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**10.22.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

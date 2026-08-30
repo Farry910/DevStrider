@@ -152,6 +152,13 @@
                 <TextBlock Text="Resume Studio" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
+            <Button Command="{Binding ShowManualResumeStudioCommand}" Style="{StaticResource NavButton}"
+                    ToolTip="The manual lane's own ChatGPT browser. Sign in here if you have given manual bids their own account.">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <TextBlock Text="Resume Studio · manual" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
             <Button Command="{Binding ShowJobBrowserCommand}" Style="{StaticResource NavButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE774;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" Margin="0,0,12,0"/>
@@ -251,6 +258,14 @@
                                   Converter={StaticResource BooleanToHidden}}"/>
           <views:ResumeStudioView DataContext="{Binding ResumeStudio}"
                                   Visibility="{Binding DataContext.IsResumeStudioVisible,
+                                    RelativeSource={RelativeSource AncestorType={x:Type Window}},
+                                    Converter={StaticResource BooleanToHidden}}"/>
+          <!-- The manual lane's own ChatGPT browser. It has to be reachable, not just running:
+               pointing this lane at a second ChatGPT account is only useful if there is somewhere
+               to sign in to it. Nothing brings it to the front on its own — a manual bid's whole
+               point is that its resume is written while the person is looking at the form. -->
+          <views:ResumeStudioView DataContext="{Binding ManualResumeStudio}"
+                                  Visibility="{Binding DataContext.IsManualResumeStudioVisible,
                                     RelativeSource={RelativeSource AncestorType={x:Type Window}},
                                     Converter={StaticResource BooleanToHidden}}"/>
         </Grid>

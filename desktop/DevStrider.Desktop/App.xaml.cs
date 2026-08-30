@@ -173,6 +173,8 @@ public partial class App : Application
         services.AddSingleton<PersonFactsService>();
         services.AddSingleton<QuickAnswerService>();
         services.AddSingleton<R2StorageService>();
+        services.AddSingleton<ChatGptAccountService>();
+        services.AddSingleton<ChatGptConversationRegistry>();
         services.AddSingleton<WordMacroService>();
         services.AddSingleton<DevBridge>();
         services.AddSingleton<DevEndpoints>();
@@ -190,7 +192,14 @@ public partial class App : Application
         services.AddSingleton<ActivityViewModel>();
         services.AddSingleton<ProfilesViewModel>();
         services.AddSingleton<PeersViewModel>();
-        services.AddSingleton<ResumeStudioViewModel>();
+        // Two Resume Studio workspaces, one per lane. They differ only in which ChatGPT account
+        // their browser signs in as and which conversation each remembers — everything else is the
+        // same driver. Registered explicitly rather than by type because the lane is a constructor
+        // argument, and a container that resolved one of them by type would hand out whichever was
+        // registered last to both.
+        services.AddSingleton<ResumeStudioWorkspaces>(provider => new ResumeStudioWorkspaces(
+            Auto: ActivateResumeStudio(provider, ChatGptLanes.Auto),
+            Manual: ActivateResumeStudio(provider, ChatGptLanes.Manual)));
         services.AddSingleton<QuickAnswersViewModel>();
         services.AddSingleton<AssistedAutomationViewModel>();
         services.AddSingleton<JobBrowserViewModel>();
@@ -198,6 +207,22 @@ public partial class App : Application
 
         return services.BuildServiceProvider();
     }
+
+    /// <summary>
+    /// Builds one Resume Studio for a lane, pulling its dependencies from the container and passing
+    /// the lane by hand — the one argument the container cannot supply, because it is what tells
+    /// the two instances apart.
+    /// </summary>
+    private static ResumeStudioViewModel ActivateResumeStudio(IServiceProvider provider, string lane) =>
+        new(provider.GetRequiredService<SettingsService>(),
+            provider.GetRequiredService<ProfileContext>(),
+            provider.GetRequiredService<BidBoardService>(),
+            provider.GetRequiredService<WordMacroService>(),
+            provider.GetRequiredService<ActivityLogService>(),
+            provider.GetRequiredService<BidTraceService>(),
+            provider.GetRequiredService<ChatGptAccountService>(),
+            provider.GetRequiredService<ChatGptConversationRegistry>(),
+            lane);
 
     /// <summary>
     /// Everything that needs a signed-in account. Failures here are reported to the Activity tab
