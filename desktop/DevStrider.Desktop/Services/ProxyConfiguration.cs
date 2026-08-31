@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
@@ -126,22 +127,34 @@ public sealed class ProxyConfiguration(AppSettings? settings)
     /// Answers a proxy that asks for a username and password.
     ///
     /// <para>
-    /// Guarded on the challenge naming a proxy. The same event fires when a <em>site</em> asks for
-    /// basic authentication, and handing a job board the proxy password because it happened to put
-    /// up a login box is not a mistake worth risking. When the challenge does not say proxy, the
-    /// prompt is left for the person.
+    /// A 407 from the proxy and a 401 from a site arrive on this same event, and the arguments
+    /// carry no flag saying which one asked. This used to guard on the challenge containing the
+    /// word "proxy", which never matched: the challenge string is the Proxy-Authenticate header
+    /// <em>value</em> alone - Basic realm=... - so it does not name a proxy even when a proxy is
+    /// what asked. The credentials were therefore never supplied, the 407 stood, and every page
+    /// in a proxied browser came back as an error page.
+    /// </para>
+    ///
+    /// <para>
+    /// So it answers whatever asks. That is narrower than it sounds: this is only ever called on
+    /// a browser that was built behind the proxy, which under the default ChatGpt scope is the
+    /// ChatGPT lanes and nothing else, and ChatGPT does not use basic authentication. Under the
+    /// All scope a job board could in principle see the password, which is the trade the scope
+    /// makes. Every challenge is traced with its URI so an unexpected one is visible.
     /// </para>
     /// </summary>
     public static void AttachCredentials(Microsoft.Web.WebView2.Core.CoreWebView2? core,
-        ProxyConfiguration proxy)
+        ProxyConfiguration proxy, Action<string, string>? trace = null)
     {
         var credential = proxy.Credential;
         if (core == null || credential == null) return;
+        var address = proxy.Address;
         core.BasicAuthenticationRequested += (_, e) =>
         {
-            if ((e.Challenge ?? "").IndexOf("proxy", StringComparison.OrdinalIgnoreCase) < 0) return;
             e.Response.UserName = credential.UserName;
             e.Response.Password = credential.Password;
+            trace?.Invoke("proxy authentication answered",
+                $"{address} asked: {e.Challenge} (for {e.Uri})");
         };
     }
 

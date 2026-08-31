@@ -1,4 +1,4 @@
-# DevStrider 10.28
+# DevStrider 10.30
 
 A Windows desktop app that tracks job bids for a team, backed by the company portal's API.
 
@@ -461,5 +461,5 @@ Two things are still worth knowing about:
 
 ## Version
 
-**10.28.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
+**10.30.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj`. The app
 shows it in the title bar so you can tell at a glance whether a build picked up the latest source.

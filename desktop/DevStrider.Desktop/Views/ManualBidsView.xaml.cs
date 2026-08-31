@@ -87,7 +87,9 @@ public partial class ManualBidsView : UserControl
         var browser = new WebView2 { Visibility = Visibility.Hidden };
         BrowserHost.Children.Add(browser);
         await browser.EnsureCoreWebView2Async(_environment);
-        if (proxy.AppliesToJobSites) ProxyConfiguration.AttachCredentials(browser.CoreWebView2, proxy);
+        if (proxy.AppliesToJobSites)
+            ProxyConfiguration.AttachCredentials(browser.CoreWebView2, proxy,
+                (message, detail) => Trace?.Step("Manual", message, detail));
         return browser;
     }
 

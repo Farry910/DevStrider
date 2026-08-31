@@ -290,35 +290,12 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         item.Error = "";
         var accepted = await _manualBids.AddAsync(item);
 
-        // Its siblings go with it. Every posting on one board is the same form behind the same
-        // adapter, so a posting-level failure on one is not a fact about that link — it is a fact
-        // about the board. Leaving the other five queued spends five more runs discovering it,
-        // which is the exact waste this hand-off exists to stop. Stronger evidence than the manual
-        // button has, in fact: that one is a guess, this one already failed.
-        var site = JobSiteApplyAdapters.SiteNameFor(item.Url);
-        var siblings = site.Length == 0
-            ? []
-            : JobQueue.Where(other => other.Id != item.Id
-                                      && other.Status == JobLinkQueueStatuses.Queued
-                                      && JobSiteApplyAdapters.SiteNameFor(other.Url)
-                                          .Equals(site, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-        var movedSiblings = 0;
-        foreach (var sibling in siblings)
-        {
-            sibling.Error = "";
-            if (!await _manualBids.AddAsync(sibling)) continue;
-            JobQueue.Remove(sibling);
-            movedSiblings++;
-        }
-        if (movedSiblings > 0)
-        {
-            _trace.Step("Manual", $"moved {movedSiblings} more {site} link(s) with it",
-                "same board, same form, same outcome");
-            _activity.Info("Auto bidding", $"{movedSiblings} more {site} link(s) moved to Manual Bidding",
-                "They are the same form behind the same adapter, so they were not left to fail one at a time.");
-        }
+        // Only this link moves. A posting-level failure used to take every queued link on the same
+        // board with it, on the reasoning that one form behind one adapter fails the same way for
+        // all of them. That over-reads a single failure: a posting can be malformed, gated or
+        // closed while its siblings are fine, and clearing twenty links off the queue on that
+        // evidence is a worse mistake than retrying one. Moving a whole board is still available
+        // deliberately - the group heading in Auto bidding carries a button for exactly that.
 
         // Its automation tab is finished with either way, and holding it keeps a slot the run needs.
         var tab = Tabs.FirstOrDefault(candidate => candidate.WorkItemId == item.Id);

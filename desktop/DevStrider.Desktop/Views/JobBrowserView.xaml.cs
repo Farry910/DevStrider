@@ -255,7 +255,9 @@ public partial class JobBrowserView : UserControl
         await browser.EnsureCoreWebView2Async(_environment);
         browser.CoreWebView2.SourceChanged += OnBrowserSourceChanged;
         browser.CoreWebView2.WebMessageReceived += OnJobSiteWebMessageReceived;
-        if (proxy.AppliesToJobSites) ProxyConfiguration.AttachCredentials(browser.CoreWebView2, proxy);
+        if (proxy.AppliesToJobSites)
+            ProxyConfiguration.AttachCredentials(browser.CoreWebView2, proxy,
+                (message, detail) => Trace?.Step("Browser", message, detail));
         return browser;
     }
 

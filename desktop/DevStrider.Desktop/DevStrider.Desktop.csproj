@@ -1603,6 +1603,21 @@
          page, wrote a fresh resume, filled the form, and stopped at Submit. Across the whole run
          the trace shows "using the description supplied by hand" once, "holding at Submit" once,
          and "clicking final Submit" zero times. -->
+    <!-- 10.30.0 makes proxy authentication actually answer.
+         AttachCredentials only supplied the username and password when the challenge string
+         contained the word "proxy". It never does: the challenge is the Proxy-Authenticate
+         header value alone, which for Bright Data reads Basic realm="Bright Data". So the
+         credentials were dropped on every 407, the tunnel never opened, and a proxied browser
+         showed ERR_TUNNEL_CONNECTION_FAILED on every page - the proxy setting was unusable as
+         shipped. It now answers the challenge and traces it with its URI, so a challenge from
+         somewhere unexpected is visible in the log rather than silent. -->
+    <!-- 10.29.0 stops a single failure from clearing a whole board.
+         A link the automation cannot apply still moves to Manual Bidding; the queued links that
+         happen to share its job board no longer move with it. The old behaviour read one
+         posting-level failure as a verdict on the adapter, but a posting can be malformed,
+         gated or closed on its own, and pulling twenty healthy links out of the queue on that
+         evidence costs more than retrying one. Moving a board wholesale is still a button on
+         the group heading, where it is a deliberate choice rather than an inference. -->
     <!-- 10.28.0 fills the form inside Manual Bidding, on the manual lane, reusing the resume.
 
          The previous cut of this handed the bid to the automatic queue, which was the wrong shape:
@@ -1633,7 +1648,7 @@
          generation in the pass: 18 fields filled, 7 text fields that would not take a value, and
          dropdowns reported as left for the person. A first cut reported "0 filled" on the same form
          because it read the script's filled/skipped counts as arrays when they are numbers. -->
-    <Version>10.28.0</Version>
+    <Version>10.30.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
