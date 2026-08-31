@@ -39,6 +39,7 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
     private readonly ActivityLogService _activity;
     private readonly BidTraceService _trace;
     private readonly SettingsService _settings;
+    private readonly ProfileContext _profiles;
 
     /// <summary>The run trace, for the view to write browser steps into.</summary>
     public BidTraceService Trace => _trace;
@@ -50,15 +51,25 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
     public AppSettings? ProxySettings => _settings.Current;
 
     public ManualBidsViewModel(ManualBidStore store, BidBoardService bids,
-        ActivityLogService activity, BidTraceService trace, SettingsService settings)
+        ActivityLogService activity, BidTraceService trace, SettingsService settings,
+        ProfileContext profiles)
     {
         _store = store;
         _bids = bids;
         _activity = activity;
         _trace = trace;
         _settings = settings;
+        _profiles = profiles;
+
         // A link the automatic run gave up on lands in the store, not here. This is how it appears.
         _store.Changed += () => _ = ReloadAsync();
+
+        // And this is how anything appears at all. The list is stored per profile, so it cannot be
+        // read until there is one — and this view-model is built during startup, before the profile
+        // has loaded. Without the subscription the constructor's read returns nothing and nothing
+        // ever asks again: the tab sits empty with a full list on disk behind it. It also covers
+        // switching profile, which is a different person's manual bids.
+        _profiles.ProfileChanged += () => _ = ReloadAsync();
         _ = ReloadAsync();
     }
 
@@ -73,7 +84,28 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
     private Guid? _resumeInFlight;
 
     [ObservableProperty] private string _linksInput = "";
+
+    /// <summary>
+    /// The one bid being worked on. The list is a list; everything you do happens to this.
+    ///
+    /// <para>
+    /// The tab used to render every bid as its own card with its own description box and its own
+    /// row of buttons, which at seven links was a wall nobody could read. You apply to one posting
+    /// at a time, so the screen shows one at a time.
+    /// </para>
+    /// </summary>
     [ObservableProperty] private JobLinkQueueItem? _selected;
+
+    public bool HasSelection => Selected != null;
+
+    partial void OnSelectedChanged(JobLinkQueueItem? value)
+    {
+        OnPropertyChanged(nameof(HasSelection));
+        // Whatever was typed into the last one's description box is on the item already — the box
+        // writes through on every keystroke — but only in memory. Persist it on the way out, or
+        // clicking to another link and back loses what was pasted.
+        _ = SaveAsync();
+    }
 
     public string Summary
     {
@@ -100,6 +132,8 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
 
     /// <summary>Ask the manual ChatGPT lane for a resume. The shell routes it.</summary>
     public event Action<ManualBidResumeRequest>? ResumeRequested;
+
+
 
     // ── loading ─────────────────────────────────────────────────────────────
 
@@ -251,6 +285,119 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
         if (AttachRequested != null) await AttachRequested(item.Id, item.ResumeFilePath);
     }
 
+
+    /// <summary>Read the questions off the form this bid has on screen.</summary>
+    public event Func<Guid, Task<string>>? QuestionsRequested;
+
+    /// <summary>Type the answers into that form, and report what landed.</summary>
+    public event Func<Guid, IReadOnlyDictionary<string, string>, Task<string>>? FillRequested;
+
+    /// <summary>Ask the manual ChatGPT lane for answers only. The shell routes it.</summary>
+    public event Action<ChatGptAnswerCorrectionRequest>? AnswersRequested;
+
+    /// <summary>Reference values for the answers - the profile and its personal facts.</summary>
+    public event Func<Task<string>>? KnownValuesRequested;
+
+    private Guid? _fillInFlight;
+
+    /// <summary>
+    /// Fills the form on screen, using the resume this bid already has.
+    ///
+    /// <para>
+    /// The one step the automation cannot do is reach the form; a person has just done it. Every
+    /// other step is the same work as an automatic run - read the questions, answer them against
+    /// the profile and the resume, type them in - so it is done here rather than handed anywhere.
+    /// </para>
+    ///
+    /// <para>
+    /// Entirely on this tab: this browser, and the manual ChatGPT lane. Nothing touches the
+    /// automatic queue, its browser, or its ChatGPT account, so a run in the other tab neither
+    /// waits for this nor is disturbed by it.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    private async Task AutoFillAsync(JobLinkQueueItem? item)
+    {
+        if (item == null) return;
+        if (_fillInFlight != null) { StatusMessage = "A form is already being filled."; return; }
+
+        if (string.IsNullOrWhiteSpace(item.ResumeContent) || string.IsNullOrWhiteSpace(item.ResumeFilePath))
+        {
+            StatusMessage = "Generate this bid's resume first — the answers are written against it.";
+            return;
+        }
+        if (QuestionsRequested == null || KnownValuesRequested == null) return;
+
+        _fillInFlight = item.Id;
+        try
+        {
+            StatusMessage = "Reading the form...";
+            var questions = await QuestionsRequested(item.Id);
+            if (string.IsNullOrWhiteSpace(questions) || questions.Trim() == "[]")
+            {
+                StatusMessage = "No form fields found on this page. Navigate to the application form first.";
+                _fillInFlight = null;
+                return;
+            }
+            item.FormQuestionsJson = questions;
+            await SaveAsync();
+
+            _trace.Step("Manual", "questions read from the form on screen", questions.Length + " chars");
+            StatusMessage = "Asking ChatGPT for the answers — the resume is already written, so this is quick.";
+            AnswersRequested?.Invoke(new ChatGptAnswerCorrectionRequest(
+                item.Id, "", "", questions, await KnownValuesRequested(), "{}",
+                (item.JobDescription ?? "").Trim(), FirstPass: true, ResumeContent: item.ResumeContent));
+        }
+        catch (Exception ex)
+        {
+            _fillInFlight = null;
+            item.Error = ex.Message;
+            StatusMessage = "Could not read the form: " + ex.Message;
+            _trace.Warn("Manual", "auto-fill failed to start", ex.Message);
+        }
+    }
+
+    /// <summary>Answers came back from the manual lane: screen them, then type them in.</summary>
+    public async Task AcceptAnswersAsync(ChatGptAnswerCorrectionResult result)
+    {
+        var item = Bids.FirstOrDefault(b => b.Id == result.WorkItemId);
+        _fillInFlight = null;
+        if (item == null || FillRequested == null) return;
+
+        item.AnswersJson = result.AnswersJson;
+        await SaveAsync();
+
+        Dictionary<string, string> answers;
+        try
+        {
+            answers = System.Text.Json.JsonSerializer
+                .Deserialize<Dictionary<string, string>>(result.AnswersJson) ?? new();
+        }
+        catch (System.Text.Json.JsonException) { answers = new(); }
+
+        if (answers.Count == 0)
+        {
+            StatusMessage = "ChatGPT returned no usable answers. Try again, or fill the form yourself.";
+            return;
+        }
+
+        var filled = await FillRequested(item.Id, answers);
+        _activity.Success("Manual Bids", "Form filled", item.Url + " — " + filled);
+        _trace.Ok("Manual", "form filled from the existing resume", filled);
+        StatusMessage = filled + " Check it, attach the resume, and submit yourself.";
+        Notify();
+    }
+
+    /// <summary>The answers request failed. The form is untouched.</summary>
+    public Task MarkAnswersFailedAsync(Guid workItemId, string message)
+    {
+        _fillInFlight = null;
+        var item = Bids.FirstOrDefault(b => b.Id == workItemId);
+        if (item != null) item.Error = message;
+        StatusMessage = "Could not get answers: " + message;
+        return Task.CompletedTask;
+    }
+
     [RelayCommand]
     private void RevealResume(JobLinkQueueItem? item)
     {
@@ -334,6 +481,8 @@ public sealed partial class ManualBidsViewModel : ViewModelBase
 
         item.ResumeFilePath = result.ResumeFilePath ?? "";
         item.BidId = result.BidId;
+        // Kept so this form can be filled later without asking ChatGPT for the resume again.
+        item.ResumeContent = result.ResumeContent ?? "";
         SetStatus(item, JobLinkQueueStatuses.ManualResumeReady);
         if (_resumeInFlight == item.Id) _resumeInFlight = null;
         await SaveAsync();

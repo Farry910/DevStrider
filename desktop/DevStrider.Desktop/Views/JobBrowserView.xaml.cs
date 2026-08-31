@@ -515,6 +515,18 @@ public partial class JobBrowserView : UserControl
                 Trace?.Step("Extract", "using the description supplied by hand",
                     $"{supplied.Length} chars; the posting was not read");
 
+            // Put it on the work item now, not at the end of the run.
+            //
+            // It used to reach the item only through AcceptExtractedPageAsync, which is several
+            // steps further on — past opening the form, which is where most links that fail
+            // actually fail. So the commonest failure was also the one that threw the description
+            // away: the run read seven thousand characters of a posting, could not find its form,
+            // and handed the link to Manual Bidding with an empty description box for somebody to
+            // copy across again by hand. Saved here, the hand-off carries it, which is the whole
+            // reason the hand-off is worth having.
+            if (!usable && jobDescription.Length > 0)
+                await vm.RecordExtractedDescriptionAsync(jobDescription);
+
             gate = await OpenApplicationFormAsync(contract, uri, posting);
             if (!string.IsNullOrWhiteSpace(gate))
             {
@@ -1845,6 +1857,14 @@ public partial class JobBrowserView : UserControl
     /// clicks final Submit after the primary/correction fill. Site errors become second-pass input;
     /// a successful submission completes the queue item.
     /// </summary>
+    /// <summary>
+    /// Whether this run stops at Submit rather than pressing it. Read per call from live settings,
+    /// so changing it takes effect on the next application rather than at the next restart.
+    /// </summary>
+    private static bool HoldsBeforeSubmit() =>
+        (App.Services?.GetService(typeof(SettingsService)) as SettingsService)
+            ?.Current?.HoldBeforeFinalSubmit ?? true;
+
     private async Task<ApplicationValidationOutcome> ValidateAndAdvanceAsync(
         JobBrowserViewModel vm, FillOutcome initial)
     {
@@ -1956,6 +1976,21 @@ public partial class JobBrowserView : UserControl
                           string.Join("; ", aggregate.UnfilledRequired.Take(6)) +
                           (aggregate.UnfilledRequired.Count > 6 ? "; …" : "") +
                           " Check what the site returned.");
+            }
+
+            // The one irreversible step, and the one that reaches somebody outside this machine.
+            // Held by default: the form is filled, validated and advanced, and then left with
+            // Submit on screen for a person to press. The button is scrolled into view by the
+            // validation script that located it, so the tab is parked showing the thing to click.
+            if (action == "final" && HoldsBeforeSubmit())
+            {
+                Trace?.Ok("Validate", "holding at Submit",
+                    "the application is filled and ready; Submit was not pressed. " +
+                    "Settings > Automatic runs turns this off.");
+                notes.Add("Filled and ready. Submit was not pressed — review it and submit yourself. " +
+                          "(Settings → Automatic runs → Hold before final submit.)");
+                return new ApplicationValidationOutcome(aggregate, string.Join(" ", notes), errors,
+                    Submitted: false);
             }
 
             if (action == "final" && TryCoordinates(root, out var submitX, out var submitY))
@@ -2255,7 +2290,8 @@ public partial class JobBrowserView : UserControl
             JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable."), value);
 
     /// <summary>Types into a named browser. Same reason as the click above.</summary>
-    private static async Task DispatchTextEntryAsync(CoreWebView2 core, string value)
+    /// <remarks>internal so the Manual Bidding tab can type into its own browser the same way.</remarks>
+    internal static async Task DispatchTextEntryAsync(CoreWebView2 core, string value)
     {
         async Task KeyAsync(string type, string key, string code, int virtualKey, int modifiers = 0) =>
             await core.CallDevToolsProtocolMethodAsync("Input.dispatchKeyEvent", JsonSerializer.Serialize(new
@@ -2342,7 +2378,8 @@ public partial class JobBrowserView : UserControl
             JobSiteBrowser.CoreWebView2 ?? throw new InvalidOperationException("The job browser is unavailable."), x, y);
 
     /// <summary>Clicks in a named browser, so a parked tab can be driven without being the current one.</summary>
-    private static async Task DispatchMouseClickAsync(CoreWebView2 core, double x, double y)
+    /// <remarks>internal so the Manual Bidding tab can click in its own browser the same way.</remarks>
+    internal static async Task DispatchMouseClickAsync(CoreWebView2 core, double x, double y)
     {
         await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", JsonSerializer.Serialize(new
         {

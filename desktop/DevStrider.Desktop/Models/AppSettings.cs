@@ -110,6 +110,25 @@ public class AppSettings
     public bool AutomaticRunInBackground { get; set; } = true;
 
     /// <summary>
+    /// Stop with the Submit button in view instead of pressing it.
+    ///
+    /// <para>
+    /// The run does everything else — navigate, read the description, write the resume, fill the
+    /// form, validate it, advance a multi-step page — and then parks the application for review
+    /// with nothing sent. Pressing Submit is the one action in a run that cannot be undone and that
+    /// reaches somebody outside this machine, so it is the one that defaults to being a person's.
+    /// </para>
+    ///
+    /// <para>
+    /// Off, the run clicks Submit itself and reads the site's answer, which is genuinely better
+    /// evidence than this app's reading of the form: a confirmation page proves the application
+    /// landed, and a rejection names what is wrong more accurately than any local check. That is a
+    /// real trade, and it is the reason this is a switch rather than a removal.
+    /// </para>
+    /// </summary>
+    public bool HoldBeforeFinalSubmit { get; set; } = true;
+
+    /// <summary>
     /// Opens the <c>/dev/*</c> endpoints on the local listener: app state, the activity log, and
     /// script/DOM/screenshot access to the embedded browsers.
     ///
@@ -314,6 +333,18 @@ public sealed partial class JobLinkQueueItem : ObservableObject
     public string FormQuestionsJson { get; set; } = "[]";
     public string AnswersJson { get; set; } = "{}";
     public string ResumeFilePath { get; set; } = "";
+
+    /// <summary>
+    /// The resume text as ChatGPT wrote it, kept beside the file.
+    ///
+    /// <para>
+    /// This is what lets a form be filled later without generating anything again. The obvious
+    /// alternative - reopen the ChatGPT conversation that wrote it - fails two ways: a resume chat
+    /// is retired every ResumeGenerationsPerChat, and a conversation belongs to the lane that
+    /// created it. The text belongs to the row and neither expires nor moves.
+    /// </para>
+    /// </summary>
+    public string ResumeContent { get; set; } = "";
     public string BidId { get; set; } = "";
     public string AdapterName { get; set; } = "";
     public string Error { get; set; } = "";
@@ -344,6 +375,7 @@ public sealed partial class JobLinkQueueItem : ObservableObject
         FormQuestionsJson = FormQuestionsJson,
         AnswersJson = AnswersJson,
         ResumeFilePath = ResumeFilePath,
+        ResumeContent = ResumeContent,
         BidId = BidId,
         AdapterName = AdapterName,
         Error = Error,

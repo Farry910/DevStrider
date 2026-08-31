@@ -48,6 +48,8 @@ public partial class ManualBidsView : UserControl
         _attached = vm;
         vm.OpenRequested += OpenAsync;
         vm.AttachRequested += AttachResumeAsync;
+        vm.QuestionsRequested += ReadQuestionsAsync;
+        vm.FillRequested += FillAsync;
     }
 
     private void Detach()
@@ -55,6 +57,8 @@ public partial class ManualBidsView : UserControl
         if (_attached == null) return;
         _attached.OpenRequested -= OpenAsync;
         _attached.AttachRequested -= AttachResumeAsync;
+        _attached.QuestionsRequested -= ReadQuestionsAsync;
+        _attached.FillRequested -= FillAsync;
         _attached = null;
     }
 
@@ -115,6 +119,111 @@ public partial class ManualBidsView : UserControl
             vm.StatusMessage = $"Couldn't open the posting: {ex.Message}";
             Trace?.Warn("Manual", "could not open the posting", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Where this bid browser is pointed. Empty when it was never opened, which is the case the
+    /// caller has to tell apart: there is no form on screen to hand over.
+    /// </summary>
+    private string CurrentUrlFor(Guid workItemId) =>
+        _browsers.TryGetValue(workItemId, out var browser) ? browser.CoreWebView2?.Source ?? "" : "";
+
+
+    /// <summary>
+    /// Reads the form on screen with the same script the automatic run uses.
+    ///
+    /// <para>
+    /// The scripts in <see cref="JobSiteFormAdapters"/> are static builders that take a URL and
+    /// return JavaScript, so they run against any browser. That is what lets this tab do the same
+    /// reading and filling without a second copy of the engine or a share of the other tab.
+    /// </para>
+    /// </summary>
+    private async Task<string> ReadQuestionsAsync(Guid workItemId)
+    {
+        if (!_browsers.TryGetValue(workItemId, out var browser) || browser.CoreWebView2 == null) return "[]";
+        var json = await browser.ExecuteScriptAsync(JobSiteFormAdapters.QuestionsScript);
+        Trace?.Step("Manual", "questions read", (json ?? "").Length + " chars");
+        return string.IsNullOrWhiteSpace(json) ? "[]" : json;
+    }
+
+    /// <summary>
+    /// Types the answers into the form on screen and reports what landed.
+    ///
+    /// <para>
+    /// Values go in through the same fill script the run uses, which reaches text boxes, radios and
+    /// checkboxes. Comboboxes and custom dropdowns need the click choreography the automatic path
+    /// has, and are left for the person - which is the honest split, since they are also the ones
+    /// most likely to be got wrong silently.
+    /// </para>
+    /// </summary>
+    private async Task<string> FillAsync(Guid workItemId, IReadOnlyDictionary<string, string> answers)
+    {
+        if (!_browsers.TryGetValue(workItemId, out var browser) || browser.CoreWebView2 == null)
+            return "That bid has no browser open.";
+        if (!Uri.TryCreate(browser.CoreWebView2.Source, UriKind.Absolute, out var uri))
+            return "That tab is not on a page.";
+        ShowOnly(browser);
+        var core = browser.CoreWebView2;
+
+        // Pass one: everything the script can set directly - radios, checkboxes, native selects.
+        // It also *plans* the text fields rather than typing them, which is why pass two exists.
+        var raw = await core.ExecuteScriptAsync(JobSiteFormAdapters.BuildFillScript(uri, answers));
+        Trace?.Payload("Manual", "fill result", raw ?? "");
+        int direct = 0, skipped = 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw ?? "{}");
+            // Numbers, not arrays. Reading them as arrays is why the first cut of this reported
+            // "0 filled" on a form it had actually planned a dozen fields for.
+            if (doc.RootElement.TryGetProperty("filled", out var f) && f.ValueKind == JsonValueKind.Number)
+                direct = f.GetInt32();
+            if (doc.RootElement.TryGetProperty("skipped", out var k) && k.ValueKind == JsonValueKind.Number)
+                skipped = k.GetInt32();
+        }
+        catch (JsonException) { return "The form did not answer in a shape this could read."; }
+
+        // Pass two: type the planned text fields the way a person would - click the field, send
+        // real key events, then read it back. Controlled React inputs discard a value simply
+        // assigned to them, which is what the plan-then-type split is for.
+        var typed = 0; var planned = 0;
+        var planJson = await core.ExecuteScriptAsync(JobSiteFormAdapters.TextFieldPlanScript);
+        try
+        {
+            using var plan = JsonDocument.Parse(planJson ?? "[]");
+            if (plan.RootElement.ValueKind == JsonValueKind.Array)
+                foreach (var entry in plan.RootElement.EnumerateArray())
+                {
+                    planned++;
+                    var index = entry.GetProperty("index").GetInt32();
+                    var label = entry.GetProperty("label").GetString() ?? "";
+                    var value = entry.GetProperty("value").GetString() ?? "";
+
+                    var targetJson = await core.ExecuteScriptAsync(
+                        JobSiteFormAdapters.BuildTextFieldTargetScript(index));
+                    using var target = JsonDocument.Parse(targetJson ?? "{}");
+                    if (!target.RootElement.TryGetProperty("ok", out var ok) || !ok.GetBoolean()) continue;
+
+                    await JobBrowserView.DispatchMouseClickAsync(core,
+                        target.RootElement.GetProperty("x").GetDouble(),
+                        target.RootElement.GetProperty("y").GetDouble());
+                    await JobBrowserView.DispatchTextEntryAsync(core, value);
+                    await Task.Delay(600);
+
+                    var verifiedJson = await core.ExecuteScriptAsync(
+                        JobSiteFormAdapters.BuildTextFieldVerifyScript(index));
+                    using var verified = JsonDocument.Parse(verifiedJson ?? "{}");
+                    if (verified.RootElement.TryGetProperty("ok", out var vok) && vok.GetBoolean()) typed++;
+                    else Trace?.Warn("Manual", $"value did not persist for \"{label}\"", "left for you");
+                }
+        }
+        catch (JsonException) { /* the plan is optional; pass one still counts */ }
+
+        var note = $"Filled {direct + typed} field(s)";
+        if (planned > typed) note += $", {planned - typed} text field(s) would not take a value";
+        if (skipped > 0) note += $", {skipped} skipped";
+        // Comboboxes and custom dropdowns need the click choreography the automatic path carries.
+        // They are left alone here rather than half-set, which is the failure that is hard to spot.
+        return note + ". Dropdowns are left for you.";
     }
 
     private void ShowOnly(WebView2 browser)

@@ -4,8 +4,8 @@
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="440"/></Grid.ColumnDefinitions>
 
-    <!-- This tab's own browser. Separate from the Job Browser's, so an automatic run parking a
-         review never competes with a form being filled here, and neither waits on the other. -->
+    <!-- This tab's own browser. Separate from the Auto bidding tab's, so a run parking a review
+         never competes with a form being filled here, and neither waits on the other. -->
     <Grid Grid.Column="0" Margin="0,0,12,0">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
       <TextBlock Grid.Row="0" Margin="0,0,0,8" Style="{StaticResource MutedText}" TextWrapping="Wrap"
@@ -20,81 +20,99 @@
       <StackPanel>
         <TextBlock Text="Manual Bidding" Style="{StaticResource H1}"/>
         <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"
-                   Text="Postings you apply to yourself. Paste the description and the resume is written behind you, on its own ChatGPT account — so this runs at the same time as an automatic queue rather than after it."/>
+                   Text="Postings you apply to yourself. Pick one, copy its description across, and the resume is written behind you while you fill the form."/>
 
+        <!--
+          The list first, then the one you picked. Every bid used to render as its own card with
+          its own description box and its own row of buttons — a wall at seven links, and you only
+          ever work on one at a time.
+        -->
         <Border Style="{StaticResource Card}" Margin="0,0,0,12">
           <StackPanel>
-            <TextBlock Text="Add links" FontWeight="SemiBold"/>
-            <TextBox Text="{Binding LinksInput, UpdateSourceTrigger=PropertyChanged}"
-                     AcceptsReturn="True" Height="60" VerticalScrollBarVisibility="Auto"
-                     Margin="0,6,0,8" Tag="One job URL per line"/>
-            <Button Command="{Binding AddLinksCommand}" Content="Add" HorizontalAlignment="Left"/>
+            <TextBlock Text="Links" FontWeight="SemiBold"/>
             <TextBlock Text="{Binding Summary}" Style="{StaticResource MutedText}"
-                       TextWrapping="Wrap" Margin="0,8,0,0"/>
-            <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       TextWrapping="Wrap" Margin="0,4,0,6"/>
+            <ListBox ItemsSource="{Binding Bids}" SelectedItem="{Binding Selected}"
+                     MaxHeight="220" BorderThickness="1"
+                     Visibility="{Binding HasBids, Converter={StaticResource BooleanToVisibilityConverter}}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel LastChildFill="True" Margin="0,1">
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontSize="10"
+                               Opacity="0.7" VerticalAlignment="Center" Margin="8,0,0,0"/>
+                    <TextBlock Text="{Binding Url}" FontSize="11" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Url}"/>
+                  </DockPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+              <TextBox Text="{Binding LinksInput, UpdateSourceTrigger=PropertyChanged}"
+                       Width="270" Margin="0,0,8,0" Tag="paste a job URL"/>
+              <Button Command="{Binding AddLinksCommand}" Content="Add"/>
+            </StackPanel>
+            <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Margin="0,8,0,0"
                        Visibility="{Binding StatusMessage, Converter={StaticResource NonEmptyToVisible}}"/>
           </StackPanel>
         </Border>
 
-        <ItemsControl ItemsSource="{Binding Bids}">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Border Style="{StaticResource Card}" Margin="0,0,0,10">
-                <StackPanel>
-                  <DockPanel Margin="0,0,0,4">
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding Status}" FontSize="11"
-                               Opacity="0.75" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                    <TextBlock Text="{Binding Url}" TextTrimming="CharacterEllipsis" FontSize="12"/>
-                  </DockPanel>
-                  <TextBlock Text="{Binding Error}" FontSize="11" Foreground="#C0392B"
-                             TextWrapping="Wrap" Margin="0,0,0,4"
-                             Visibility="{Binding Error, Converter={StaticResource NonEmptyToVisible}}"/>
+        <!-- The one being worked on. -->
+        <Border Style="{StaticResource Card}"
+                Visibility="{Binding HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}">
+          <StackPanel>
+            <TextBlock Text="{Binding Selected.Url}" FontWeight="SemiBold" FontSize="12"
+                       TextWrapping="Wrap" Margin="0,0,0,2"/>
+            <TextBlock Text="{Binding Selected.Status}" Style="{StaticResource MutedText}"
+                       FontSize="11" Margin="0,0,0,6"/>
+            <TextBlock Text="{Binding Selected.Error}" FontSize="11" Foreground="#C0392B"
+                       TextWrapping="Wrap" Margin="0,0,0,6"
+                       Visibility="{Binding Selected.Error, Converter={StaticResource NonEmptyToVisible}}"/>
 
-                  <TextBox Text="{Binding JobDescription, UpdateSourceTrigger=PropertyChanged}"
-                           AcceptsReturn="True" Height="80" TextWrapping="Wrap"
-                           VerticalScrollBarVisibility="Auto" Margin="0,0,0,6"
-                           Tag="paste this posting's job description"/>
+            <WrapPanel Margin="0,0,0,8">
+              <Button Content="Open in this tab" Margin="0,0,6,6"
+                      Command="{Binding OpenCommand}" CommandParameter="{Binding Selected}"
+                      ToolTip="Navigates this tab's browser to the posting and leaves it alone."/>
+              <Button Content="Attach resume" Margin="0,0,6,6"
+                      Command="{Binding AttachCommand}" CommandParameter="{Binding Selected}"
+                      ToolTip="Puts the file into this form's upload field. Not automatic — a form can rerender when its file input changes, and that is not something to do underneath you mid-field."/>
+              <Button Content="Show file" Margin="0,0,6,6"
+                      Command="{Binding RevealResumeCommand}" CommandParameter="{Binding Selected}"/>
+            </WrapPanel>
 
-                  <WrapPanel>
-                    <Button Content="Open" Margin="0,0,6,6"
-                            Command="{Binding DataContext.OpenCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"
-                            ToolTip="Opens the posting in this tab's browser and leaves it alone."/>
-                    <Button Content="Queue resume" Margin="0,0,6,6"
-                            Command="{Binding DataContext.QueueResumeCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"
-                            ToolTip="Written in the background, one at a time. The form does not have to be open — a description is all a resume needs."/>
-                    <Button Content="Attach resume" Margin="0,0,6,6"
-                            Command="{Binding DataContext.AttachCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"
-                            ToolTip="Puts the file into this form's upload field. Not automatic — a form can rerender when its file input changes, and that is not something to do underneath you mid-field."/>
-                    <Button Content="Show file" Margin="0,0,6,6"
-                            Command="{Binding DataContext.RevealResumeCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"/>
-                    <Button Content="I submitted this" Margin="0,0,6,6"
-                            Command="{Binding DataContext.MarkSubmittedCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"
-                            ToolTip="Records the bid as applied. The app is not driving this page and cannot see you press submit, so it is told."/>
-                    <Button Content="Remove" Margin="0,0,6,6"
-                            Command="{Binding DataContext.RemoveCommand,
-                              RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
-                            CommandParameter="{Binding}"/>
-                  </WrapPanel>
-                </StackPanel>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+            <TextBlock Text="Job description" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4"/>
+            <TextBlock Style="{StaticResource MutedText}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4"
+                       Text="Copy it off the posting and paste it here. The form does not have to be open — a description is all a resume needs."/>
+            <TextBox Text="{Binding Selected.JobDescription, UpdateSourceTrigger=PropertyChanged}"
+                     AcceptsReturn="True" Height="130" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"/>
+
+            <WrapPanel>
+              <Button Content="Queue resume" Margin="0,0,6,6"
+                      Command="{Binding QueueResumeCommand}" CommandParameter="{Binding Selected}"
+                      ToolTip="Written in the background, one at a time, while you fill the form."/>
+              <!--
+                The loop closed. A link lands here because the run could not reach its form; once
+                you have, that obstacle is gone and everything else the run needs is already on
+                this row - the description, the resume, the recorded bid. So it goes back to the
+                queue carrying the form address you are looking at, and the run fills it.
+              -->
+              <Button Content="Auto-fill this form" Margin="0,0,6,6"
+                      Command="{Binding AutoFillCommand}" CommandParameter="{Binding Selected}"
+                      ToolTip="Reads the form on screen and fills it, using the resume already written for this bid. Stays on this tab and this ChatGPT account — the automatic queue is not touched. Navigate to the application form first."/>
+              <Button Content="I submitted this" Margin="0,0,6,6"
+                      Command="{Binding MarkSubmittedCommand}" CommandParameter="{Binding Selected}"
+                      ToolTip="Records the bid as applied. The app is not driving this page and cannot see you press submit, so it is told."/>
+              <Button Content="Remove" Margin="0,0,6,6"
+                      Command="{Binding RemoveCommand}" CommandParameter="{Binding Selected}"/>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
 
         <Border Style="{StaticResource Card}"
                 Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
           <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
-                     Text="Links the automatic queue cannot apply — a form no adapter matches, a page behind a human gate — arrive here on their own, usually with their job description already read."/>
+                     Text="Nothing here yet. Links the automatic queue cannot apply — a form no adapter matches, a page behind a human gate — arrive on their own, usually with their job description already read."/>
         </Border>
       </StackPanel>
     </ScrollViewer>

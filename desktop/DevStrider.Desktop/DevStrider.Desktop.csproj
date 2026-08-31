@@ -1488,7 +1488,152 @@
 
          Verified live: both lanes still register and initialise - /dev/browsers lists chatgpt and
          chatgpt-manual ready - and no startup errors. -->
-    <Version>10.25.1</Version>
+    <!-- 10.25.2 keeps the job description on the link the moment it is read.
+
+         It used to reach the work item only through AcceptExtractedPageAsync, which runs several
+         steps later - past opening the form, which is where most links that fail actually fail.
+         So the commonest failure was also the one that threw the description away. Found by
+         running it rather than reasoning about it: a real single-link run on a Deel posting read
+         7,642 characters, could not find the form, and handed the link to Manual Bidding with an
+         empty description box - asking a person to copy across what the app had just read.
+
+         Recorded on the item as soon as it is read now, and saved. Re-running the same link
+         afterwards: 7,642 characters arrive with it.
+
+         A sibling moved by the group rule still arrives empty, and that is correct rather than a
+         gap. The run never visited that posting, so nothing has read it; copying one job's
+         description onto a different one would be inventing it. -->
+    <!-- 10.25.3 moves links to Manual Bidding without annotating them.
+
+         The hand-off used to stamp the failure reason onto every row it moved, and onto every
+         sibling it took with it - a line of noise per link, and a long one, since the reason is a
+         whole format-contract summary. Once a link is on the manual list, why the automation gave
+         up does not change what happens next: you open it, copy the description across, and queue
+         a resume. The reason is in the activity log and the trace if it is ever wanted.
+
+         Rows also arrive with any error from an earlier attempt cleared, for the same reason.
+         The error line on a row is kept for what it is actually good for - a description too thin
+         to use, a resume that failed - which are things a person can act on. -->
+    <!-- 10.25.4 makes Manual Bidding a list you pick from, rather than every bid at once.
+
+         Every row used to render as its own card with its own description box, its own error line
+         and its own row of six buttons. At seven links that is a wall, and it is the wrong shape
+         besides: you apply to one posting at a time, so the screen should show one at a time.
+
+         A compact list now - one line per link, url and status - and below it the one that is
+         selected, with the description box and the actions. Selecting also persists whatever was
+         typed into the previous one's box, since the box writes through on each keystroke but
+         only into memory, and clicking away and back would otherwise lose a pasted description. -->
+    <!-- 10.25.5 fixes background runs stalling on ChatGPT. A regression from 10.23.
+
+         Reported as "GPT doesn't reply within 3 minutes", with the right guess behind it:
+         rendering was blocked. The log said so once read - "prompt did not land in the composer -
+         retrying", then "gave up waiting for a reply - a reply arrived (0 chars) but never
+         satisfied the shape check". The prompt did land; the reply never rendered.
+
+         10.23 made background running the default after measuring that a hidden WebView2 keeps its
+         timers at full rate. It does - 131 of 132 ticks - and DOM writes, read-back and layout all
+         work too, which is why it looked safe. What stops dead is requestAnimationFrame: 0 frames
+         against 394. That was dismissed as animation rather than logic, and it is not. ChatGPT
+         streams a reply over the network and then renders it, and the render commits inside an
+         animation frame. No frames, no text in the DOM, and a run polling innerText waits out its
+         three minutes for an answer that has already arrived and cannot be seen.
+
+         The two ChatGPT workspaces are no longer hidden. They stay Visible and are parked off the
+         side of the window by a large negative margin, so WebView2 keeps painting them and the
+         window clips them. Chromium's occlusion throttling would ordinarily punish that and is
+         already disabled - see BrowserLaunch. The job-site browsers are left hidden: they are
+         driven by DevTools input and DOM reads, and every failed run reached the generation step,
+         which is evidence they work that way.
+
+         Measured after: both panes visible with 394 and 397 frames while neither is the selected
+         tab. Proven on the live app - a manual bid with a 7,642-character description generated on
+         the parked lane and came back in under 45 seconds, with the Word file on disk and the bid
+         recorded, where the same lane had been timing out at three minutes.
+
+         Also fixed, found while testing: ManualBidsViewModel read its list in its constructor,
+         which runs before the profile exists, and nothing asked again - so the Manual Bidding tab
+         could sit empty with a full list on disk behind it. It now reloads on ProfileChanged,
+         which also covers switching profile. -->
+    <!-- 10.26.0 stops before pressing Submit, by default.
+
+         A run did everything including the final click: BuildValidationScript was called with
+         allowSafeAdvance:true, returned the Submit button's coordinates, and the host dispatched a
+         real mouse click on it. Nobody confirmed anything. The Auto bidding tab meanwhile told the
+         user, in its own subtitle, that DevStrider "pauses before every final submission" - which
+         it did not. That text is corrected too.
+
+         Now the run navigates, reads the description, writes the resume, fills the form, validates
+         it and advances multi-step pages, and then stops with Submit on screen and the application
+         parked for review. Pressing it is the one action in a run that cannot be undone and that
+         reaches somebody outside this machine, so it is the one that belongs to a person.
+
+         A switch rather than a removal, because the old behaviour bought something real: the site's
+         answer to a submission is better evidence than any local check - a confirmation page proves
+         the application landed, and a rejection names what is wrong more accurately than this app's
+         reading of the form. Settings > Automatic runs > Hold before final submit, default on.
+
+         Verified on the live app across three real postings - two Ashby, one Greenhouse. All three
+         reached "Ready for review" with their tabs open and bids recorded; the validation script
+         reported action:"final" on each; and across the whole run the trace contains "holding at
+         Submit" four times and "clicking final Submit" zero times. Nothing was sent. -->
+    <!-- 10.27.0 closes the loop between the two tabs: Manual Bidding can hand a bid back.
+
+         A link reaches Manual Bidding because the run could not *reach* its form - no adapter
+         matched, the apply control was not recognised, a gate was in the way. None of that is a
+         statement about the form itself, and the moment a person has navigated to it the obstacle
+         is gone. Everything else a run needs is already on the row by then: the description, the
+         resume, the recorded bid. Filling twenty fields is the part the machine is good at.
+
+         So "Auto-fill this form" hands the row back to the queue carrying the address of whatever
+         page is on screen, and the ordinary pipeline takes it - it navigates straight to a link
+         that names its own form rather than hunting for one, and uses a supplied description
+         rather than reading the page. The bid id travels too: CaptureAsync dedups on URL, and the
+         URL is now the form's rather than the posting's, so without it the run would open a second
+         row for the same job. It runs immediately and only that link, because pressing the button
+         in the other tab is the approval.
+
+         The description is required rather than optional. Without one the run would try to read a
+         job description off the application form, which is a page of input labels, and fail its
+         structural check.
+
+         Verified live end to end on a real Ashby posting with a 3,062-character description: the
+         row left the manual list, arrived in the queue as Apply/Queued with its description, bid
+         id and resume intact, the run used the supplied description instead of re-reading the
+         page, wrote a fresh resume, filled the form, and stopped at Submit. Across the whole run
+         the trace shows "using the description supplied by hand" once, "holding at Submit" once,
+         and "clicking final Submit" zero times. -->
+    <!-- 10.28.0 fills the form inside Manual Bidding, on the manual lane, reusing the resume.
+
+         The previous cut of this handed the bid to the automatic queue, which was the wrong shape:
+         it took a queue slot, drove the auto browser and spent the auto ChatGPT account. A form a
+         person is filling by hand must not cost the run anything. It is all done on this tab now -
+         this browser, this lane - and the automatic queue is not touched.
+
+         The one step the automation cannot do is reach the form, and by this point a person has.
+         Everything after that is the same work as a run: read the questions, answer them against
+         the profile and the resume, type them in. So the resume is not written again. It is stored
+         on the row as text when it is generated and passed to the answers prompt as context, which
+         that prompt already accepts. Reusing the ChatGPT *conversation* instead would have been the
+         obvious move and is the wrong one twice over - a resume chat is retired every
+         ResumeGenerationsPerChat, and a conversation belongs to the lane that opened it, so the
+         other lane either cannot see it or is refused it by the conversation registry.
+
+         One request type serves both answer passes now: FirstPass asks for answers outright with
+         the resume supplied, and the existing path asks for corrections to answers a site rejected.
+         Same driver, same browser, same JSON reader - only the wording differs.
+
+         Filling is two passes, because the fill script sets radios, checkboxes and native selects
+         directly but only *plans* text fields: a controlled React input discards a value simply
+         assigned to it. Pass two clicks each planned field, sends real key events and reads the
+         value back. Comboboxes and custom dropdowns need the click choreography the automatic path
+         carries and are left alone rather than half-set, which is the failure that is hard to spot.
+
+         Verified live on a real Ashby application form, with the resume already written and no
+         generation in the pass: 18 fields filled, 7 text fields that would not take a value, and
+         dropdowns reported as left for the person. A first cut reported "0 filled" on the same form
+         because it read the script's filled/skipped counts as arrays when they are numbers. -->
+    <Version>10.28.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

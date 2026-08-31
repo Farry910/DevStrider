@@ -5,7 +5,7 @@
   <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="420"/></Grid.ColumnDefinitions>
     <Grid Grid.Column="0" Margin="0,0,12,0">
-      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
       <DockPanel Margin="0,0,0,8">
         <Button DockPanel.Dock="Right" Click="OnNavigate" Content="Go" Margin="8,0,0,0"/>
         <TextBox Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}" VerticalContentAlignment="Center"/>
@@ -13,10 +13,12 @@
 
       <!-- One tab per open application. The run drives one of them; the others are filled forms
            waiting for a person, which is why a batch no longer stops once per link. -->
-      <ItemsControl Grid.Row="1" ItemsSource="{Binding Tabs}" Margin="0,0,0,8"
+      <ScrollViewer Grid.Row="1" Margin="0,0,0,6"
+                    HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                     Visibility="{Binding ShowTabStrip, Converter={StaticResource BooleanToVisibilityConverter}}">
+      <ItemsControl ItemsSource="{Binding Tabs}">
         <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+          <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate>
@@ -25,7 +27,7 @@
                  posting URL can carry sixty characters of slug - which is what made these span
                  the pane. -->
             <Button Click="OnSelectTab" Tag="{Binding}" Style="{StaticResource ApplicationTab}"
-                    Margin="0,0,6,6">
+                    Margin="0,0,4,0" Padding="8,3">
               <!-- Ctrl+click opens this, and so does a right-click. A modifier that acted on its own
                    would put "remove this application" one slip away from a plain tab switch, so the
                    gesture opens the choice rather than making it. -->
@@ -48,25 +50,47 @@
               </Button.ToolTip>
               <StackPanel Orientation="Horizontal">
                 <Ellipse Style="{StaticResource ApplicationTabDot}"/>
-                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
-                           MaxWidth="150" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                <TextBlock Text="{Binding Title}" FontSize="11" FontWeight="SemiBold"
+                           MaxWidth="88" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
               </StackPanel>
             </Button>
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
+      </ScrollViewer>
 
       <!-- Every application browser lives here at once. Only the selected one is Visible; the rest
            are Hidden, never Collapsed, because a collapsed WebView2 is arranged at zero size and a
            0x0 viewport makes every visibility test on the page report false. That is what lets the
            run keep filling a tab nobody is looking at. -->
       <Grid x:Name="BrowserHost" Grid.Row="2"/>
+
+      <!--
+        The review actions, pinned bottom-left under the browser.
+
+        Deliberately a reserved strip rather than a button floating over the page: the WPF WebView2
+        is HwndHost-based, so the browser paints its own child window and any WPF content placed on
+        top of it is simply not drawn. A floating button there would be an invisible button. This
+        sits in the same corner and is always reachable, which is what the floating one was for.
+      -->
+      <Border Grid.Row="3" Margin="0,6,0,0" Padding="0"
+              Visibility="{Binding IsReadyForReview, Converter={StaticResource BooleanToVisibilityConverter}}">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+          <Button Command="{Binding MarkSubmittedAndContinueCommand}"
+                  Content="Mark submitted &amp; close" Margin="0,0,8,0"
+                  ToolTip="Records this application as applied and closes its tab, freeing the slot for the queue."/>
+          <Button Command="{Binding CloseSelectedTabCommand}" Content="Close without submitting"
+                  Style="{StaticResource GhostButton}" Margin="0,0,8,0"/>
+          <TextBlock Text="{Binding ReviewBacklogSummary}" Style="{StaticResource MutedText}"
+                     FontSize="11" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Border>
     </Grid>
     <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
         <TextBlock Text="Auto bidding" Style="{StaticResource H1}"/>
-        <TextBlock Text="Paste links once. After approval, DevStrider processes them in order and pauses before every final submission."
+        <TextBlock Text="Paste links once, grouped by job board. A run navigates, reads the description, writes the resume, fills the form and parks it for review — Submit is yours to press unless you turn that off in Settings."
                    Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,10"/>
         <Border Style="{StaticResource Card}" Margin="0,0,0,12">
           <StackPanel>
@@ -117,7 +141,10 @@
             <ItemsControl ItemsSource="{Binding LinkGroups}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Expander IsExpanded="True" Margin="0,0,0,6">
+                  <!-- Collapsed by default: the heading is the useful part - the board and how
+                       many links are on it - and that is what you scan before a run. Opening one
+                       is for when you want to see which postings they actually are. -->
+                  <Expander IsExpanded="False" Margin="0,0,0,4">
                     <Expander.Header>
                       <DockPanel LastChildFill="False" Width="370">
                         <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" FontSize="12"
@@ -379,12 +406,8 @@
             <TextBlock Text="{Binding ReviewBacklogSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
             <TextBlock Text="{Binding SelectedTab.Summary}" Style="{StaticResource MutedText}"
                        TextWrapping="Wrap" Margin="0,4,0,0"/>
-            <TextBlock Text="Check the form in this tab and submit it on the site, then mark it here. The queue keeps working in the other tabs meanwhile."
+            <TextBlock Text="Check the form in this tab and submit it on the site, then mark it done with the buttons under the browser. The queue keeps working in the other tabs meanwhile."
                        Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
-            <WrapPanel>
-              <Button Command="{Binding MarkSubmittedAndContinueCommand}" Content="Mark submitted &amp; close" Margin="0,0,8,8"/>
-              <Button Command="{Binding CloseSelectedTabCommand}" Content="Close without submitting" Style="{StaticResource GhostButton}" Margin="0,0,8,8"/>
-            </WrapPanel>
           </StackPanel>
         </Border>
       </StackPanel>

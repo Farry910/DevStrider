@@ -238,6 +238,29 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Stores a freshly read job description on the link it came from, as soon as it is read.
+    ///
+    /// <para>
+    /// Separate from <c>AcceptExtractedPageAsync</c>, which happens several steps later — past
+    /// opening the form, which is where most links that fail actually fail. Recording it here is
+    /// what lets a link arrive at Manual Bidding with its description already in place instead of
+    /// asking somebody to copy across what the app had just finished reading.
+    /// </para>
+    /// </summary>
+    public async Task RecordExtractedDescriptionAsync(string jobDescription)
+    {
+        var item = CurrentQueueItem;
+        var text = (jobDescription ?? "").Trim();
+        if (item == null || text.Length == 0) return;
+        if (string.Equals(item.JobDescription, text, StringComparison.Ordinal)) return;
+
+        item.JobDescription = text;
+        await SaveQueueAsync();
+        _trace.Step("Extract", "description kept on the link", $"{text.Length} chars");
+    }
+
+
+    /// <summary>
     /// Hands a link the automation cannot apply over to the Manual Bids tab.
     ///
     /// <para>
@@ -260,7 +283,11 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
     /// </summary>
     private async Task HandOverToManualBidsAsync(JobLinkQueueItem item, string reason)
     {
-        item.Error = $"The automatic run couldn't apply this: {reason}";
+        // Arrives clean. Why the automation gave up does not change what happens next — you
+        // open it, copy the description across, and queue a resume — so stamping the reason on
+        // every row is a line of noise per link. It is in the activity log and the trace if it
+        // is ever wanted. Any error from an earlier attempt is cleared for the same reason.
+        item.Error = "";
         var accepted = await _manualBids.AddAsync(item);
 
         // Its siblings go with it. Every posting on one board is the same form behind the same
@@ -280,7 +307,7 @@ public sealed partial class JobBrowserViewModel : ViewModelBase
         var movedSiblings = 0;
         foreach (var sibling in siblings)
         {
-            sibling.Error = $"Moved with the rest of {site}: {reason}";
+            sibling.Error = "";
             if (!await _manualBids.AddAsync(sibling)) continue;
             JobQueue.Remove(sibling);
             movedSiblings++;

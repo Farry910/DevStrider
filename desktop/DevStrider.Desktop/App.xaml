@@ -13,6 +13,7 @@
       <!-- Shared converters used across views. -->
       <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
       <views:NonEmptyToVisibleConverter x:Key="NonEmptyToVisible"/>
+      <views:OffscreenWhenInactiveConverter x:Key="OffscreenWhenInactive"/>
       <views:InverseBooleanConverter x:Key="InverseBoolean"/>
       <views:BooleanToHiddenConverter x:Key="BooleanToHidden"/>
 

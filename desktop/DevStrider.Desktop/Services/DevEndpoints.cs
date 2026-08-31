@@ -150,6 +150,7 @@ public sealed class DevEndpoints
                 settings.ListenerPort,
                 settings.DeveloperTools,
                 settings.AutomaticRunInBackground,
+                settings.HoldBeforeFinalSubmit,
                 proxy = new { settings.ProxyEnabled, settings.ProxyScope, settings.ProxyAddress },
             },
             automation = jobs == null ? null : new
@@ -295,6 +296,48 @@ public sealed class DevEndpoints
                 // manual board; "machinery" is the kind that stays Failed and retryable. Both call
                 // the same MarkAutomationFailureAsync the run itself calls — a simulated *cause*,
                 // not a simulated effect, which is the only version of this worth having.
+                // Queues a manual bid's resume on the manual ChatGPT lane. That lane is never the
+                // selected workspace, so this exercises generation in a pane nobody is looking at -
+                // which is the condition that used to stop ChatGPT rendering its reply.
+                case "manual-resume":
+                {
+                    var manual = _services.GetService<ManualBidsViewModel>();
+                    if (manual == null) return "fail: manual bids not up";
+                    var row = manual.Bids.FirstOrDefault(b =>
+                        (b.JobDescription ?? "").Trim().Length > 500 &&
+                        b.Status == Models.JobLinkQueueStatuses.ManualBid);
+                    if (row == null) return "fail: no manual bid with a description";
+                    manual.QueueResumeCommand.Execute(row);
+                    return "manual-resume on " + row.Url;
+                }
+                // Ticks the first N queued links and unticks everything else, so a test run can be
+                // bounded to a known handful rather than the whole backlog.
+                case "select-n":
+                {
+                    if (!int.TryParse(argument, out var take) || take <= 0) return "fail: links must be a count";
+                    var queued = jobs.JobQueue
+                        .Where(i => i.Status == Models.JobLinkQueueStatuses.Queued).ToList();
+                    foreach (var i in jobs.JobQueue) i.IsSelected = false;
+                    foreach (var i in queued.Take(take)) i.IsSelected = true;
+                    return $"select-n {Math.Min(take, queued.Count)}";
+                }
+                // Drives the real path: opens the bid in the Manual Bidding browser, waits for it to
+                // land, then presses the same command the button does - so the form is read off the
+                // live page rather than supplied by the test.
+                case "manual-autofill":
+                {
+                    var mb = _services.GetService<ManualBidsViewModel>();
+                    if (mb == null) return "fail: manual bids not up";
+                    var row = mb.Bids.FirstOrDefault(b => (b.JobDescription ?? "").Trim().Length > 500);
+                    if (row == null) return "fail: no manual bid with a description";
+                    mb.OpenCommand.Execute(row);
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(6));
+                        await OnUiAsync(() => { mb.AutoFillCommand.Execute(row); return 0; });
+                    });
+                    return "manual-autofill on " + row.Url;
+                }
                 case "fail-link":
                 case "fail-machinery":
                 {
@@ -319,7 +362,7 @@ public sealed class DevEndpoints
                 error = $"unknown command \"{name}\"",
                 known = new[] { "start", "start-one", "stop", "skip", "clear-queue", "requeue-failed",
                     "add-links", "select-all", "select-none", "select-site",
-                    "fail-link", "fail-machinery" },
+                    "fail-link", "fail-machinery", "manual-resume", "select-n", "manual-autofill" },
             });
             return;
         }

@@ -39,6 +39,42 @@ public partial class SettingsViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Whether a run stops with Submit on screen instead of pressing it. Read live, like the
+    /// background switch, so a change lands on the next application rather than the next restart.
+    /// </summary>
+    public bool HoldBeforeSubmit
+    {
+        get => _settings.Current?.HoldBeforeFinalSubmit ?? true;
+        set
+        {
+            if (HoldBeforeSubmit == value) return;
+            _ = SetHoldBeforeSubmitAsync(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HoldBeforeSubmitNote));
+        }
+    }
+
+    public string HoldBeforeSubmitNote => HoldBeforeSubmit
+        ? "A run fills the form, validates it and advances multi-step pages, then stops with Submit "
+          + "on screen and parks the application for review. Nothing is sent without you."
+        : "A run presses Submit itself and reads the site's answer — better evidence than any local "
+          + "check, and irreversible. Applications go out without a second look.";
+
+    private async Task SetHoldBeforeSubmitAsync(bool value)
+    {
+        var settings = await _settings.GetForEditAsync();
+        settings.HoldBeforeFinalSubmit = value;
+        await _settings.SaveAsync(settings);
+        _activity.Info("Settings",
+            value ? "Runs will stop before submitting" : "Runs will submit applications themselves",
+            value
+                ? "Applications are filled and parked for review. You press Submit."
+                : "Submit is pressed automatically once the form validates. This cannot be undone.");
+        OnPropertyChanged(nameof(HoldBeforeSubmit));
+        OnPropertyChanged(nameof(HoldBeforeSubmitNote));
+    }
+
     public string RunsInBackgroundNote => RunsInBackground
         ? "The queue works in workspaces that are not on screen. Finished applications park in their "
           + "tabs and wait — the review count on the Job Browser is where you see them."

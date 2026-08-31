@@ -204,6 +204,20 @@ public partial class MainWindowViewModel : ViewModelBase
         // between generating in the background and generating in front of you.
         // The manual lane belongs to the Manual Bids tab end to end. No view change on any of
         // these: the whole point is that a resume is written while somebody is filling a form.
+        // Answers for a manual bid: asked of the manual lane, delivered back to the manual tab.
+        // Nothing here reaches the automatic queue or its ChatGPT browser, which is the whole point
+        // - a form filled by hand must not spend the run's lane or take one of its slots.
+        ManualBids.AnswersRequested += request => ManualResumeStudio.PrepareAnswerCorrection(request);
+        ManualBids.KnownValuesRequested += async () =>
+        {
+            await JobBrowser.LoadSavedAnswersAsync();
+            return JobBrowser.SavedAnswersJson;
+        };
+        ManualResumeStudio.AnswerCorrectionCompleted += result =>
+            Handoff("Filling a manual bid's form", ManualBids.AcceptAnswersAsync(result));
+        ManualResumeStudio.AnswerCorrectionFailed += (workItemId, message) =>
+            Handoff("Recording a manual answer failure",
+                ManualBids.MarkAnswersFailedAsync(workItemId, message));
         ManualBids.ResumeRequested += request =>
             ManualResumeStudio.PrepareManualBidResume(request.WorkItemId, request.JobUrl, request.JobDescription);
         ManualResumeStudio.ResumeAutomationCompleted += result =>

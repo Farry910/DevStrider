@@ -936,6 +936,16 @@ public sealed record ManualBidResumeRequest(Guid WorkItemId, string JobUrl, stri
 /// </summary>
 public sealed record ResumeStudioWorkspaces(ResumeStudioViewModel Auto, ResumeStudioViewModel Manual);
 
+/// <param name="FirstPass">
+/// True when nothing has been answered yet and this is the only pass - the manual path, where a
+/// person navigated to the form themselves and the resume for the job already exists. The prompt
+/// then asks for answers outright rather than for corrections to answers a site rejected.
+/// </param>
+/// <param name="ResumeContent">
+/// The resume already written for this job, passed as context rather than written again. The
+/// alternative - reopening the conversation that produced it - depends on that chat still
+/// existing and on which lane owns it, and neither holds for long.
+/// </param>
 public sealed record ChatGptAnswerCorrectionRequest(
     Guid WorkItemId,
     string ConversationUrl,
@@ -943,7 +953,9 @@ public sealed record ChatGptAnswerCorrectionRequest(
     string QuestionsJson,
     string KnownAnswersJson,
     string CurrentAnswersJson,
-    string JobDescription);
+    string JobDescription,
+    bool FirstPass = false,
+    string ResumeContent = "");
 
 public sealed record ChatGptAnswerCorrectionResult(
     Guid WorkItemId,

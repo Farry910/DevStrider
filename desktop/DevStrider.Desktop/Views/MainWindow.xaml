@@ -263,7 +263,14 @@
                browser pages and lets the queue continue while ChatGPT generates a resume.
                They use BooleanToHidden, never BooleanToVisibility: a collapsed WebView2 is arranged
                at zero size and hands the browser a 0x0 viewport, which flattens every element's
-               bounding box and makes the page look entirely invisible to the automation scripts. -->
+               bounding box and makes the page look entirely invisible to the automation scripts.
+
+               The two ChatGPT workspaces go further and are never hidden at all: they are parked
+               off the side of the window instead. Hidden stops requestAnimationFrame entirely - 0
+               frames against 394 - and ChatGPT renders its streamed reply inside one, so a hidden
+               pane receives the whole response over the network and never puts it in the DOM. A
+               run then waits on innerText that will never arrive and fails three minutes later
+               with "a reply arrived (0 chars)". See OffscreenWhenInactiveConverter. -->
           <ContentControl Content="{Binding RegularCurrent}"
                           Visibility="{Binding IsRegularViewVisible, Converter={StaticResource BooleanToVisibilityConverter}}"/>
           <views:JobBrowserView DataContext="{Binding JobBrowser}"
@@ -275,17 +282,17 @@
                                   RelativeSource={RelativeSource AncestorType={x:Type Window}},
                                   Converter={StaticResource BooleanToHidden}}"/>
           <views:ResumeStudioView DataContext="{Binding ResumeStudio}"
-                                  Visibility="{Binding DataContext.IsResumeStudioVisible,
+                                  Margin="{Binding DataContext.IsResumeStudioVisible,
                                     RelativeSource={RelativeSource AncestorType={x:Type Window}},
-                                    Converter={StaticResource BooleanToHidden}}"/>
+                                    Converter={StaticResource OffscreenWhenInactive}}"/>
           <!-- The manual lane's own ChatGPT browser. It has to be reachable, not just running:
                pointing this lane at a second ChatGPT account is only useful if there is somewhere
                to sign in to it. Nothing brings it to the front on its own — a manual bid's whole
                point is that its resume is written while the person is looking at the form. -->
           <views:ResumeStudioView DataContext="{Binding ManualResumeStudio}"
-                                  Visibility="{Binding DataContext.IsManualResumeStudioVisible,
+                                  Margin="{Binding DataContext.IsManualResumeStudioVisible,
                                     RelativeSource={RelativeSource AncestorType={x:Type Window}},
-                                    Converter={StaticResource BooleanToHidden}}"/>
+                                    Converter={StaticResource OffscreenWhenInactive}}"/>
         </Grid>
       </Border>
     </Grid>
