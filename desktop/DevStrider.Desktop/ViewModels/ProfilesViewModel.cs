@@ -58,8 +58,8 @@ public partial class ProfilesViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't create '{name}': {SharedDbCredentials.Redact(ex.Message)}";
-            _activity.Error("Profiles", "Profile create failed", SharedDbCredentials.Redact(ex.Message));
+            StatusMessage = $"Couldn't create '{name}': {ex.Message}";
+            _activity.Error("Profiles", "Profile create failed", ex.Message);
             return;
         }
 
@@ -92,17 +92,17 @@ public partial class ProfilesViewModel : ViewModelBase
         var savedId = saved.Id;
         var savedName = saved.Name;
 
-        // A database error here used to escape into the dispatcher and come back as the fatal
-        // "Dispatcher exception" box with a raw Npgsql stack in it — for a save, which is the most
-        // ordinary thing this tab does. Failures belong in the status line.
+        // A failed save here used to escape into the dispatcher and come back as the fatal
+        // "Dispatcher exception" box — for a save, which is the most ordinary thing this tab does.
+        // Failures belong in the status line.
         try
         {
             await _service.UpdateAsync(saved);
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't save '{savedName}': {SharedDbCredentials.Redact(ex.Message)}";
-            _activity.Error("Profiles", "Profile save failed", SharedDbCredentials.Redact(ex.Message));
+            StatusMessage = $"Couldn't save '{savedName}': {ex.Message}";
+            _activity.Error("Profiles", "Profile save failed", ex.Message);
             return;
         }
 

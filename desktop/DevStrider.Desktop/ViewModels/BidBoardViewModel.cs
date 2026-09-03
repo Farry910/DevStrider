@@ -300,7 +300,7 @@ public partial class BidBoardViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Couldn't record that: {SharedDbCredentials.Redact(ex.Message)}";
+            StatusMessage = $"Couldn't record that: {ex.Message}";
             return;
         }
 

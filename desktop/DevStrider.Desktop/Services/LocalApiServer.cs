@@ -521,7 +521,7 @@ public sealed partial class LocalApiServer : ObservableObject
         }
         else
         {
-            macroResult = await _wordMacro.RunAsync(resumeBody, docm, macro, profile!.Name);
+            macroResult = await _wordMacro.RunAsync(resumeBody, docm, macro, profile!.Name, req.JobDescription ?? "");
             if (macroResult.Success) _activity.Success(ExtensionSource, "Resume generated", req.Url);
             else _activity.Error(ExtensionSource, "Macro failed", macroResult.Message);
         }

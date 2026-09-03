@@ -28,21 +28,7 @@ public partial class LoginWindow : Window
         Closed += (_, _) => _vm.SignedIn -= OnSignedIn;
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        EmailBox.Focus();
-        try
-        {
-            await _vm.InitializeAsync();
-        }
-        catch (Exception ex)
-        {
-            // An unreadable settings file must not leave a blank window with no explanation.
-            MessageBox.Show(this,
-                $"Couldn't read the saved connection settings.\n\n{ex.Message}",
-                "DevStrider", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
+    private void OnLoaded(object sender, RoutedEventArgs e) => EmailBox.Focus();
 
     private void OnSignedIn()
     {
@@ -58,10 +44,5 @@ public partial class LoginWindow : Window
     private void OnPasswordChanged(object sender, RoutedEventArgs e)
     {
         if (sender is PasswordBox box) _vm.Password = box.Password;
-    }
-
-    private void OnDbPasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (sender is PasswordBox box) _vm.SharedDbPasswordEntry = box.Password;
     }
 }

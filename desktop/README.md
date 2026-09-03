@@ -3,7 +3,7 @@
 Windows desktop app (.NET 10 / WPF) for tracking job **bids** and **interviews**, generating
 tailored **resumes** through ChatGPT and Word, and giving a team one shared view of the day.
 
-- **Desktop app version:** 8.3.0
+- **Desktop app version:** 9.0.0
 - **Chrome extension version:** 3.5.1 (the "Bid Assistant")
 - **Platform:** Windows 10/11 only (uses Word automation, the system tray, and Win32 interop)
 
@@ -17,9 +17,9 @@ reference for the desktop app itself.
 DevStrider is the hub of a three-part system:
 
 ```
- Chrome extension  ──HTTP(127.0.0.1:8765)──►  DevStrider desktop  ──►  PostgreSQL
- (job pages +                                  (WPF app + tray)         (the company
-  ChatGPT tab)                                        │                  portal's)
+ Chrome extension  ──HTTP(127.0.0.1:8765)──►  DevStrider desktop  ──HTTPS──►  hr-system
+ (job pages +                                  (WPF app + tray)              (/api/devstrider/*,
+  ChatGPT tab)                                        │                       PostgreSQL behind it)
                                                       └──►  Word, over COM
 ```
 
@@ -31,9 +31,10 @@ DevStrider is the hub of a three-part system:
 4. **See the team** — everyone reads and writes the same tables, so a teammate's bid shows up the
    moment they save it.
 
-**There is no local database.** The shared PostgreSQL database is the only store, and it belongs to
-the company portal — DevStrider adds four `ds_*` tables to it and reads the portal's `app_user`
-for sign-in. It issues no DDL.
+**There is no local database and no database credential on this machine.** DevStrider holds only a
+bearer token. Every account and every `ds_*` row lives behind hr-system's `/api/devstrider/*` HTTP
+API — see [`HrApiClient`](DevStrider.Desktop/Services/HrApi/HrApiClient.cs) — and hr-system is the
+only thing that ever opens a Postgres connection.
 
 ---
 
@@ -42,7 +43,8 @@ for sign-in. It issues no DDL.
 - Windows 10 or 11
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) to build (or the Desktop Runtime
   to run a framework-dependent build; the self-contained build bundles it)
-- Access to the portal's **PostgreSQL** database, with `shared-db-schema.sql` already applied
+- Network access to an **hr-system** deployment (default `https://triospace.org/hr`) with the
+  `shared-db-schema.sql` tables already applied to *its* database
 - **Microsoft Word** (for the resume macro feature)
 - **Google Chrome** + the Bid Assistant extension (in `../extension`)
 - A **ChatGPT** account (free tier is fine) for resume generation
@@ -68,12 +70,13 @@ dotnet publish DevStrider.Desktop -c Release -r win-x64 `
 
 > **Do not** add `-p:PublishTrimmed=true` — WPF's reflection breaks under the trimmer.
 
-Launch opens the **sign-in window**. Nothing else is built until an account is established: every
-repository scopes its queries to the signed-in `app_user.id`, and a query issued before login
-throws rather than quietly reading the whole team's rows. On the first sign-in for an account,
-DevStrider creates its `ds_users` row and seeds a profile named *Default*.
+Launch tries to restore a session from the bearer token saved on the last sign-in; only when there
+is none (or it has expired) does the **sign-in window** appear. Nothing else is built until a
+session exists either way: every HTTP repository call is rejected before it leaves the process if
+no token is installed. On the first sign-in for an account, hr-system creates its `ds_users` row
+and DevStrider seeds a profile named *Default*.
 
-The title-bar pill shows the running version (e.g. `v8.3.0`) so you can confirm a fresh build was
+The title-bar pill shows the running version (e.g. `v9.0.0`) so you can confirm a fresh build was
 picked up.
 
 ### Closing the app
@@ -86,29 +89,29 @@ locks `DevStrider.exe` for the next build.
 
 ## Sign-in
 
-Credentials are checked against the portal's `app_user`: email, `password_hash`, and
-`email_verified`. DevStrider never creates an account, never sets a password, and has no sign-up or
-reset — being a portal user is the only way to become a DevStrider user.
+DevStrider signs in against hr-system's `POST /api/devstrider/auth/login` — email and password over
+HTTPS, nothing checked locally. hr-system never creates an account, never sets a password, and has
+no sign-up or reset from this endpoint — being an hr-system user is the only way to become a
+DevStrider user. The scrypt check, the `app_user.id`/`email_verified` column-type quirks, all of it
+now happens once, in hr-system's own `lib/auth.js` — this app no longer re-implements any of it.
 
-**The hash is scrypt, not bcrypt.** `password_hash` stores `<saltHex>:<keyHex>` — a 16-byte salt
-and a 64-byte derived key, 161 characters in total, which is what Node's
-`crypto.scryptSync(password, salt, 64)` produces. Verification uses BouncyCastle's scrypt at
-Node's defaults (N=16384, r=8, p=1). Two of this app's columns are also the portal's types, not
-ours: `app_user.id` is `integer` and `email_verified` is `integer`-as-flag, so both are read
-through a widening coercion rather than `GetInt64`/`GetBoolean`, which throw on them.
+**The session is a week-long bearer token**, not a browser-style short one. Login returns a signed
+JWT (hr-system's `lib/jwt.js`) alongside your identity; DevStrider saves it in `settings.json` and
+sends it as `Authorization: Bearer <token>` on every `/api/devstrider/*` call after that. On launch
+it is restored silently — `GET /api/devstrider/auth/session` re-validates it — and refreshed once it
+is inside its last day, so someone who opens DevStrider daily is never asked for a password again.
+Settings → hr-system → **Sign out** drops it early.
 
-- Your portal email **is** your identity here. It is what `ds_users.username` holds and what
+- Your hr-system email **is** your identity here. It is what `ds_users.username` holds and what
   teammates see on the Peers tab; there is no separate name to pick.
-- Every login re-asserts it, so a rename in the portal follows you here.
+- Every login (and every silent restore) re-asserts it, so a rename in hr-system follows you here.
 - A wrong address and a wrong password give the same message on purpose. Distinguishing them would
-  tell anyone holding the database credential who has a portal account.
+  tell anyone who can reach the login endpoint who has an account.
 - Verification is checked *after* the password, for the same reason.
-- There is no persisted session: the password is asked for on every start and nothing about it
-  reaches disk.
 
-The sign-in window also carries the **database connection** form. That looks like scope creep and
-isn't — signing in *is* a database query, and the connection details otherwise live behind Settings,
-which is behind the login. On a fresh install that circle has to be broken somewhere.
+There is no more **database connection** form on the sign-in window — there is no database
+connection left to configure on this machine. The only thing Settings needs for hr-system is the
+server address, and it defaults to the production one.
 
 ---
 
@@ -243,9 +246,9 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
 - **Legacy MongoDB (import only)** — the old local database, read and never written to. Carries this
   machine's saved settings across automatically on first launch. It holds no bid history the app
   wants: there is no data migration, and none is planned — see [Recording a day from resume folders](#recording-a-day-from-resume-folders).
-- **Identity** — read-only: the portal account you are signed in as
-- **Shared database (PostgreSQL)** — service URI or host / port / database / user / password, with
-  **Test connection** and **Clear password**. See [Credentials](#credentials).
+- **Identity** — read-only: the hr-system account you are signed in as
+- **hr-system** — server address (default `https://triospace.org/hr`) and **Sign out**. See
+  [Credentials](#credentials).
 - **Cloud storage (Cloudflare R2)** — account ID, bucket, access key ID, secret access key
 - **Bid-Assistant listener** — port (default 8765) + status
 - **Word macro hotkey** — shared fallback when a profile has no macro name
@@ -277,7 +280,7 @@ The extension drives the app through these endpoints on `http://127.0.0.1:8765`:
 
 The loopback binding is what stands in for authentication: nothing off this machine can reach it.
 Requests therefore carry no credential and are served as whoever is signed in — which is why the
-listener starts only **after** login.
+listener starts only **after** a session exists, restored silently or via the login window.
 
 `/refresh-word` is **serialized app-wide**: Word only ever has one instance of the .docm open, so
 concurrent calls (multiple Chrome profiles/windows bidding at once) queue behind each other rather
@@ -293,16 +296,21 @@ hide that you bid the same job twice.
 
 ## Data model
 
-Four tables, defined by [`shared-db-schema.sql`](shared-db-schema.sql) and created by hand.
+Four tables, defined by [`shared-db-schema.sql`](shared-db-schema.sql) — applied once, by hand,
+against **hr-system's** database. DevStrider itself no longer opens a connection to run that file
+or anything else against it; every read and write goes through hr-system's `/api/devstrider/*` API
+(see [`Data/Http`](DevStrider.Desktop/Data/Http)), which is the only thing on the other end that
+still speaks SQL to these tables.
 
 | Table | Holds |
 |-------|-------|
-| `ds_users` | One row per account — the portal email, and nothing else worth storing |
+| `ds_users` | One row per account — the hr-system email, and nothing else worth storing |
 | `ds_profiles` | Bidding identities |
 | `ds_bids` | Job postings and the bids made against them — one row each |
 | `ds_interviews` | Interviews |
 
-`app_user` belongs to the portal. DevStrider only ever `SELECT`s from it.
+`app_user` belongs to hr-system. DevStrider never reads or writes it directly — it only ever sees
+what `/api/devstrider/auth/*` hands back about the signed-in account.
 
 **Four and not eight.** `ds_education`, `ds_certifications`, `ds_experiences` and
 `ds_achievements` were dropped in 8.1.0. The first three held a CV that the profile's `.docm`
@@ -314,10 +322,13 @@ grounds that nothing read it either. Re-running `shared-db-schema.sql` drops all
 
 Row ids are 24-character MongoDB ObjectId hex strings, carried over from the local databases these
 tables replaced — keeping the original identity is what made the one-time import an idempotent
-upsert. `user_id` is `app_user.id`, a BIGINT, and every query DevStrider issues filters on it.
+upsert. `user_id` is `app_user.id`, a BIGINT, and hr-system scopes every `/api/devstrider/*` query
+to whichever account the bearer token belongs to — DevStrider never puts a user id on the wire
+itself.
 
-[`shared-db-verify.sql`](shared-db-verify.sql) is the drift check — run it after any schema change,
-or when the app reports SQLSTATE 42703.
+[`shared-db-verify.sql`](shared-db-verify.sql) is the drift check — run it against hr-system's
+database after any schema change, or when hr-system's own logs show a missing-column error on one
+of these tables.
 
 ---
 
@@ -325,23 +336,22 @@ or when the app reports SQLSTATE 42703.
 
 Empty/default settings are seeded once at first launch from `DEVSTRIDER_*` variables (set with
 `setx`, then restart). See the **About** tab for the full list — e.g.
-`DEVSTRIDER_SHARED_DB_URI`, `DEVSTRIDER_SHARED_DB_HOST`, `DEVSTRIDER_LISTENER_PORT`,
-`DEVSTRIDER_WORD_DOC_PATH`, `DEVSTRIDER_WORD_HOTKEY`.
+`DEVSTRIDER_HR_API_BASE_URL`, `DEVSTRIDER_LISTENER_PORT`, `DEVSTRIDER_WORD_DOC_PATH`,
+`DEVSTRIDER_WORD_HOTKEY`.
 
-There is no username variable: the account name comes from `app_user`.
+There is no username variable: the account name comes from hr-system's `app_user`.
 
 ---
 
 ## Credentials
 
-Every credential the app holds — the shared-database password and the Cloudflare R2 token — lives
-in `%LOCALAPPDATA%\DevStrider\settings.json`, in cleartext. There is no second store: no registry,
-no keychain, no encrypted file.
+Every credential the app holds — the hr-system bearer token and the Cloudflare R2 token — lives in
+`%LOCALAPPDATA%\DevStrider\settings.json`, in cleartext. There is no second store: no registry, no
+keychain, no encrypted file. There is also no database password on this machine any more: DevStrider
+holds nothing that can reach Postgres directly, only a token hr-system will honour for up to a week.
 
-It is a file rather than a table because it holds the credentials needed to *reach* the database,
-so reading it from the database would be circular. Writes go to a temp file and are then moved over
-the target, so a crash mid-write leaves the previous settings intact rather than a half-written
-file that fails to parse on next launch.
+Writes go to a temp file and are then moved over the target, so a crash mid-write leaves the
+previous settings intact rather than a half-written file that fails to parse on next launch.
 
 [`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads it **once at startup** and
 serves every later read from memory. Before that, each of ~16 call sites re-queried the database —
@@ -352,46 +362,36 @@ not be mutated**; anything that edits settings takes `GetForEditAsync()` (a copy
 result to `SaveAsync`, which persists it and installs it as the new cache.
 
 Consequence worth being explicit about: anything able to read that file — a backup, a synced
-folder, another account on this machine — gets the database password *and* the R2 token. An R2
-token with object-write permission can also delete objects, so any install holding it can empty the
-bucket.
+folder, another account on this machine — gets the bearer token *and* the R2 token. The bearer token
+is good for whatever it was signed for (up to a week, refreshed on use) and nothing longer; Settings
+→ hr-system → **Sign out** revokes it locally, though hr-system's stateless tokens mean it stays
+technically valid server-side until it expires on its own. An R2 token with object-write permission
+can also delete objects, so any install holding it can empty the bucket.
 
-### The shared database
+### hr-system's API
 
-One database login, shared by every install. That is a deliberate trade for a small trusted team,
-and it has consequences worth stating plainly:
+DevStrider no longer opens a database connection itself — every read and write is one HTTP call to
+hr-system's `/api/devstrider/*` API (see
+[`HrApiClient`](DevStrider.Desktop/Services/HrApi/HrApiClient.cs) and
+[`Data/Http`](DevStrider.Desktop/Data/Http)), authenticated with the bearer token above. That moves
+where the trust boundary sits, but not what is behind it — hr-system's own database still holds the
+same tables with the same properties, worth stating plainly:
 
-- **Everything is visible to everyone.** These tables are not a stripped projection of something
-  more private: `ds_bids.url`, `job_description`, `gpt_resume_content` and `comment` are the full
-  values that used to stay on the author's machine.
-- Every user can read *and delete* everyone else's rows — no row-level security is configured. The
-  app scopes its own queries by `user_id`, but that is the app being well-behaved, not the database
-  enforcing anything.
-- One leaked password means rotating it for every installed client at once.
-- Authorship is **identification, not authentication**: `user_id` is whoever was signed in to the
-  app that wrote the row. Nothing downstream should treat it as proof.
+- **Everything is visible to everyone on the team.** These tables are not a stripped projection of
+  something more private: `ds_bids.url`, `job_description`, `gpt_resume_content` and `comment` are
+  the full values that used to stay on the author's machine.
+- Authorship is **identification, not authentication**: `user_id` is whoever the bearer token
+  belonged to when the row was written. Nothing downstream should treat it as proof.
 - These tables are the only copy. Once a machine has been migrated off its local MongoDB, nothing
   else holds that person's bids and interviews.
+- What changed from the direct-Postgres era: a caller here can no longer even construct a request
+  naming another account's `user_id` — hr-system reads it off the token's signature, never off
+  anything DevStrider sends. The row-level trust question moved from "does the app behave" to "does
+  hr-system's routing," which is hr-system's concern now, not this file's.
 
-Two ways to describe the same server, chosen by a radio button on the sign-in window and in
-Settings:
-
-1. **Service URI** — `postgresql://user:pass@host:5432/devstrider?sslmode=require`, what hosted
-   providers hand you. `postgres://` is accepted too.
-2. **Parts** — host, port, database, user, password, for anything self-hosted.
-
-Whichever is selected is the one used; the other keeps what you typed, so switching back and forth
-loses nothing. Both end up as one Npgsql connection string built by
-[`SharedDbCredentials`](DevStrider.Desktop/Services/SharedDbCredentials.cs), which percent-decodes
-the credentials out of a URI — generated Postgres passwords routinely contain `@`, `:`, `/` and
-`?`, and arrive encoded.
-
-**SSL** defaults to on (`Require`: encrypt, don't demand a chain the machine can verify — hosted
-providers commonly present one it can't). Unchecking gives `Prefer`, so a local server without TLS
-still works. An explicit `sslmode` in the URI overrides the checkbox.
-
-Driver errors pass through `SharedDbCredentials.Redact` before reaching the Activity log, since a
-service URI carries the password inline.
+Settings' **server address** field (default `https://triospace.org/hr`) is the only address
+DevStrider needs to know. There is no URI/host-port split any more — that distinction was about
+describing a Postgres connection, and there is not one left here to describe.
 
 ---
 
@@ -400,14 +400,15 @@ service URI carries the password inline.
 | Symptom | Fix |
 |---------|-----|
 | `MSB3027: DevStrider.exe locked` on build | The app is still running — tray → **Quit** (or `taskkill /F /IM DevStrider.exe`). |
-| "That email and password don't match an account" | Check the address against the portal. The message is deliberately the same for an unknown address and a wrong password. |
-| "The database is reachable but has no app_user table" | The connection points at some database other than the portal's. |
-| "these tables are missing: ds_…" | Run `shared-db-schema.sql` against that database — DevStrider does not create them. |
-| "This account's email address hasn't been verified" | Confirm the address in the portal, then sign in here. |
-| Shared database "unreachable / timeout" | Check host and port; allow this machine's IP in the provider's firewall; confirm the SSL setting matches what the server expects. |
+| "That email and password don't match an account" | Check the address against hr-system. The message is deliberately the same for an unknown address and a wrong password. |
+| "No hr-system server address is set" | Fill in Settings → hr-system → **Server address** and save. |
+| "Couldn't reach hr-system" | Check the server address, and that the machine can reach it — a corporate VPN or firewall is the usual cause. |
+| "This account's email address hasn't been verified" | Confirm the address in hr-system, then sign in here. |
+| Signed out unexpectedly / asked to sign in again | The saved bearer token expired, was revoked (a **Sign out**, a server key rotation, or the account being deleted), or hr-system rejected it — sign in again. |
 | Every screen empty after signing in | No active profile — create one in the **Profiles** tab. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
 | Resume generates but no file | The Word macro must fill the bookmarks from the `[Section]:` labels and finish with `Application.Quit`. |
+| `Macro call failed: …` after upgrading | DevStrider now calls the macro with two arguments (resume text, job description) — a template's macro still declared with one fails every run. See [`macro.md`](macro.md). |
 | Bid hangs after the resume is written | The reply finished but the extension never sent it. Reload the ChatGPT tab (a tab opened before the extension was loaded has no content script), then check `isStreaming()` in `extension/content.js` against the live composer. |
 | ChatGPT automation stalls | ChatGPT changed its DOM — the injection/completion selectors in `extension/content.js` need updating. |
 
@@ -415,9 +416,11 @@ service URI carries the password inline.
 
 ## Notes
 
-- **One account per running app**, with multiple **profiles** (identities) under it. The password
-  is asked for on every start.
-- The database connection runs over TLS, but the database's own access control is the protection.
+- **One account per running app**, with multiple **profiles** (identities) under it. The password is
+  asked for once; the week-long bearer token is what carries the session across later launches.
+- The hr-system connection runs over HTTPS, but hr-system's own access control is the protection —
+  DevStrider has nothing left that reaches Postgres, so there is no database credential on this
+  machine to protect in the first place.
 - Resume generation uses the **ChatGPT web session** (free tier), not an API — hence the
   keep-a-tab-open requirement and the inherent fragility to ChatGPT UI changes.
 
@@ -431,11 +434,18 @@ snapshots, to a shared **MongoDB/Atlas** cluster, to a shared **PostgreSQL** dat
 each machine still keeping its real data in a local MongoDB and pushing stripped `peer_*` summaries
 up on an hourly schedule.
 
-**8.0.0 ended that.** There is one database now, shared with the company portal, and every machine
-reads and writes it directly. The local MongoDB, the `peer_*` mirror, the sync scheduler, the
-Sharing tab, and the web client and API server all went with it. Sign-in against the portal's
-`app_user` arrived in the same release — with one database holding the whole team, "my rows" became
-a predicate rather than a given, and that predicate needs an account behind it.
+**8.0.0 ended that.** There was one database, shared with the company portal, and every machine read
+and wrote it directly. The local MongoDB, the `peer_*` mirror, the sync scheduler, the Sharing tab,
+and the web client and API server all went with it. Sign-in against the portal's `app_user` arrived
+in the same release — with one database holding the whole team, "my rows" became a predicate rather
+than a given, and that predicate needs an account behind it.
+
+**9.0.0 went one step further and removed the direct connection too.** DevStrider no longer holds a
+Postgres credential at all: hr-system grew an `/api/devstrider/*` HTTP API built for exactly this,
+and every account read and `ds_*` read/write now goes through it on a week-long bearer token instead
+of a connection string sitting in `settings.json`. The sign-in window's database-connection form is
+gone with it. The resume macro also picked up a second parameter in this release, so it can save the
+job description as a text file alongside the resume it writes — see [`macro.md`](macro.md).
 
 The standalone Python "ResumeAuto" tool was folded in as a batch **Resume auto-gen** tab, then
 removed again in 4.0.0 — resume generation is the one-button extension flow only.

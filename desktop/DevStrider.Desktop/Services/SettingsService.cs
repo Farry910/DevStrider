@@ -9,7 +9,7 @@ namespace DevStrider.Desktop.Services;
 /// thereafter.
 ///
 /// <para>
-/// Every credential the app holds — the shared-cluster password, the R2 token — lives on it, so
+/// Every credential the app holds — the hr-system bearer token, the R2 token — lives on it, so
 /// this is the single place they are read from. Before caching, each of the ~16 call sites
 /// re-queried the database: <c>/refresh-word</c> hit it on every purple click just to read a
 /// hotkey.
@@ -104,8 +104,8 @@ public class SettingsService
 
     /// <summary>
     /// Read the settings file, seeding it on first run. The old MongoDB row is preferred over
-    /// bare defaults so an existing install doesn't wake up with its shared-database password
-    /// gone.
+    /// bare defaults so an existing install doesn't wake up with its saved listener port and
+    /// Word settings gone.
     /// </summary>
     private async Task<AppSettings> FetchOrSeedAsync()
     {
@@ -142,14 +142,6 @@ public class SettingsService
             {
                 MongoUri = Blank(old.MongoUri, "mongodb://127.0.0.1:27017"),
                 DatabaseName = Blank(old.DatabaseName, "devstrider"),
-                SharedDbMode = Blank(old.SharedDbMode, SharedDbCredentials.ModeUri),
-                SharedDbUri = old.SharedDbUri ?? "",
-                SharedDbHost = old.SharedDbHost ?? "",
-                SharedDbPort = old.SharedDbPort > 0 ? old.SharedDbPort : 5432,
-                SharedDbName = Blank(old.SharedDbName, "devstrider"),
-                SharedDbUser = old.SharedDbUser ?? "",
-                SharedDbPassword = old.SharedDbPassword ?? "",
-                SharedDbRequireSsl = old.SharedDbRequireSsl,
                 ListenerPort = old.ListenerPort > 0 ? old.ListenerPort : 8765,
                 ActiveProfileId = old.ActiveProfileId,
                 WordDocPath = old.WordDocPath ?? "",

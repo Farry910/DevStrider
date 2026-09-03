@@ -4,14 +4,16 @@ namespace DevStrider.Desktop.Models;
 
 /// <summary>
 /// Machine-level settings. Persisted as JSON on this machine by
-/// <see cref="Services.SettingsStore"/> — <b>not</b> in the database, because it carries the
-/// credentials needed to reach the database and so has to be readable before any connection
-/// exists. Unknown fields are tolerated so removed fields from older installs deserialize quietly.
+/// <see cref="Services.SettingsStore"/>. Unknown fields are tolerated so removed fields from
+/// older installs deserialize quietly.
 ///
 /// <para>
-/// Nothing here identifies the logged-in user: there is no persisted session, and the password is
-/// asked for on every start of the app. What is stored is only what is true of this machine — how
-/// to reach the database, which port the listener binds, which profile was last open.
+/// DevStrider holds no database credential any more — every account and every ds_* row is reached
+/// through hr-system's HTTP API (<see cref="Services.HrApi.HrApiClient"/>), and the sign-in flow is
+/// hr-system's, not this app's. What is stored is what is true of this machine: which hr-system
+/// server to talk to, the week-long bearer token that login hands out (so the app does not ask for
+/// a password every launch — see <see cref="Services.HrApi.HrApiClient"/>), which port the local
+/// listener binds, which profile was last open.
 /// </para>
 /// </summary>
 public class AppSettings
@@ -23,30 +25,27 @@ public class AppSettings
     public string MongoUri { get; set; } = "mongodb://127.0.0.1:27017";
     public string DatabaseName { get; set; } = "devstrider";
 
-    // ── Shared PostgreSQL — the store ───────────────────────────────────────
-    // Two ways to say the same thing. Providers hand out a service URI; a self-hosted box is
-    // easier to describe in parts. SharedDbMode decides which set is authoritative — the other
-    // is kept, not cleared, so switching back and forth doesn't lose what you typed.
-
-    /// <summary><c>uri</c> or <c>parts</c>. See <see cref="Services.SharedDbCredentials"/>.</summary>
-    public string SharedDbMode { get; set; } = Services.SharedDbCredentials.ModeUri;
-
-    /// <summary>Service URI, e.g. <c>postgresql://user:pass@host:5432/devstrider?sslmode=require</c>.</summary>
-    public string SharedDbUri { get; set; } = "";
-
-    public string SharedDbHost { get; set; } = "";
-    public int SharedDbPort { get; set; } = 5432;
-    public string SharedDbName { get; set; } = "devstrider";
-    public string SharedDbUser { get; set; } = "";
-
-    /// <summary>Cleartext, like every other credential here — the shared cluster is one login the whole team shares.</summary>
-    public string SharedDbPassword { get; set; } = "";
+    // ── hr-system — the account, the ds_* data, and the JWT session ─────────
+    // DevStrider used to hold the shared Postgres credential and query ds_* directly. That is
+    // gone: hr-system's /api/devstrider/* routes are the only way in now, and this app carries
+    // nothing more sensitive than the bearer token they hand out.
 
     /// <summary>
-    /// Require TLS. On for hosted Postgres (Supabase, Neon, Railway, Aiven all mandate it); turn
-    /// off only for a local box that isn't listening on TLS at all.
+    /// Base URL of the hr-system deployment, no trailing slash — e.g.
+    /// <c>https://triospace.org/hr</c>. <c>/api/devstrider/...</c> is appended to it.
     /// </summary>
-    public bool SharedDbRequireSsl { get; set; } = true;
+    public string HrApiBaseUrl { get; set; } = "https://triospace.org/hr";
+
+    /// <summary>
+    /// The week-long bearer token <c>/api/devstrider/auth/login</c> hands out. Cleartext, like
+    /// every other credential this file has ever held — holding it is what lets the app skip the
+    /// login window on every launch. Cleared by signing in again with different credentials, and
+    /// meaningless once <see cref="HrTokenExpiresAt"/> has passed.
+    /// </summary>
+    public string HrToken { get; set; } = "";
+
+    /// <summary>UTC. The app refreshes the token once this is inside its last day.</summary>
+    public DateTime? HrTokenExpiresAt { get; set; }
 
     /// <summary>
     /// Port the local Bid-Assistant listener binds to (loopback only). Default 8765 — keep in

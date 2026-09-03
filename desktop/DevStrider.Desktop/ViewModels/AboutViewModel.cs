@@ -27,21 +27,21 @@ public class AboutViewModel : ViewModelBase
 
     public string Summary =>
         "Job-bid tracker for the team. The Chrome extension records bids to the local HTTP " +
-        "listener, which writes them straight to the company portal's PostgreSQL database — " +
-        "the same one you sign in against. There is no local copy and no sync: a teammate's " +
-        "bid is visible the moment they save it.";
+        "listener, which forwards them to hr-system's /api/devstrider/* API — the same server " +
+        "you sign in against. There is no local copy and no sync: a teammate's bid is visible " +
+        "the moment they save it.";
 
     public string DataLocation =>
-        "PostgreSQL (shared with the company portal) · configured in Settings";
+        "hr-system (/api/devstrider/*) · server address configured in Settings";
     public string ListenerHint => "http://127.0.0.1:8765 (port is configurable in Settings)";
     public string SharedClusterLocation =>
-        "Sign-in reads app_user; everything DevStrider stores lives in the ds_* tables";
+        "Sign-in reads app_user; everything DevStrider stores lives in the ds_* tables behind hr-system's API";
 
     public string EnvVarTip =>
         "Empty / default settings fields are seeded from these DEVSTRIDER_* environment " +
         "variables on launch — useful when bootstrapping a fresh machine. Set them once " +
-        "(setx DEVSTRIDER_SHARED_DB_URI \"postgresql://…\"), restart DevStrider, then " +
-        "clear the env var if you want — values are saved to settings.json after first run.";
+        "(setx DEVSTRIDER_HR_API_BASE_URL \"https://triospace.org/hr\"), restart DevStrider, " +
+        "then clear the env var if you want — values are saved to settings.json after first run.";
 
     public ObservableCollection<EnvVarRow> EnvVars { get; } = new();
 
@@ -49,12 +49,7 @@ public class AboutViewModel : ViewModelBase
     {
         Add("DEVSTRIDER_MONGO_URI",          "AppSettings.MongoUri",          "Legacy local MongoDB, read once by the one-time import and never written to. Default mongodb://127.0.0.1:27017.");
         Add("DEVSTRIDER_DATABASE_NAME",      "AppSettings.DatabaseName",      "Legacy local MongoDB database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_SHARED_DB_URI",      "AppSettings.SharedDbUri",       "Shared PostgreSQL service URI, e.g. postgresql://user:pass@host:5432/devstrider?sslmode=require. Seeding it selects URI mode.", isSecret: true);
-        Add("DEVSTRIDER_SHARED_DB_HOST",     "AppSettings.SharedDbHost",      "Shared PostgreSQL host. Seeding it selects host/port mode.");
-        Add("DEVSTRIDER_SHARED_DB_PORT",     "AppSettings.SharedDbPort",      "Shared PostgreSQL port. Default 5432.");
-        Add("DEVSTRIDER_SHARED_DB_NAME",     "AppSettings.SharedDbName",      "Shared PostgreSQL database name. Default 'devstrider'.");
-        Add("DEVSTRIDER_SHARED_DB_USER",     "AppSettings.SharedDbUser",      "Shared PostgreSQL user.");
-        Add("DEVSTRIDER_SHARED_DB_PASSWORD", "AppSettings.SharedDbPassword",  "Shared PostgreSQL password. Stored in cleartext with the other settings.", isSecret: true);
+        Add("DEVSTRIDER_HR_API_BASE_URL",    "AppSettings.HrApiBaseUrl",      "hr-system server address, e.g. https://triospace.org/hr. Default https://triospace.org/hr.");
         Add("DEVSTRIDER_R2_ACCOUNT_ID",      "AppSettings.R2AccountId",       "Cloudflare R2 account id — the hex prefix of the r2.cloudflarestorage.com endpoint.");
         Add("DEVSTRIDER_R2_BUCKET",          "AppSettings.R2Bucket",          "R2 bucket holding shared resume files.");
         Add("DEVSTRIDER_R2_ACCESS_KEY_ID",   "AppSettings.R2AccessKeyId",     "R2 API token access key id.");

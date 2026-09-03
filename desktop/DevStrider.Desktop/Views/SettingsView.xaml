@@ -31,7 +31,7 @@
           <TextBlock Text="Signed in as"/>
           <TextBlock Text="{Binding SignedInAs}" FontWeight="SemiBold" Margin="0,2,0,4"/>
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap"
-                     Text="This is your company portal account, and it is not editable here. Accounts, passwords and addresses are managed in the portal; DevStrider reads them and never writes them. Change your address there and it follows you here on the next sign-in."/>
+                     Text="This is your hr-system account, and it is not editable here. Accounts, passwords and addresses are managed there; DevStrider reads them and never writes them. Change your address there and it follows you here on the next sign-in."/>
 
           <TextBlock Text="The address on your resume is per profile — Profiles tab, not here."
                      Foreground="{StaticResource Muted}"
@@ -42,75 +42,18 @@
 
       <Border Style="{StaticResource Card}">
         <StackPanel>
-          <TextBlock Text="Shared database (PostgreSQL)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="hr-system" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10" TextWrapping="Wrap"
-                     Text="The company portal's database — where your account is read from and where every bid and interview is stored. There is no local copy. DevStrider creates no tables: run desktop/shared-db-schema.sql against it once, by hand. Everything in these tables is visible to everyone on the team, job URLs, job descriptions, resume text and comments included."/>
+                     Text="Every account and every bid or interview now lives behind hr-system's API, not a database this app connects to directly. Signing in exchanges your email and password for a week-long token, so you are not asked again on every launch — see Sign out below to drop it."/>
 
-          <!-- Two ways to describe the same server: providers hand out a URI, self-hosted is
-               easier in parts. Whichever is selected is the one that's used; the other keeps
-               what you typed. -->
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-            <RadioButton Content="Service URI" GroupName="SharedDbMode"
-                         IsChecked="{Binding IsUriMode, Mode=TwoWay}" Margin="0,0,16,0"/>
-            <RadioButton Content="Host / port / database" GroupName="SharedDbMode"
-                         IsChecked="{Binding IsPartsMode, Mode=TwoWay}"/>
-          </StackPanel>
-
-          <!-- Mode 1: service URI -->
-          <StackPanel Visibility="{Binding IsUriMode, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <TextBlock Text="Service URI"/>
-            <TextBox Text="{Binding Model.SharedDbUri, UpdateSourceTrigger=PropertyChanged}"
-                     FontFamily="Consolas"
-                     TextWrapping="Wrap"
-                     AcceptsReturn="False"
-                     Margin="0,2,0,8"
-                     Tag="postgresql://user:password@host:5432/devstrider?sslmode=require"/>
-          </StackPanel>
-
-          <!-- Mode 2: discrete parts -->
-          <StackPanel Visibility="{Binding IsPartsMode, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <Grid Margin="0,0,0,8">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="110"/>
-              </Grid.ColumnDefinitions>
-              <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                <TextBlock Text="Host"/>
-                <TextBox Text="{Binding Model.SharedDbHost, UpdateSourceTrigger=PropertyChanged}"
-                         FontFamily="Consolas" Margin="0,2,0,0" Tag="db.example.com"/>
-              </StackPanel>
-              <StackPanel Grid.Column="1">
-                <TextBlock Text="Port"/>
-                <TextBox Text="{Binding Model.SharedDbPort, UpdateSourceTrigger=PropertyChanged}"
-                         FontFamily="Consolas" Margin="0,2,0,0" Tag="5432"/>
-              </StackPanel>
-            </Grid>
-
-            <TextBlock Text="Database"/>
-            <TextBox Text="{Binding Model.SharedDbName, UpdateSourceTrigger=PropertyChanged}"
-                     FontFamily="Consolas" Margin="0,2,0,8" Tag="devstrider"/>
-
-            <TextBlock Text="User"/>
-            <TextBox Text="{Binding Model.SharedDbUser, UpdateSourceTrigger=PropertyChanged}"
-                     FontFamily="Consolas" Margin="0,2,0,8"/>
-
-            <TextBlock Text="Password"/>
-            <!-- PasswordBox has no bindable Password property by design, so the value reaches
-                 the view-model through a PasswordChanged handler in the code-behind. -->
-            <PasswordBox x:Name="SharedDbPasswordBox"
-                         PasswordChanged="SharedDbPasswordBox_PasswordChanged"
-                         FontFamily="Consolas"
-                         Margin="0,2,0,8"/>
-          </StackPanel>
-
-          <CheckBox Content="Require SSL/TLS"
-                    IsChecked="{Binding Model.SharedDbRequireSsl, Mode=TwoWay}"
-                    Margin="0,0,0,4"/>
-          <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,8"
-                     Text="Leave on for any hosted provider — Supabase, Neon, Railway and Aiven all require it. Turn it off only for a local server that isn't listening on TLS. An explicit sslmode in the URI overrides this."/>
+          <TextBlock Text="Server address"/>
+          <TextBox Text="{Binding Model.HrApiBaseUrl, UpdateSourceTrigger=PropertyChanged}"
+                   FontFamily="Consolas"
+                   Margin="0,2,0,8"
+                   Tag="https://triospace.org/hr"/>
 
           <TextBlock Foreground="{StaticResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
-                     Text="{Binding SharedDbHint}"/>
+                     Text="{Binding HrTokenHint}"/>
 
           <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
             <Button Command="{Binding SaveCommand}" Margin="0,0,8,0">
@@ -119,16 +62,10 @@
                 <TextBlock Text="Save settings" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Command="{Binding TestSharedConnectionCommand}" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="&#xE968;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Test connection" VerticalAlignment="Center"/>
-              </StackPanel>
-            </Button>
-            <Button Command="{Binding ClearSharedPasswordAsyncCommand}" Style="{StaticResource GhostButton}">
+            <Button Command="{Binding SignOutCommand}" Style="{StaticResource GhostButton}">
               <StackPanel Orientation="Horizontal">
                 <TextBlock Text="&#xE8D7;" FontFamily="Segoe MDL2 Assets, Segoe Fluent Icons" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="Clear password" VerticalAlignment="Center"/>
+                <TextBlock Text="Sign out" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
           </StackPanel>

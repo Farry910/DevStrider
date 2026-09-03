@@ -1,8 +1,9 @@
 using System.Windows;
 using DevStrider.Desktop.Data;
+using DevStrider.Desktop.Data.Http;
 using DevStrider.Desktop.Data.Import;
-using DevStrider.Desktop.Data.Postgres;
 using DevStrider.Desktop.Services;
+using DevStrider.Desktop.Services.HrApi;
 using DevStrider.Desktop.ViewModels;
 using DevStrider.Desktop.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,15 +53,25 @@ public partial class App : Application
                 await SettingsBootstrap.ApplyAsync(settings);
             }).GetAwaiter().GetResult();
 
-            // Nothing below this line runs without an account. Every repository scopes its queries
-            // to SessionContext, and a query issued before login throws rather than quietly
-            // reading the whole team's rows.
-            var login = new LoginWindow(Services.GetRequiredService<LoginViewModel>());
-            MainWindow = login;
-            if (login.ShowDialog() != true)
+            // Nothing below this line runs without an account. Every HTTP repository's calls are
+            // rejected by HrApiClient before they leave the process if no token is installed.
+            //
+            // Try the token saved on disk first — this is the whole point of hr-system handing out
+            // a week-long bearer token instead of a browser-style short session: someone who uses
+            // DevStrider daily should not retype a password on every launch. It only falls through
+            // to the login window when there is nothing saved, it expired, or the server no longer
+            // honours it.
+            var auth = Services.GetRequiredService<AuthService>();
+            var restored = Task.Run(() => auth.TryRestoreSessionAsync()).GetAwaiter().GetResult();
+            if (!restored)
             {
-                Shutdown(0);
-                return;
+                var login = new LoginWindow(Services.GetRequiredService<LoginViewModel>());
+                MainWindow = login;
+                if (login.ShowDialog() != true)
+                {
+                    Shutdown(0);
+                    return;
+                }
             }
 
             var window = new MainWindow
@@ -116,19 +127,21 @@ public partial class App : Application
             SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017",
             SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider"));
 
-        // ── the shared database ─────────────────────────────────────────────
-        services.AddSingleton<SharedDbCredentials>();
-        services.AddSingleton<SharedDbContext>();
+        // ── hr-system ────────────────────────────────────────────────────────
+        // The account and every ds_* row now live behind hr-system's HTTP API rather than a
+        // Postgres connection this process opens itself — see HrApiClient.
+        services.AddSingleton<HrApiClient>();
         services.AddSingleton<SessionContext>();
         services.AddSingleton<AuthService>();
 
-        // Repositories are the only thing that talks SQL. Each one reads the account id from
-        // SessionContext, so no caller can ask for someone else's rows.
-        services.AddSingleton<IAccountRepository, PgAccountRepository>();
-        services.AddSingleton<IProfileRepository, PgProfileRepository>();
-        services.AddSingleton<IBidRepository, PgBidRepository>();
-        services.AddSingleton<IInterviewRepository, PgInterviewRepository>();
-        services.AddSingleton<IPeerDirectory, PgPeerDirectory>();
+        // Repositories are the only thing that talks to hr-system. The account is the bearer
+        // token's, never the caller's — no repository here can even accidentally ask for someone
+        // else's rows, because none of them put a user id on the wire.
+        services.AddSingleton<IAccountRepository, HttpAccountRepository>();
+        services.AddSingleton<IProfileRepository, HttpProfileRepository>();
+        services.AddSingleton<IBidRepository, HttpBidRepository>();
+        services.AddSingleton<IInterviewRepository, HttpInterviewRepository>();
+        services.AddSingleton<IPeerDirectory, HttpPeerDirectory>();
 
         // ── services ────────────────────────────────────────────────────────
         services.AddSingleton<ProfileService>();      // the ds_users row: the account name
@@ -206,7 +219,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine("Post-login boot failed: " + ex.Message);
-            activity.Error("Startup", "Post-login boot crashed", SharedDbCredentials.Redact(ex.Message));
+            activity.Error("Startup", "Post-login boot crashed", ex.Message);
         }
     }
 
@@ -259,8 +272,8 @@ public partial class App : Application
         base.OnExit(e);
 
         // Hard-kill instead of Environment.Exit — the latter waits on managed finalizers
-        // (SkiaSharp's GL context, Npgsql's TCP pool, native COM teardown) and can hang
-        // indefinitely. Kill() terminates the process immediately, no finalizer wait.
+        // (SkiaSharp's GL context, native COM teardown) and can hang indefinitely. Kill()
+        // terminates the process immediately, no finalizer wait.
         // This is the normal path; the watchdog above is the safety net for the unhappy one.
         System.Diagnostics.Process.GetCurrentProcess().Kill();
     }

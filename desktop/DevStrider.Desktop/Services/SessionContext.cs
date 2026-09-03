@@ -1,26 +1,24 @@
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// Who is logged in. Set once by the login window before the main window is built, and read by
-/// every repository to scope its queries.
+/// Who is logged in. Set once — by a restored bearer token on a quiet startup, or by the login
+/// window otherwise — before the main window is built.
 ///
 /// <para>
-/// There is no persisted session by design: the password is asked for on every start of the app.
-/// This object holds the answer for the lifetime of the process and nothing writes it to disk.
-/// </para>
-///
-/// <para>
-/// In one database holding the whole team, "my rows" is a predicate rather than a given, and
-/// <see cref="UserId"/> is that predicate. Repositories read it from here rather than taking it as
-/// a parameter — a caller that could pass a user id is a caller that could pass the wrong one.
+/// The account id is no longer this object's business the way it used to be: every HTTP repository
+/// in <c>Data/Http</c> reads it off the bearer token on hr-system's side
+/// (<see cref="Services.HrApi.HrApiClient"/>), not from here, so there is no query left that could
+/// accidentally run scoped to someone else. What lives here now is purely for display — the
+/// title bar, the Settings tab's "signed in as" — and for the rest of the app to ask
+/// <see cref="IsAuthenticated"/> before assuming a session exists.
 /// </para>
 /// </summary>
 public sealed class SessionContext
 {
-    /// <summary><c>app_user.id</c>. Zero until <see cref="SignIn"/> — see <see cref="Require"/>.</summary>
+    /// <summary><c>app_user.id</c>. Zero until <see cref="SignIn"/>.</summary>
     public long UserId { get; private set; }
 
-    /// <summary>The address that was typed into the login form, as <c>app_user</c> holds it.</summary>
+    /// <summary>The signed-in portal address.</summary>
     public string Email { get; private set; } = "";
 
     public bool IsAuthenticated => UserId != 0;
@@ -31,14 +29,4 @@ public sealed class SessionContext
         UserId = userId;
         Email = email ?? "";
     }
-
-    /// <summary>
-    /// The account id, or a loud failure. Every repository call goes through this: a query that
-    /// silently ran with user_id = 0 would return an empty board rather than an error, and the
-    /// user would think their data was gone.
-    /// </summary>
-    public long Require() =>
-        IsAuthenticated
-            ? UserId
-            : throw new InvalidOperationException("No user is signed in — the database was reached before login.");
 }

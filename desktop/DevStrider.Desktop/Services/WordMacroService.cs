@@ -10,9 +10,13 @@ namespace DevStrider.Desktop.Services;
 /// <summary>
 /// Runs a Word VBA macro by name against a profile's template, headless and in the background.
 ///
-/// <para><b>Contract with the macro:</b> the resume text is handed over as a single string
-/// argument —</para>
-/// <code>Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)</code>
+/// <para><b>Contract with the macro:</b> the resume text and the job description are handed over
+/// as two string arguments —</para>
+/// <code>Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String, ByVal JobDescription As String)</code>
+/// <para>
+/// The second argument exists so the macro can save the job description as a text file next to
+/// the resume it writes — see <c>SaveResumeAutomatically</c> in desktop/macro.md.
+/// </para>
 /// <para>
 /// No clipboard and no bridge file. The macro used to read the Windows clipboard, which meant
 /// every bid quietly overwrote whatever the user had copied — unacceptable when the whole point
@@ -145,9 +149,11 @@ public sealed class WordMacroService : IDisposable
 
     /// <summary>
     /// Invoke <paramref name="macroName"/> in <paramref name="documentPath"/>, passing the resume
-    /// text as its argument. Never throws — failures come back in the Result.
+    /// text and (since the macro's second parameter — see desktop/macro.md) the job description as
+    /// its arguments. Never throws — failures come back in the Result.
     /// </summary>
-    public async Task<Result> RunAsync(string resumeText, string documentPath, string macroName, string profileName)
+    public async Task<Result> RunAsync(
+        string resumeText, string documentPath, string macroName, string profileName, string jobDescription = "")
     {
         if (string.IsNullOrWhiteSpace(documentPath) || !File.Exists(documentPath))
             return new Result(false, $"Word template not found: {documentPath}");
@@ -164,7 +170,7 @@ public sealed class WordMacroService : IDisposable
         try
         {
             return await RunOnStaAsync(
-                () => RunOnSta(resumeText, full, macro, profileName), RunTimeout).ConfigureAwait(false);
+                () => RunOnSta(resumeText, full, macro, profileName, jobDescription ?? ""), RunTimeout).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
@@ -272,7 +278,7 @@ public sealed class WordMacroService : IDisposable
     // The run itself — STA thread only
     // =========================================================================================
 
-    private Result RunOnSta(string resumeText, string documentPath, string macroName, string profileName)
+    private Result RunOnSta(string resumeText, string documentPath, string macroName, string profileName, string jobDescription)
     {
         EnsureDocumentOpen(documentPath);
 
@@ -281,14 +287,17 @@ public sealed class WordMacroService : IDisposable
 
         Debug.WriteLine($"[WordMacro] running {macroName} for [{profileName}]");
 
-        // The resume text is the macro's single argument — no clipboard, no bridge file.
+        // Two arguments now, not one — no clipboard, no bridge file. The job description lets the
+        // macro save it alongside the resume it writes (see SaveResumeAutomatically in
+        // desktop/macro.md); a template still on the one-parameter signature fails this call with
+        // a dispatch error until it is updated to accept both.
         string? runError = null;
         try
         {
             // Word.Application.Run declares all thirty of its Arg parameters ByRef. PowerShell
             // refused to marshal a plain value into one and needed an explicit [ref]; the CLR's
             // IDispatch binder handles it, so the whole retry dance that used to live here is gone.
-            Invoke(_word!, "Run", macroName, resumeText);
+            Invoke(_word!, "Run", macroName, resumeText, jobDescription);
         }
         catch (Exception ex)
         {

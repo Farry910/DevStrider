@@ -19,13 +19,6 @@ public partial class SettingsView : UserControl
     /// is why this has to be code-behind rather than a binding. The view-model holds it until
     /// Save writes it to the settings row.
     /// </summary>
-    private void SharedDbPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is SettingsViewModel vm && sender is PasswordBox box)
-            vm.SharedDbPasswordEntry = box.Password;
-    }
-
-    /// <summary>Same contract as above, for the R2 secret access key.</summary>
     private void R2SecretBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsViewModel vm && sender is PasswordBox box)

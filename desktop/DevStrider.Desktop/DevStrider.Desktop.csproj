@@ -52,8 +52,15 @@
       8.3.0 drops the legacy-MongoDB data import in favour of Bids -> From folder, which records
       bids from the resume folders the macro already wrote to disk, each timed by its own folder's
       creation time — a record that does not depend on anyone's old database still being installed.
+      9.0.0 drops the shared Postgres connection entirely: sign-in and every ds_* read/write now go
+      through hr-system's /api/devstrider/* HTTP API and a week-long bearer token instead of a
+      connection string held on this machine — a major, since the app no longer carries a database
+      credential at all, and Settings' "Shared database" card became "hr-system" (server address,
+      not host/port/user/password). Npgsql and BouncyCastle are gone with it. The resume macro also
+      gained a second parameter so it can write the job description alongside the resume it saves —
+      see desktop/macro.md.
     -->
-    <Version>8.3.0</Version>
+    <Version>9.0.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -79,15 +86,6 @@
          type everywhere, hence MongoDB.Bson. -->
     <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
-
-    <!-- PostgreSQL â€” the shared database, which is now the only store -->
-    <PackageReference Include="Npgsql" Version="8.0.5" />
-
-    <!-- scrypt, for verifying app_user.password_hash. The portal stores salt:key hex, which is
-         what Node's crypto.scryptSync produces; .NET has no in-box scrypt (only PBKDF2), hence
-         BouncyCastle. Verify only — DevStrider never creates accounts or sets passwords, and it
-         has never been bcrypt whatever this file used to say. -->
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
 
     <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
          https://<account>.r2.cloudflarestorage.com with region "auto" and path-style
