@@ -70,6 +70,13 @@ public sealed class WordMacroService : IDisposable
     private readonly ActivityLogService _activity;
 
     /// <summary>
+    /// Whether this process has already said that the template's macro takes one argument. The
+    /// fallback fires on every bid until the template is updated, and a balloon each time is how
+    /// a message that matters becomes one the user clicks away without reading.
+    /// </summary>
+    private bool _warnedLegacyMacroSignature;
+
+    /// <summary>
     /// Every COM call in this class runs here. A single thread is both the apartment COM wants
     /// and the serialization the macro needs — Word reuses one instance of an already-open
     /// document, so two overlapping runs would stomp each other.
@@ -289,29 +296,34 @@ public sealed class WordMacroService : IDisposable
 
         // Two arguments now, not one — no clipboard, no bridge file. The job description lets the
         // macro save it alongside the resume it writes (see SaveResumeAutomatically in
-        // desktop/macro.md); a template still on the one-parameter signature fails this call with
-        // a dispatch error until it is updated to accept both.
-        string? runError = null;
-        try
+        // desktop/macro.md).
+        var callFailure = CallMacro(macroName, resumeText, jobDescription);
+
+        // A template still on the one-parameter signature. Word rejects the call with
+        // DISP_E_BADPARAMCOUNT *before* entering the macro, so nothing has run and calling again
+        // the old way is safe. Falling back rather than failing: the resume is the artifact the
+        // bid is for, and losing every one of them to a template that predates 9.0 costs far more
+        // than the job-description file the second argument exists to write. The warning names the
+        // fix, once per session — every bid would be noise.
+        if (callFailure != null && IsBadParamCount(callFailure))
         {
-            // Word.Application.Run declares all thirty of its Arg parameters ByRef. PowerShell
-            // refused to marshal a plain value into one and needed an explicit [ref]; the CLR's
-            // IDispatch binder handles it, so the whole retry dance that used to live here is gone.
-            Invoke(_word!, "Run", macroName, resumeText, jobDescription);
-        }
-        catch (Exception ex)
-        {
-            // Do NOT treat this as a failure yet. A macro that still ends in Application.Quit
-            // tears down the RPC channel while this very call is on the stack, so a *successful*
-            // run surfaces here as a COM error. The evidence below, not the HRESULT, decides.
-            runError = Unwrap(ex).Message;
-            if (IsDispatchFailure(Unwrap(ex)))
+            if (!_warnedLegacyMacroSignature)
             {
-                // Raised before the macro body was entered: a name Word can't find, a Sub whose
-                // signature doesn't take the single string argument, or a disabled project.
-                AfterRun();
-                return new Result(false, $"Macro call failed: {runError}");
+                _warnedLegacyMacroSignature = true;
+                _activity.Warning("Resume", "Template is on the one-argument macro",
+                    $"'{macroName}' takes one parameter, so the job description isn't being saved " +
+                    "next to the resume. Add 'ByVal JobDescription As String' to its signature — " +
+                    "see desktop/macro.md, \"Upgrading from the one-argument version?\".");
             }
+            callFailure = CallMacro(macroName, resumeText, jobDescription: null);
+        }
+
+        if (callFailure != null)
+        {
+            // Raised before the macro body was entered: a name Word can't find, a Sub whose
+            // signature doesn't take the string arguments, or a disabled project.
+            AfterRun();
+            return new Result(false, $"Macro call failed: {callFailure.Message}");
         }
 
         // Run is a synchronous COM call, so reaching this line means the macro has finished and
@@ -578,6 +590,45 @@ public sealed class WordMacroService : IDisposable
         ex is TargetInvocationException { InnerException: { } inner } ? Unwrap(inner)
         : ex is AggregateException agg && agg.InnerExceptions.Count == 1 ? Unwrap(agg.InnerExceptions[0])
         : ex;
+
+    /// <summary>
+    /// One <c>Application.Run</c>. Returns null when the macro ran — which includes the case where
+    /// the RPC channel collapsed because the macro ended in <c>Application.Quit</c> while this call
+    /// was still on the stack — and the exception when Word rejected the call before entering the
+    /// body. Pass <paramref name="jobDescription"/> as null for the pre-9.0 one-argument form.
+    /// </summary>
+    private Exception? CallMacro(string macroName, string resumeText, string? jobDescription)
+    {
+        try
+        {
+            // Word.Application.Run declares all thirty of its Arg parameters ByRef. PowerShell
+            // refused to marshal a plain value into one and needed an explicit [ref]; the CLR's
+            // IDispatch binder handles it, so the whole retry dance that used to live here is gone.
+            if (jobDescription == null) Invoke(_word!, "Run", macroName, resumeText);
+            else Invoke(_word!, "Run", macroName, resumeText, jobDescription);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            var real = Unwrap(ex);
+            return IsDispatchFailure(real) ? real : null;
+        }
+    }
+
+    /// <summary>
+    /// Specifically "the Sub doesn't take this many arguments" — the signature of a template that
+    /// predates 9.0's second macro parameter. Deliberately narrower than
+    /// <see cref="IsDispatchFailure"/>: a missing Sub, a wrong argument type or a disabled project
+    /// must not trigger the one-argument retry, because none of those get better by dropping one.
+    /// </summary>
+    private static bool IsBadParamCount(Exception ex)
+    {
+        if (ex is TargetParameterCountException) return true;
+        if (ex is COMException com && (uint)com.HResult == 0x8002000E) return true;  // DISP_E_BADPARAMCOUNT
+        return Regex.IsMatch(ex.Message,
+            @"DISP_E_BADPARAMCOUNT|(Invalid|Wrong) number of parameters|Number of parameters",
+            RegexOptions.IgnoreCase);
+    }
 
     /// <summary>
     /// Errors raised BEFORE the macro body is entered. Those are real failures, and they identify

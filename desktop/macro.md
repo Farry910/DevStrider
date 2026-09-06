@@ -35,10 +35,12 @@ failed run from a good one.
 > away and relaunches for the next bid. You just lose the warm instance, which is most of the
 > speed-up. The one-line change is in step 6 of the macro below.
 
-> **Upgrading from the one-argument version?** DevStrider now always calls with two arguments, so
-> a `Sub` still declared with one fails every run with `Macro call failed: …` (Word can't match the
-> call to the signature). Add the second `ByVal JobDescription As String` parameter — see the
-> config block and `SaveResumeAutomatically` below — before the next bid.
+> **Upgrading from the one-argument version?** DevStrider calls with two arguments first. Word
+> rejects that against a `Sub` still declared with one — `DISP_E_BADPARAMCOUNT`, raised before the
+> macro body is entered — so DevStrider calls again the old way and the resume is still produced.
+> The bid does not fail; what you lose is the job-description file, and one warning per session
+> says so. Add the second `ByVal JobDescription As String` parameter — see the config block and
+> `SaveResumeAutomatically` below — to get it back.
 
 The resume text arrives with the trailing fast-feed line already stripped (DevStrider parses that
 itself for the bid), but with `[FolderName]:` and every `[Section]:` label intact.
@@ -420,10 +422,10 @@ know about, and its VBA is compressed inside the `.docm` where you can't diff it
    and paste in the job-description block plus `WriteTextFile`
 5. If it still ends in `Application.Quit`, change that to `ActiveDocument.Close`
 
-> **Every template needs this update, not just new ones.** DevStrider now always calls with two
-> arguments. A macro still declared with one stops working entirely — see "Upgrading from the
-> one-argument version?" above — this isn't optional for existing templates the way most changes
-> in this file are.
+> **Every template wants this update, not just new ones.** DevStrider calls with two arguments and
+> falls back to one when the `Sub` only takes one, so an un-updated template keeps working — see
+> "Upgrading from the one-argument version?" above. It just never receives the job description, so
+> `SAVE_JOB_DESCRIPTION` has nothing to write.
 
 > **The macro will no longer appear in Alt+F8.** Word hides Subs that take parameters. That's
 > expected — it's driven by DevStrider, not by hand.
@@ -449,7 +451,8 @@ Any other bookmark in the document is left untouched.
 | Symptom | Cause |
 |---|---|
 | Activity: `Macro reported: …` | The macro's error handler ran — the message is verbatim from `%TEMP%\devstrider_macro_error.log` |
-| Activity: `Macro call failed: …` | Word never entered the macro: no `Sub` by that name, or it doesn't take the two `String` parameters (ClipText, JobDescription) |
+| Activity: `Macro call failed: …` | Word never entered the macro: no `Sub` by that name, a disabled VBA project, or a signature that takes neither two `String` parameters nor one |
+| Activity: `Template is on the one-argument macro` | The `Sub` takes only `ClipText`, so DevStrider re-called it without the job description. Resumes still build; add `ByVal JobDescription As String` to stop losing the JD file |
 | Activity: macro timed out after 90s | The macro is blocking — most often a dialog Word is waiting on. DevStrider closes its Word and recovers on the next bid |
 | Activity says success, no file anywhere | The reply reached the macro empty, so it exited at step 1. Success is inferred from a clean return, not from a file appearing |
 | Log says `OUTPUT_ROOT is empty` | The config block was pasted but not filled in |

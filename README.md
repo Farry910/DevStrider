@@ -148,7 +148,8 @@ and `.pdf` (and, optionally, the job description as a text file in the same fold
 [`desktop/macro.md`](desktop/macro.md)), and finish with `Application.Quit` — DevStrider treats Word
 closing as the success signal. A macro that returns without quitting is reported as failed after 90
 seconds. A `Sub` with parameters no longer appears in Word's Alt+F8 list; that is expected, since
-DevStrider drives it. A template still on the one-parameter signature will fail every run — see
+DevStrider drives it. A template still on the one-parameter signature is called the old way
+instead, so it keeps producing resumes — it just never gets the job description to save — see
 [`desktop/macro.md`](desktop/macro.md) for how to update it.
 
 ## The local listener
