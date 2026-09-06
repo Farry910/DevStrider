@@ -7,8 +7,6 @@ namespace DevStrider.Desktop.Services;
 /// mattering — clear them once you've launched at least once.
 ///
 /// Supported variables:
-///   DEVSTRIDER_MONGO_URI          → MongoUri            (when default "mongodb://127.0.0.1:27017")
-///   DEVSTRIDER_DATABASE_NAME      → DatabaseName        (when default "devstrider")
 ///   DEVSTRIDER_HR_API_BASE_URL    → HrApiBaseUrl        (when default "https://triospace.org/hr")
 ///   DEVSTRIDER_R2_ACCOUNT_ID      → R2AccountId         (when empty)
 ///   DEVSTRIDER_R2_BUCKET          → R2Bucket            (when empty)
@@ -16,13 +14,9 @@ namespace DevStrider.Desktop.Services;
 ///   DEVSTRIDER_R2_SECRET_KEY      → R2SecretAccessKey   (when empty)
 ///   DEVSTRIDER_LISTENER_PORT      → ListenerPort        (when default 8765)
 ///   DEVSTRIDER_WORD_DOC_PATH      → WordDocPath         (when empty)
-///   DEVSTRIDER_WORD_HOTKEY        → WordHotkey          (when default "F9")
 ///
 /// There is no username variable any more: the account name is hr-system's portal address on
 /// <c>app_user</c>, and it is hr-system — not this file — that seeds it, on every login.
-///
-/// The Mongo variables describe the legacy local database the one-time import reads, and nothing
-/// else — DevStrider's own store is hr-system's <c>/api/devstrider/*</c> API.
 /// </summary>
 public static class SettingsBootstrap
 {
@@ -31,8 +25,6 @@ public static class SettingsBootstrap
         var settings = await settingsService.GetForEditAsync();
         var dirty = false;
 
-        dirty |= SeedIfMatch(settings.MongoUri,     "mongodb://127.0.0.1:27017", "DEVSTRIDER_MONGO_URI",     v => settings.MongoUri = v);
-        dirty |= SeedIfMatch(settings.DatabaseName, "devstrider",                "DEVSTRIDER_DATABASE_NAME", v => settings.DatabaseName = v);
         dirty |= SeedIfMatch(settings.HrApiBaseUrl, "https://triospace.org/hr",  "DEVSTRIDER_HR_API_BASE_URL", v => settings.HrApiBaseUrl = v);
 
         // Cloud storage (R2) — same rule: seeded once into the local settings file, then the
@@ -43,7 +35,6 @@ public static class SettingsBootstrap
         dirty |= SeedIfEmpty(settings.R2SecretAccessKey, "DEVSTRIDER_R2_SECRET_KEY",    v => settings.R2SecretAccessKey = v);
 
         dirty |= SeedIfEmpty(settings.WordDocPath,       "DEVSTRIDER_WORD_DOC_PATH",    v => settings.WordDocPath = v);
-        dirty |= SeedIfMatch(settings.WordHotkey, "F9",  "DEVSTRIDER_WORD_HOTKEY",      v => settings.WordHotkey = v);
 
         // Int field — accept only well-formed integers in the listening-port range.
         if (settings.ListenerPort == 8765)

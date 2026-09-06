@@ -1,6 +1,4 @@
-using DevStrider.Desktop.Data.Import;
 using DevStrider.Desktop.Models;
-using MongoDB.Driver;
 
 namespace DevStrider.Desktop.Services;
 
@@ -10,16 +8,15 @@ namespace DevStrider.Desktop.Services;
 ///
 /// <para>
 /// Every credential the app holds — the hr-system bearer token, the R2 token — lives on it, so
-/// this is the single place they are read from. Before caching, each of the ~16 call sites
-/// re-queried the database: <c>/refresh-word</c> hit it on every purple click just to read a
-/// hotkey.
+/// this is the single place they are read from, cached rather than re-read per use.
 /// </para>
 ///
 /// <para>
 /// Storage is <see cref="SettingsStore"/>'s JSON file, not the database — see that class for why.
-/// Installs created before that change keep their settings: the first load with no file present
-/// imports the row from the machine's old local MongoDB and writes it out, after which
-/// <see cref="LegacyStore"/> is never consulted again.
+/// No file means a fresh install and bare defaults: the one-time lift of an old local MongoDB's
+/// settings row is gone with the rest of that database's presence in the app, and
+/// <c>DEVSTRIDER_*</c> env vars (see <see cref="SettingsBootstrap"/>) are how a machine is
+/// bootstrapped now.
 /// </para>
 ///
 /// <para>
@@ -32,7 +29,6 @@ namespace DevStrider.Desktop.Services;
 public class SettingsService
 {
     private readonly SettingsStore _store;
-    private readonly LegacyStore _legacy;
 
     /// <summary>Guards the first load so concurrent callers don't each hit the disk.</summary>
     private readonly SemaphoreSlim _loadLock = new(1, 1);
@@ -43,10 +39,9 @@ public class SettingsService
     /// </summary>
     private volatile AppSettings? _cached;
 
-    public SettingsService(SettingsStore store, LegacyStore legacy)
+    public SettingsService(SettingsStore store)
     {
         _store = store;
-        _legacy = legacy;
     }
 
     /// <summary>
@@ -103,62 +98,17 @@ public class SettingsService
     }
 
     /// <summary>
-    /// Read the settings file, seeding it on first run. The old MongoDB row is preferred over
-    /// bare defaults so an existing install doesn't wake up with its saved listener port and
-    /// Word settings gone.
+    /// Read the settings file, writing out bare defaults on first run so there is always a file
+    /// to edit. <see cref="SettingsBootstrap"/> runs straight after and fills the defaults in from
+    /// <c>DEVSTRIDER_*</c> where they are set.
     /// </summary>
-    private async Task<AppSettings> FetchOrSeedAsync()
+    private Task<AppSettings> FetchOrSeedAsync()
     {
         var fromFile = _store.Load();
-        if (fromFile != null) return fromFile;
+        if (fromFile != null) return Task.FromResult(fromFile);
 
-        var seed = await ImportFromLegacyAsync() ?? new AppSettings();
+        var seed = new AppSettings();
         _store.Save(seed);
-        return seed;
+        return Task.FromResult(seed);
     }
-
-    /// <summary>
-    /// One-time lift of the legacy <c>settings</c> collection into the file. Returns null when
-    /// there's nothing to import — including when MongoDB isn't running, which is the expected
-    /// case on an install that has already finished the migration and uninstalled it.
-    /// </summary>
-    private async Task<AppSettings?> ImportFromLegacyAsync()
-    {
-        if (!_legacy.Available) return null;
-        try
-        {
-            // Short leash. LegacyStore already caps server selection, but this runs on the
-            // startup path with a window waiting to appear, so it gets its own ceiling too.
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var old = await _legacy.Settings
-                .Find(FilterDefinition<LegacyAppSettings>.Empty)
-                .FirstOrDefaultAsync(cts.Token);
-            if (old == null) return null;
-
-            // Mapped field by field rather than deserialized straight onto AppSettings: the two
-            // shapes have already diverged once (the sync fields went away with peer mirroring),
-            // and a silent partial match is worse than a compiler error here.
-            return new AppSettings
-            {
-                MongoUri = Blank(old.MongoUri, "mongodb://127.0.0.1:27017"),
-                DatabaseName = Blank(old.DatabaseName, "devstrider"),
-                ListenerPort = old.ListenerPort > 0 ? old.ListenerPort : 8765,
-                ActiveProfileId = old.ActiveProfileId,
-                WordDocPath = old.WordDocPath ?? "",
-                WordHotkey = Blank(old.WordHotkey, "F9"),
-                R2AccountId = old.R2AccountId ?? "",
-                R2Bucket = old.R2Bucket ?? "",
-                R2AccessKeyId = old.R2AccessKeyId ?? "",
-                R2SecretAccessKey = old.R2SecretAccessKey ?? "",
-            };
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"No legacy settings to import: {ex.Message}");
-            return null;
-        }
-    }
-
-    private static string Blank(string? value, string fallback) =>
-        string.IsNullOrWhiteSpace(value) ? fallback : value;
 }

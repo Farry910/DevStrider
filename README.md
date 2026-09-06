@@ -73,8 +73,8 @@ always one-to-one, and a posting with nothing bid on it is exactly what `status 
 - Network access to an **hr-system** deployment (default `https://triospace.org/hr`), with
   `desktop/shared-db-schema.sql` already applied to *its* database
 - **Chrome**, for the extension
-- MongoDB is *not* required. It is read once, if present, to carry an old install's settings
-  across — see *Upgrading from 7.x*.
+- MongoDB is *not* required, installed, or read. Nothing in the app has spoken to one since 9.1.0
+  — see *Upgrading from 7.x*.
 
 ## Build and run
 
@@ -144,13 +144,31 @@ Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String, ByVal JobDescription
 ```
 
 It should fill the bookmarks from the `[Section]:` labels in the first argument, save its `.docx`
-and `.pdf` (and, optionally, the job description as a text file in the same folder — see
-[`desktop/macro.md`](desktop/macro.md)), and finish with `Application.Quit` — DevStrider treats Word
-closing as the success signal. A macro that returns without quitting is reported as failed after 90
-seconds. A `Sub` with parameters no longer appears in Word's Alt+F8 list; that is expected, since
-DevStrider drives it. A template still on the one-parameter signature is called the old way
-instead, so it keeps producing resumes — it just never gets the job description to save — see
-[`desktop/macro.md`](desktop/macro.md) for how to update it.
+and `.pdf`, and finish with `Application.Quit` — DevStrider treats Word closing as the success
+signal. A macro that returns without quitting is reported as failed after 90 seconds. A `Sub` with
+parameters no longer appears in Word's Alt+F8 list; that is expected, since DevStrider drives it. A
+template still on the one-parameter signature is called the old way instead, so it keeps producing
+resumes — see [`desktop/macro.md`](desktop/macro.md) for how to update it.
+
+### The job description file
+
+`Job Description.txt` lands in the same folder as the resume, written by **DevStrider** once the
+bid is recorded — not by the macro. The macro still *may* write it (that is what the second
+argument is for), but only an updated template can, and an un-updated one produced nothing at all.
+Writing it here makes the file independent of which signature a profile's `.docm` is on.
+
+The path is composed rather than discovered: the folder holding the profile's `.docm`, plus the
+`[FolderName]:` line from the reply — the same string the macro names its output folder with, with
+characters no Windows path allows (`GitLab CI/CD`) mapped to `-` exactly as the macro maps them.
+The macro's own `OUTPUT_ROOT` is a `Private Const` inside the VBA that nothing outside Word can
+read, so this assumes the two agree, which is how every template in
+[`desktop/macro.md`](desktop/macro.md) is set up. When they don't, no file is written and the
+Activity log names the path that was tried — nothing is created, so a mismatch leaves an obvious
+gap rather than a stray folder somewhere plausible.
+
+If your template is on the two-argument signature and also writes the file, both write the same
+bytes to the same path and DevStrider's write lands second. Set `SAVE_JOB_DESCRIPTION = False` in
+the macro to leave the job entirely to the app.
 
 ## The local listener
 
@@ -166,7 +184,6 @@ silently from the saved bearer token or established through the sign-in window.
 | `POST /prewarm` | Launch Word and open the template while ChatGPT is still writing. |
 | `POST /generate-resume` | Run the macro and record the bid, in one call. |
 | `POST /record-bid` | Record a bid without the macro. `/record-devstrider` is an alias. |
-| `POST /refresh-word` | Re-run the macro against text already on the page. |
 | `POST /trigger-paste-submit` | Paste and submit into the ChatGPT tab. |
 | `GET /browse-word` | Open a file picker for the profile's `.docm`. |
 
@@ -209,10 +226,11 @@ There is no username variable: the account name comes from hr-system's `app_user
 Before you start, back up the machine's local MongoDB — after the migration the shared database is
 the only copy of that person's bids and interviews.
 
-**Settings carry across automatically.** On first launch with no `settings.json`, the app reads
-the old MongoDB once and copies the saved values over — R2 keys, listener port, Word path — so
-nothing has to be retyped. It never writes to MongoDB. After that the service can be stopped and
-uninstalled.
+**Nothing carries across automatically any more.** 9.1.0 removed the last read of the old local
+MongoDB — a one-time lift of its settings row into `settings.json` on first launch — along with the
+driver that performed it. A fresh install starts from bare defaults, so retype the R2 keys and the
+listener port, or seed them from the `DEVSTRIDER_*` variables below. The old MongoDB service can be
+stopped and uninstalled; the app cannot reach one, and never wrote to it in the first place.
 
 **Old bids do not carry across, by design.** There is no data migration in the app. A one-time
 importer was built and then removed: it existed to solve a problem the folder back door already
@@ -234,6 +252,21 @@ an R2 token with write permission can also delete — so every machine holding t
 bucket. Treat the file accordingly.
 
 ## Version history
+
+**9.1.0** — **The job description is now written by the app**, into the resume's own folder, right
+after the bid is recorded — see [The job description file](#the-job-description-file). It used to
+depend on the macro's second argument, so a template on the old one-argument signature produced no
+file at all; now the signature doesn't matter. **The bid board's bulk-actions toolbar is gone** —
+the bar that appeared above the grid on selection, with a status picker, Apply and Delete. All
+three already live on the row itself, so it duplicated them and pushed the table down on every
+click. Plus two removals, both of things 9.0 left without a job. **The legacy local MongoDB is gone**: `LegacyStore`, the `MongoDB.Driver` package, the one-time lift of its settings row into
+`settings.json`, and `DEVSTRIDER_MONGO_URI` / `DEVSTRIDER_DATABASE_NAME`. `MongoDB.Bson` stays,
+because `ObjectId` is still the identity type on every model and the 24-character hex string
+`ds_*.id` holds — but there is no MongoDB client in the app any more. **The Word macro hotkey is
+gone**: the setting, `DEVSTRIDER_WORD_HOTKEY`, its Settings card, the `POST /refresh-word` endpoint
+it existed to serve, and the window-automation half of `KeyboardHelper`. Since 9.0 the macro is
+invoked over COM against an invisible Word instance with its arguments passed directly, so there is
+nothing left to synthesize a keystroke at.
 
 **9.0.0** — see `<Version>` in `desktop/DevStrider.Desktop/DevStrider.Desktop.csproj` for the full
 changelog comment. The app shows the version in the title bar so you can tell at a glance whether a

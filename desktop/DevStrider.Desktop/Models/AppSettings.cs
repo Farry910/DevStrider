@@ -18,13 +18,6 @@ namespace DevStrider.Desktop.Models;
 /// </summary>
 public class AppSettings
 {
-    /// <summary>
-    /// Connection to a legacy local MongoDB, read only by the one-time import that lifts a
-    /// machine's old data into the shared database. Nothing else touches Mongo.
-    /// </summary>
-    public string MongoUri { get; set; } = "mongodb://127.0.0.1:27017";
-    public string DatabaseName { get; set; } = "devstrider";
-
     // ── hr-system — the account, the ds_* data, and the JWT session ─────────
     // DevStrider used to hold the shared Postgres credential and query ds_* directly. That is
     // gone: hr-system's /api/devstrider/* routes are the only way in now, and this app carries
@@ -67,9 +60,6 @@ public class AppSettings
     /// exists. Safe to remove a release or two after every install has run the migration.
     /// </summary>
     public string WordDocPath { get; set; } = "";
-
-    /// <summary>Hotkey assigned to the Word macro. Default F9 triggers field updates.</summary>
-    public string WordHotkey { get; set; } = "F9";
 
     // ── Cloudflare R2 (resume file storage) ─────────────────────────────────
     // Same rule as the shared-database credential above: stored in this file and loaded once at

@@ -49,8 +49,9 @@ only thing that ever opens a Postgres connection.
 - **Google Chrome** + the Bid Assistant extension (in `../extension`)
 - A **ChatGPT** account (free tier is fine) for resume generation
 
-MongoDB is *not* required. If a machine still has the old local one, it is read once to carry that
-install's saved settings across — see [Upgrading from 7.x](../README.md#upgrading-from-7x).
+MongoDB is *not* required, installed, or read. The last thing that touched one — a one-time lift of
+an old local install's saved settings — went in 9.1.0, along with the driver that did it. See
+[Upgrading from 7.x](../README.md#upgrading-from-7x).
 
 ---
 
@@ -142,8 +143,13 @@ still recorded — you lose the file, never the record.
 ## Tabs
 
 ### Bids
-The day's bid board. Edit a row's status, schedule an interview off a bid, or bulk-select rows to
-set status / delete in one go.
+The day's bid board. Everything a row can have done to it is on the row: edit its status in place,
+or use its **Actions** column to apply a fast-feed line, view the job description, schedule an
+interview off it, save, or delete.
+
+Selecting a row selects it — nothing opens above the grid. A bulk toolbar used to slide in on
+selection with its own status picker and delete button, duplicating controls the row already had a
+few pixels away, and pushing the table down every time you clicked something. It went in 9.1.0.
 
 **Adding a bid by hand: paste the folder name.** The macro names its output folder with the
 fast-feed line — `UID, Company, Role, Stack1, Stack2` — so that folder name *is* the bid. Paste it
@@ -243,15 +249,11 @@ interviews — is scoped to its profile. Switch the active profile from the **ti
   reads or renders the rest.
 
 ### Settings (Account)
-- **Legacy MongoDB (import only)** — the old local database, read and never written to. Carries this
-  machine's saved settings across automatically on first launch. It holds no bid history the app
-  wants: there is no data migration, and none is planned — see [Recording a day from resume folders](#recording-a-day-from-resume-folders).
 - **Identity** — read-only: the hr-system account you are signed in as
 - **hr-system** — server address (default `https://triospace.org/hr`) and **Sign out**. See
   [Credentials](#credentials).
 - **Cloud storage (Cloudflare R2)** — account ID, bucket, access key ID, secret access key
 - **Bid-Assistant listener** — port (default 8765) + status
-- **Word macro hotkey** — shared fallback when a profile has no macro name
 
 ### Activity
 Live log of every extension request, sign-in, and macro run (success / warning / error). Rows are
@@ -274,7 +276,6 @@ The extension drives the app through these endpoints on `http://127.0.0.1:8765`:
 | `POST` | `/prewarm` | Launch Word and open the template while ChatGPT is still writing |
 | `POST` | `/generate-resume` | Run the macro and record the bid, in one call |
 | `POST` | `/record-bid` | Record/update one bid without the macro (`/record-devstrider` is an alias) |
-| `POST` | `/refresh-word` | Re-run the active profile's Word macro |
 | `POST` | `/trigger-paste-submit` | Paste and submit into the ChatGPT tab |
 | `GET`  | `/browse-word` | Native file picker for the .docm path |
 
@@ -282,11 +283,11 @@ The loopback binding is what stands in for authentication: nothing off this mach
 Requests therefore carry no credential and are served as whoever is signed in — which is why the
 listener starts only **after** a session exists, restored silently or via the login window.
 
-`/refresh-word` is **serialized app-wide**: Word only ever has one instance of the .docm open, so
-concurrent calls (multiple Chrome profiles/windows bidding at once) queue behind each other rather
-than retriggering the macro mid-run. Each caller's Chrome window handle is captured *before* it
-waits its turn, so focus returns to the window that actually clicked. Callers should allow up to
-~90s and must not gate their own work on the response — the extension records the bid in parallel.
+`/generate-resume` runs the macro over COM against an invisible Word instance, so nothing takes the
+foreground and the user keeps typing into the job application while the resume is produced. It
+replaced `/refresh-word`, which opened the .docm, brought Word to the front, and synthesized a
+configured hotkey at it; that endpoint and the `WordHotkey` setting were removed in 9.1.0, and with
+them the app-wide serialization the focus-stealing made necessary.
 
 Capture is keyed on the strict-normalized URL: lowercased, trailing slash trimmed, query and hash
 **kept**. Two tracking links to the same posting are two rows, deliberately — merging them would
@@ -322,7 +323,8 @@ grounds that nothing read it either. Re-running `shared-db-schema.sql` drops all
 
 Row ids are 24-character MongoDB ObjectId hex strings, carried over from the local databases these
 tables replaced — keeping the original identity is what made the one-time import an idempotent
-upsert. `user_id` is `app_user.id`, a BIGINT, and hr-system scopes every `/api/devstrider/*` query
+upsert. That is the whole of MongoDB's remaining presence: `MongoDB.Bson` for the `ObjectId` type,
+with no client and no database behind it since 9.1.0. `user_id` is `app_user.id`, a BIGINT, and hr-system scopes every `/api/devstrider/*` query
 to whichever account the bearer token belongs to — DevStrider never puts a user id on the wire
 itself.
 
@@ -336,8 +338,10 @@ of these tables.
 
 Empty/default settings are seeded once at first launch from `DEVSTRIDER_*` variables (set with
 `setx`, then restart). See the **About** tab for the full list — e.g.
-`DEVSTRIDER_HR_API_BASE_URL`, `DEVSTRIDER_LISTENER_PORT`, `DEVSTRIDER_WORD_DOC_PATH`,
-`DEVSTRIDER_WORD_HOTKEY`.
+`DEVSTRIDER_HR_API_BASE_URL`, `DEVSTRIDER_LISTENER_PORT`, `DEVSTRIDER_WORD_DOC_PATH`.
+
+`DEVSTRIDER_WORD_HOTKEY`, `DEVSTRIDER_MONGO_URI` and `DEVSTRIDER_DATABASE_NAME` were removed in
+9.1.0 with the settings they seeded. They are now ignored; clear them.
 
 There is no username variable: the account name comes from hr-system's `app_user`.
 
@@ -355,7 +359,8 @@ previous settings intact rather than a half-written file that fails to parse on 
 
 [`SettingsService`](DevStrider.Desktop/Services/SettingsService.cs) loads it **once at startup** and
 serves every later read from memory. Before that, each of ~16 call sites re-queried the database —
-`/refresh-word` hit it on every click just to read a hotkey.
+`/refresh-word` hit it on every click just to read a hotkey, and both that endpoint and the hotkey
+are gone now.
 
 Because reads share one instance, the rule is: `GetAsync()` returns the **cached object and must
 not be mutated**; anything that edits settings takes `GetForEditAsync()` (a copy) and hands the
@@ -408,7 +413,8 @@ describing a Postgres connection, and there is not one left here to describe.
 | Every screen empty after signing in | No active profile — create one in the **Profiles** tab. |
 | Resume batch does nothing | Keep a logged-in ChatGPT tab open; confirm the profile has a Word doc path + macro name; check the **Activity** tab. |
 | Resume generates but no file | The Word macro must fill the bookmarks from the `[Section]:` labels and finish with `Application.Quit`. |
-| `Macro call failed: …` after upgrading | DevStrider now calls the macro with two arguments (resume text, job description) — a template's macro still declared with one fails every run. See [`macro.md`](macro.md). |
+| `Macro call failed: …` after upgrading | DevStrider calls the macro with two arguments (resume text, job description). A template still declared with one is retried the old way and keeps working — this message means something else: no `Sub` by that name, or a disabled VBA project. See [`macro.md`](macro.md). |
+| Resume folder has no `Job Description.txt` | DevStrider writes it, not the macro. Check **Activity** for `Job description not saved` — it names the reason and the path tried. Most often the macro's `OUTPUT_ROOT` isn't the folder holding the `.docm`. |
 | Bid hangs after the resume is written | The reply finished but the extension never sent it. Reload the ChatGPT tab (a tab opened before the extension was loaded has no content script), then check `isStreaming()` in `extension/content.js` against the live composer. |
 | ChatGPT automation stalls | ChatGPT changed its DOM — the injection/completion selectors in `extension/content.js` need updating. |
 
@@ -445,7 +451,8 @@ Postgres credential at all: hr-system grew an `/api/devstrider/*` HTTP API built
 and every account read and `ds_*` read/write now goes through it on a week-long bearer token instead
 of a connection string sitting in `settings.json`. The sign-in window's database-connection form is
 gone with it. The resume macro also picked up a second parameter in this release, so it can save the
-job description as a text file alongside the resume it writes — see [`macro.md`](macro.md).
+job description as a text file alongside the resume it writes — see [`macro.md`](macro.md). 9.1.0
+moved that write into the app, so the file no longer depends on the template being updated.
 
 The standalone Python "ResumeAuto" tool was folded in as a batch **Resume auto-gen** tab, then
 removed again in 4.0.0 — resume generation is the one-button extension flow only.

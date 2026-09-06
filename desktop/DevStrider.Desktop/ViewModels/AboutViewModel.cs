@@ -47,8 +47,6 @@ public class AboutViewModel : ViewModelBase
 
     public AboutViewModel()
     {
-        Add("DEVSTRIDER_MONGO_URI",          "AppSettings.MongoUri",          "Legacy local MongoDB, read once by the one-time import and never written to. Default mongodb://127.0.0.1:27017.");
-        Add("DEVSTRIDER_DATABASE_NAME",      "AppSettings.DatabaseName",      "Legacy local MongoDB database name. Default 'devstrider'.");
         Add("DEVSTRIDER_HR_API_BASE_URL",    "AppSettings.HrApiBaseUrl",      "hr-system server address, e.g. https://triospace.org/hr. Default https://triospace.org/hr.");
         Add("DEVSTRIDER_R2_ACCOUNT_ID",      "AppSettings.R2AccountId",       "Cloudflare R2 account id — the hex prefix of the r2.cloudflarestorage.com endpoint.");
         Add("DEVSTRIDER_R2_BUCKET",          "AppSettings.R2Bucket",          "R2 bucket holding shared resume files.");
@@ -56,7 +54,6 @@ public class AboutViewModel : ViewModelBase
         Add("DEVSTRIDER_R2_SECRET_KEY",      "AppSettings.R2SecretAccessKey", "R2 API token secret. Stored in cleartext with the other settings.", isSecret: true);
         Add("DEVSTRIDER_LISTENER_PORT",      "AppSettings.ListenerPort",      "Local HTTP listener port. Default 8765.");
         Add("DEVSTRIDER_WORD_DOC_PATH",      "Default profile's WordDocPath", "Full path to the .docm with the resume macro. Seeded into the default profile on first launch; edit per-profile under Profiles afterwards.");
-        Add("DEVSTRIDER_WORD_HOTKEY",        "AppSettings.WordHotkey",        "Keyboard shortcut that triggers the macro. Default F9.");
     }
 
     private void Add(string name, string field, string desc, bool isSecret = false)

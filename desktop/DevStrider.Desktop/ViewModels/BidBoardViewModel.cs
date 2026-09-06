@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using DevStrider.Desktop.Models;
@@ -85,27 +84,6 @@ public partial class BidBoardViewModel : ViewModelBase
     /// <c>UID, Company, Role, Stack1, Stack2, …</c>. Paste it and the bid is on the board.
     /// </summary>
     public string NewFastFeed { get => _newFastFeed; set => SetProperty(ref _newFastFeed, value); }
-
-    /// <summary>How many DataGrid rows are currently selected. Pushed by the view's SelectionChanged handler.</summary>
-    private int _selectedCount;
-    public int SelectedCount
-    {
-        get => _selectedCount;
-        set
-        {
-            if (SetProperty(ref _selectedCount, value))
-                OnPropertyChanged(nameof(HasSelection));
-        }
-    }
-
-    public bool HasSelection => SelectedCount > 0;
-
-    /// <summary>Bulk-status target — the ComboBox in the toolbar two-way binds here.</summary>
-    private string _bulkStatus = BidStatuses.Applied;
-    public string BulkStatus { get => _bulkStatus; set => SetProperty(ref _bulkStatus, value); }
-
-    /// <summary>The full list of statuses the bulk picker offers. Exposed so the view can bind <c>ItemsSource</c>.</summary>
-    public IReadOnlyList<string> AllBidStatuses { get; } = BidStatuses.All;
 
     /// <summary>
     /// How many bids are written but not yet sent, as a sentence — empty when there are none, so
@@ -378,82 +356,6 @@ public partial class BidBoardViewModel : ViewModelBase
         return string.IsNullOrWhiteSpace(named) ? row.Bid.Url : named;
     }
 
-    /// <summary>
-    /// Bulk-set status across every selected row. <paramref name="selection"/> comes from the
-    /// DataGrid's <c>SelectedItems</c>. Confirms once, then patches each row.
-    /// </summary>
-    [RelayCommand]
-    public async Task BulkApplyStatusAsync(object? selection)
-    {
-        var rows = ExtractSelectedRows(selection);
-        if (rows.Count == 0) { StatusMessage = "Select rows first."; return; }
-        var status = string.IsNullOrWhiteSpace(BulkStatus) ? BidStatuses.Applied : BulkStatus;
-
-        var ok = ConfirmDialog.Ask(
-            System.Windows.Application.Current?.MainWindow,
-            "Set status?",
-            $"{rows.Count} bid{(rows.Count == 1 ? "" : "s")} → '{status}'.",
-            okText: "Set status", danger: false);
-        if (!ok) return;
-
-        foreach (var row in rows)
-            await _service.UpdateAsync(row.Bid.Id, b => { b.Status = status; });
-
-        StatusMessage = $"Set {rows.Count} bid{(rows.Count == 1 ? "" : "s")} → '{status}'.";
-        await ReloadAsync();
-    }
-
-    /// <summary>
-    /// Bulk-delete every selected row. Refuses if any selected bid has interviews attached
-    /// (delete those first). One confirm dialog covers the whole batch.
-    /// </summary>
-    [RelayCommand]
-    public async Task BulkDeleteAsync(object? selection)
-    {
-        var rows = ExtractSelectedRows(selection);
-        if (rows.Count == 0) { StatusMessage = "Select rows first."; return; }
-
-        if (_interviews != null)
-        {
-            var blocked = new List<BoardRow>();
-            foreach (var r in rows)
-            {
-                if (await _interviews.HasForBidAsync(r.Bid.Id)) blocked.Add(r);
-            }
-            if (blocked.Count > 0)
-            {
-                ConfirmDialog.Ask(
-                    System.Windows.Application.Current?.MainWindow,
-                    "Some bids have interviews",
-                    $"{blocked.Count} of the {rows.Count} selected bid{(blocked.Count == 1 ? " has" : "s have")} " +
-                    "interviews scheduled. Delete those interviews first, then try again.",
-                    okText: "OK", cancelText: "Close", danger: false);
-                return;
-            }
-        }
-
-        var ok = ConfirmDialog.Ask(
-            System.Windows.Application.Current?.MainWindow,
-            $"Delete {rows.Count} bid{(rows.Count == 1 ? "" : "s")}?",
-            "This removes the posting and the bid for each row from the shared database. Can't be undone.",
-            okText: "Delete");
-        if (!ok) return;
-
-        foreach (var r in rows) await _service.DeleteAsync(r.Bid.Id);
-
-        StatusMessage = $"Deleted {rows.Count} bid{(rows.Count == 1 ? "" : "s")}.";
-        await ReloadAsync();
-    }
-
-    /// <summary>
-    /// Materialize the WPF <c>SelectedItems</c> into a stable list — the live collection mutates
-    /// while we're iterating so we always copy first.
-    /// </summary>
-    private static List<BoardRow> ExtractSelectedRows(object? selection)
-    {
-        if (selection is not IList list) return new List<BoardRow>();
-        return list.OfType<BoardRow>().Where(r => r.Bid != null).ToList();
-    }
 
     /// <summary>
     /// Parse the row's manually-typed fast-feed line and apply it: sets resumeId/company/role/

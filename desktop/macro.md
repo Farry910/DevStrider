@@ -12,9 +12,14 @@ working in a job application while the resume is produced behind you. Passing a 
 fixes a silent corruption: `CF_TEXT` is ANSI, so ChatGPT's em-dashes and smart quotes arrived as
 `?`. A COM `BSTR` is Unicode end to end.
 
-The second argument — the job description — exists so the macro can save it as a plain-text file
-in the same folder as the resume it produces. Nothing forces you to use it; a macro that ignores
-the parameter still works exactly as before, minus that one file.
+The second argument — the job description — lets the macro save it as a plain-text file in the same
+folder as the resume it produces. **As of 9.1.0 you no longer need it to.** DevStrider writes
+`Job Description.txt` into that folder itself, once the bid is recorded, so the file appears
+whatever signature your macro is on. A macro that ignores the parameter — or never declared it —
+loses nothing.
+
+If your macro does write the file, both write the same bytes to the same path and DevStrider's
+write lands second. Set `SAVE_JOB_DESCRIPTION = False` to leave the job entirely to the app.
 
 ---
 
@@ -38,9 +43,9 @@ failed run from a good one.
 > **Upgrading from the one-argument version?** DevStrider calls with two arguments first. Word
 > rejects that against a `Sub` still declared with one — `DISP_E_BADPARAMCOUNT`, raised before the
 > macro body is entered — so DevStrider calls again the old way and the resume is still produced.
-> The bid does not fail; what you lose is the job-description file, and one warning per session
-> says so. Add the second `ByVal JobDescription As String` parameter — see the config block and
-> `SaveResumeAutomatically` below — to get it back.
+> Nothing is lost: the bid is recorded, the resume is written, and since 9.1.0 the app writes
+> `Job Description.txt` itself. One warning per session tells you the template is on the old
+> signature. Updating it is tidy-up now, not a fix.
 
 The resume text arrives with the trailing fast-feed line already stripped (DevStrider parses that
 itself for the bid), but with `[FolderName]:` and every `[Section]:` label intact.
@@ -60,8 +65,8 @@ pasted into every template without re-entering anyone's paths.
 | `SECTION_COUNT` | How many `[Subtitle N]` / `[Experience N]` pairs this template has bookmarks for |
 | `FALLBACK_FOLDER` | Folder name used when the reply carries no `[FolderName]:` line |
 | `EXPORT_PDF` | `False` saves only the `.docx` and skips the PDF, which is roughly half the run time |
-| `SAVE_JOB_DESCRIPTION` | `False` skips writing the job-description text file — everything else is unchanged |
-| `JD_FILE_NAME` | Base name of the job-description text file, without extension — written as `<JD_FILE_NAME>.txt` next to the resume |
+| `SAVE_JOB_DESCRIPTION` | `False` skips writing the job-description text file — everything else is unchanged. DevStrider writes it either way since 9.1.0, so `False` is the tidier setting |
+| `JD_FILE_NAME` | Base name of the job-description text file, without extension — written as `<JD_FILE_NAME>.txt` next to the resume. Leave it at `Job Description` to match what DevStrider writes, or the two disagree and you get both files |
 
 `SECTION_COUNT` is the one that isn't obvious. It must match the bookmarks actually in the
 document: set it to 5 on a three-role template and the macro looks for `bmSubtitle4` that isn't
@@ -462,7 +467,8 @@ Any other bookmark in the document is left untouched.
 | Files land in a folder named `Resume` | No `[FolderName]:` line in the reply, so `FALLBACK_FOLDER` was used |
 | Bid recorded with no company/role | The reply's last line wasn't the bare `UID, Company, Role, …` line |
 | Word visible / stealing focus | Something other than DevStrider launched it — the COM path sets `Visible = False` |
-| Resume saved, no job-description file | `SAVE_JOB_DESCRIPTION` is `False`, no job description was captured for this bid, or the template's macro predates the `JobDescription` parameter — see "Upgrading from the one-argument version?" |
+| Resume saved, no job-description file | DevStrider writes this one, not the macro — check Activity for `Job description not saved`, which names the reason and the path it tried. Usually: no job description was captured for the bid, or the macro's `OUTPUT_ROOT` points somewhere other than the template's own folder |
+| Two job-description files in one folder | The macro's `JD_FILE_NAME` isn't `Job Description`, so its file and DevStrider's don't collide. Match the names, or set `SAVE_JOB_DESCRIPTION = False` |
 
 ---
 

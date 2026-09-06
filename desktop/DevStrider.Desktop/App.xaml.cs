@@ -1,7 +1,6 @@
 using System.Windows;
 using DevStrider.Desktop.Data;
 using DevStrider.Desktop.Data.Http;
-using DevStrider.Desktop.Data.Import;
 using DevStrider.Desktop.Services;
 using DevStrider.Desktop.Services.HrApi;
 using DevStrider.Desktop.ViewModels;
@@ -116,16 +115,10 @@ public partial class App : Application
         services.AddSingleton<ActivityLogService>();
 
         // ── settings ────────────────────────────────────────────────────────
-        // A file, not a table: it holds the credentials needed to reach the database, so reading
-        // it from the database would be circular.
+        // A file, not a table: it holds the bearer token needed to reach hr-system, so reading it
+        // from hr-system would be circular.
         services.AddSingleton<SettingsStore>();
         services.AddSingleton<SettingsService>();
-
-        // The machine's old local MongoDB, read-only, for the one-time import. Constructed from
-        // env vars rather than from settings because SettingsService is what it seeds.
-        services.AddSingleton(_ => new LegacyStore(
-            SettingsBootstrap.ReadEnv("DEVSTRIDER_MONGO_URI") ?? "mongodb://127.0.0.1:27017",
-            SettingsBootstrap.ReadEnv("DEVSTRIDER_DATABASE_NAME") ?? "devstrider"));
 
         // ── hr-system ────────────────────────────────────────────────────────
         // The account and every ds_* row now live behind hr-system's HTTP API rather than a
