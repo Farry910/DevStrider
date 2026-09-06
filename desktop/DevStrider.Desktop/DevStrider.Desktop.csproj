@@ -52,8 +52,34 @@
       8.3.0 drops the legacy-MongoDB data import in favour of Bids -> From folder, which records
       bids from the resume folders the macro already wrote to disk, each timed by its own folder's
       creation time — a record that does not depend on anyone's old database still being installed.
+      9.0.0 drops the shared Postgres connection entirely: sign-in and every ds_* read/write now go
+      through hr-system's /api/devstrider/* HTTP API and a week-long bearer token instead of a
+      connection string held on this machine — a major, since the app no longer carries a database
+      credential at all, and Settings' "Shared database" card became "hr-system" (server address,
+      not host/port/user/password). Npgsql and BouncyCastle are gone with it. The resume macro also
+      gained a second parameter so it can write the job description alongside the resume it saves —
+      see desktop/macro.md; a template still on the one-argument signature is called the old way
+      rather than failing, so an un-updated .docm keeps producing resumes.
+      9.1.0 moves the job-description file out of the macro and into the app: once the bid is
+      recorded, /generate-resume writes Job Description.txt into the resume's own folder, composed
+      as the profile template's directory plus the [FolderName]: line (invalid path characters
+      mapped to '-' the way the macro maps them). It used to be the macro's job via the second
+      argument, which meant a template on the one-argument signature produced no file at all.
+      The bid board's bulk-actions toolbar is gone too — the bar that slid in above the grid on
+      selection with a status picker, Apply and Delete. Every one of those is already on the row
+      itself, so it was a second copy of the same controls that shoved the table down whenever you
+      clicked one. Its view-model half (SelectedCount, HasSelection, BulkStatus, AllBidStatuses,
+      BulkApplyStatus, BulkDelete, ExtractSelectedRows) went with it.
+      Two removals as well, both of things the 9.0 rewrite left without a job. The legacy local MongoDB is gone
+      — LegacyStore, the MongoDB.Driver package, the one-time lift of its settings row into
+      settings.json, and the DEVSTRIDER_MONGO_URI / DEVSTRIDER_DATABASE_NAME variables. MongoDB.Bson
+      stays: ObjectId is still the identity type on every model and in ds_*.id. And the Word macro
+      hotkey is gone — the setting, DEVSTRIDER_WORD_HOTKEY, its Settings card, the /refresh-word
+      endpoint it existed for, and the window-automation half of KeyboardHelper. The macro is
+      invoked over COM against an invisible Word instance with its arguments passed directly, so
+      there is nothing left to synthesize a keystroke at.
     -->
-    <Version>8.3.0</Version>
+    <Version>9.1.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 
@@ -74,20 +100,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- MongoDB driver â€” read-only, and only for one thing now: the old local database's
-         settings row, carried into settings.json on first launch. ObjectId is still the identity
-         type everywhere, hence MongoDB.Bson. -->
-    <PackageReference Include="MongoDB.Driver" Version="2.28.0" />
+    <!-- BSON only, for ObjectId â€” the identity type on every model and the 24-char hex string
+         ds_profiles.id / ds_bids.id / ds_interviews.id hold. There is no MongoDB anywhere in the
+         app any more: the driver went with the legacy local database in 9.1.0. -->
     <PackageReference Include="MongoDB.Bson" Version="2.28.0" />
-
-    <!-- PostgreSQL â€” the shared database, which is now the only store -->
-    <PackageReference Include="Npgsql" Version="8.0.5" />
-
-    <!-- scrypt, for verifying app_user.password_hash. The portal stores salt:key hex, which is
-         what Node's crypto.scryptSync produces; .NET has no in-box scrypt (only PBKDF2), hence
-         BouncyCastle. Verify only — DevStrider never creates accounts or sets passwords, and it
-         has never been bcrypt whatever this file used to say. -->
-    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
 
     <!-- Cloudflare R2 speaks the S3 API, so the AWS SDK drives it directly: point it at
          https://<account>.r2.cloudflarestorage.com with region "auto" and path-style

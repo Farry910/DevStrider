@@ -3,14 +3,23 @@
 The macro each profile's `.docm` must contain. DevStrider calls it over COM with Word invisible:
 
 ```
-Application.Run "UpdateResumeAndSwitchOriginal", <resume text>
+Application.Run "UpdateResumeAndSwitchOriginal", <resume text>, <job description>
 ```
 
-**One argument, no clipboard.** The old version read the Windows clipboard, which meant every bid
+**Two arguments, no clipboard.** The old version read the Windows clipboard, which meant every bid
 silently overwrote whatever you had copied — unacceptable when the whole point is that you keep
 working in a job application while the resume is produced behind you. Passing a COM argument also
 fixes a silent corruption: `CF_TEXT` is ANSI, so ChatGPT's em-dashes and smart quotes arrived as
 `?`. A COM `BSTR` is Unicode end to end.
+
+The second argument — the job description — lets the macro save it as a plain-text file in the same
+folder as the resume it produces. **As of 9.1.0 you no longer need it to.** DevStrider writes
+`Job Description.txt` into that folder itself, once the bid is recorded, so the file appears
+whatever signature your macro is on. A macro that ignores the parameter — or never declared it —
+loses nothing.
+
+If your macro does write the file, both write the same bytes to the same path and DevStrider's
+write lands second. Set `SAVE_JOB_DESCRIPTION = False` to leave the job entirely to the app.
 
 ---
 
@@ -19,7 +28,7 @@ fixes a silent corruption: `CF_TEXT` is ANSI, so ChatGPT's em-dashes and smart q
 | DevStrider does | Your macro must |
 |---|---|
 | Opens the profile's `.docm` invisibly | — |
-| Calls the macro with the resume text | Accept **one `String` parameter** |
+| Calls the macro with the resume text and the job description | Accept **two `String` parameters** |
 | Treats a clean return as success | End with `ActiveDocument.Close` |
 
 `Application.Run` is a synchronous COM call, so the macro returning **is** the success signal.
@@ -30,6 +39,13 @@ failed run from a good one.
 > **Upgrading from the `Application.Quit` version?** It still works — DevStrider notices Word went
 > away and relaunches for the next bid. You just lose the warm instance, which is most of the
 > speed-up. The one-line change is in step 6 of the macro below.
+
+> **Upgrading from the one-argument version?** DevStrider calls with two arguments first. Word
+> rejects that against a `Sub` still declared with one — `DISP_E_BADPARAMCOUNT`, raised before the
+> macro body is entered — so DevStrider calls again the old way and the resume is still produced.
+> Nothing is lost: the bid is recorded, the resume is written, and since 9.1.0 the app writes
+> `Job Description.txt` itself. One warning per session tells you the template is on the old
+> signature. Updating it is tidy-up now, not a fix.
 
 The resume text arrives with the trailing fast-feed line already stripped (DevStrider parses that
 itself for the bid), but with `[FolderName]:` and every `[Section]:` label intact.
@@ -49,6 +65,8 @@ pasted into every template without re-entering anyone's paths.
 | `SECTION_COUNT` | How many `[Subtitle N]` / `[Experience N]` pairs this template has bookmarks for |
 | `FALLBACK_FOLDER` | Folder name used when the reply carries no `[FolderName]:` line |
 | `EXPORT_PDF` | `False` saves only the `.docx` and skips the PDF, which is roughly half the run time |
+| `SAVE_JOB_DESCRIPTION` | `False` skips writing the job-description text file — everything else is unchanged. DevStrider writes it either way since 9.1.0, so `False` is the tidier setting |
+| `JD_FILE_NAME` | Base name of the job-description text file, without extension — written as `<JD_FILE_NAME>.txt` next to the resume. Leave it at `Job Description` to match what DevStrider writes, or the two disagree and you get both files |
 
 `SECTION_COUNT` is the one that isn't obvious. It must match the bookmarks actually in the
 document: set it to 5 on a three-role template and the macro looks for `bmSubtitle4` that isn't
@@ -88,6 +106,12 @@ Private Const FALLBACK_FOLDER As String = "Resume"
 ' False saves only the .docx. The PDF export is roughly half the run time.
 Private Const EXPORT_PDF As Boolean = True
 
+' False skips writing the job-description text file next to the resume.
+Private Const SAVE_JOB_DESCRIPTION As Boolean = True
+
+' Base name of the job-description text file, without extension.
+Private Const JD_FILE_NAME As String = "Job Description"
+
 '------------------------------------------------------------------------
 ' Nothing below here is per-profile.
 '------------------------------------------------------------------------
@@ -99,7 +123,7 @@ Private gLastPath As String
 '========================
 ' Main macro
 '========================
-Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)
+Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String, ByVal JobDescription As String)
     Dim folderName As String
     Dim sections As Variant
     Dim bookmarks As Variant
@@ -124,8 +148,8 @@ Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String)
         InsertSection ClipText, sections(i), bookmarks(i), sections
     Next i
 
-    ' 5. Save .docx (+ .pdf) into the new folder.
-    SaveResumeAutomatically folderName
+    ' 5. Save .docx (+ .pdf, + the job description) into the new folder.
+    SaveResumeAutomatically folderName, JobDescription
 
     ' 6. Close the document -- NOT the application.
     '
@@ -294,10 +318,10 @@ Sub InsertSection(ByVal fullText As String, ByVal sectionLabel As String, ByVal 
 End Sub
 
 '========================
-' Save .docx + .pdf
+' Save .docx + .pdf + the job description
 '========================
-Sub SaveResumeAutomatically(folderName As String)
-    Dim fullPath As String, docPath As String, pdfPath As String
+Sub SaveResumeAutomatically(folderName As String, Optional ByVal JobDescription As String = "")
+    Dim fullPath As String, docPath As String, pdfPath As String, jdPath As String
 
     ' A blank root would resolve to "\<folder>" -- the drive root -- and either fail with a
     ' permission error or, worse, succeed somewhere nobody would look. Say so instead.
@@ -329,6 +353,31 @@ Sub SaveResumeAutomatically(folderName As String)
             BitmapMissingFonts:=True, _
             UseISO19005_1:=False
     End If
+
+    ' Same folder as the resume, so a recruiter's posting and the resume sent for it stay
+    ' together on disk -- no database, no app, just the folder the macro already writes to.
+    ' Silent no-op on an empty string: DevStrider always sends this argument now, but an empty
+    ' job description (a bid recorded with none captured) shouldn't leave a blank file behind.
+    If SAVE_JOB_DESCRIPTION And Trim$(JobDescription) <> "" Then
+        jdPath = fullPath & "\" & JD_FILE_NAME & ".txt"
+        WriteTextFile jdPath, JobDescription
+    End If
+End Sub
+
+'========================
+' Write a UTF-8 text file, overwriting whatever was there
+'========================
+Sub WriteTextFile(ByVal filePath As String, ByVal text As String)
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2                 ' adTypeText
+    stream.Charset = "utf-8"
+    stream.Open
+    stream.WriteText text
+    ' adSaveCreateOverWrite -- a re-run against the same folder replaces the old job description
+    ' rather than erroring on a file that's already there.
+    stream.SaveToFile filePath, 2
+    stream.Close
 End Sub
 
 '========================
@@ -359,7 +408,7 @@ End Sub
 
 1. Open the `.docm` → **Alt+F11**
 2. Replace the module contents with the block above
-3. Edit the five constants in the config block for that profile
+3. Edit the seven constants in the config block for that profile
 4. Save as **macro-enabled** (`.docm`), close Word
 
 ### Into a template that already works
@@ -367,12 +416,21 @@ End Sub
 Don't paste the whole module over a working one — it may hold per-profile logic this file doesn't
 know about, and its VBA is compressed inside the `.docm` where you can't diff it. Instead:
 
-1. Paste the **config block** in above the existing code and set the five constants
-2. In the main `Sub`, replace the two `Array(…)` literals with `SectionLabels()` and
+1. Paste the **config block** in above the existing code and set the seven constants
+2. Add the second parameter to the main `Sub`'s signature —
+   `ByVal ClipText As String, ByVal JobDescription As String` — and pass it through to
+   `SaveResumeAutomatically folderName, JobDescription`
+3. In the main `Sub`, replace the two `Array(…)` literals with `SectionLabels()` and
    `SectionBookmarks()`, and paste in those two `Function`s
-3. In `SaveResumeAutomatically`, replace the hardcoded `basePath` and the two filenames with
-   `OUTPUT_ROOT` and `FILE_BASE`
-4. If it still ends in `Application.Quit`, change that to `ActiveDocument.Close`
+4. In `SaveResumeAutomatically`, replace the hardcoded `basePath` and the two filenames with
+   `OUTPUT_ROOT` and `FILE_BASE`, add the `Optional ByVal JobDescription As String = ""` parameter,
+   and paste in the job-description block plus `WriteTextFile`
+5. If it still ends in `Application.Quit`, change that to `ActiveDocument.Close`
+
+> **Every template wants this update, not just new ones.** DevStrider calls with two arguments and
+> falls back to one when the `Sub` only takes one, so an un-updated template keeps working — see
+> "Upgrading from the one-argument version?" above. It just never receives the job description, so
+> `SAVE_JOB_DESCRIPTION` has nothing to write.
 
 > **The macro will no longer appear in Alt+F8.** Word hides Subs that take parameters. That's
 > expected — it's driven by DevStrider, not by hand.
@@ -398,7 +456,8 @@ Any other bookmark in the document is left untouched.
 | Symptom | Cause |
 |---|---|
 | Activity: `Macro reported: …` | The macro's error handler ran — the message is verbatim from `%TEMP%\devstrider_macro_error.log` |
-| Activity: `Macro call failed: …` | Word never entered the macro: no `Sub` by that name, or it has no single `String` parameter |
+| Activity: `Macro call failed: …` | Word never entered the macro: no `Sub` by that name, a disabled VBA project, or a signature that takes neither two `String` parameters nor one |
+| Activity: `Template is on the one-argument macro` | The `Sub` takes only `ClipText`, so DevStrider re-called it without the job description. Resumes still build; add `ByVal JobDescription As String` to stop losing the JD file |
 | Activity: macro timed out after 90s | The macro is blocking — most often a dialog Word is waiting on. DevStrider closes its Word and recovers on the next bid |
 | Activity says success, no file anywhere | The reply reached the macro empty, so it exited at step 1. Success is inferred from a clean return, not from a file appearing |
 | Log says `OUTPUT_ROOT is empty` | The config block was pasted but not filled in |
@@ -408,6 +467,8 @@ Any other bookmark in the document is left untouched.
 | Files land in a folder named `Resume` | No `[FolderName]:` line in the reply, so `FALLBACK_FOLDER` was used |
 | Bid recorded with no company/role | The reply's last line wasn't the bare `UID, Company, Role, …` line |
 | Word visible / stealing focus | Something other than DevStrider launched it — the COM path sets `Visible = False` |
+| Resume saved, no job-description file | DevStrider writes this one, not the macro — check Activity for `Job description not saved`, which names the reason and the path it tried. Usually: no job description was captured for the bid, or the macro's `OUTPUT_ROOT` points somewhere other than the template's own folder |
+| Two job-description files in one folder | The macro's `JD_FILE_NAME` isn't `Job Description`, so its file and DevStrider's don't collide. Match the names, or set `SAVE_JOB_DESCRIPTION = False` |
 
 ---
 
@@ -419,6 +480,7 @@ into the Profiles tab:
 
 ```vba
 Sub UpdateResumeAndSwitchOriginal(ByVal ClipText As String, _
+                                  ByVal JobDescription As String, _
                                   ByVal OutputRoot As String, _
                                   ByVal FileBase As String)
 ```

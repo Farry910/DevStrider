@@ -4,9 +4,9 @@ using System.IO;
 namespace DevStrider.Desktop.Services;
 
 /// <summary>
-/// Port of <c>BidAssistantApp/PathValidator.cs</c>. Sanity-check the Word document path
-/// before sending it to <see cref="KeyboardHelper.OpenWordDocument"/> — guards against path
-/// traversal, missing files, wrong extension, oversized files.
+/// Port of <c>BidAssistantApp/PathValidator.cs</c>. Sanity-check a Word document path before it
+/// is accepted as a profile's template — guards against path traversal, missing files, wrong
+/// extension, oversized files. Used by the <c>/browse-word</c> file picker.
 /// </summary>
 internal static class PathValidator
 {

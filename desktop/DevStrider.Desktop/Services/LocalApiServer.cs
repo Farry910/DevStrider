@@ -36,31 +36,6 @@ public sealed partial class LocalApiServer : ObservableObject
     private readonly WordMacroService _wordMacro;
 
     /// <summary>
-    /// Serializes <see cref="HandleRefreshWordAsync"/> end to end. Opening an already-open
-    /// .docm just reactivates the same Word window, so two Chrome windows triggering a refresh
-    /// at once would otherwise retrigger the same macro mid-run and stomp each other's edits.
-    /// </summary>
-    private readonly SemaphoreSlim _refreshWordLock = new(1, 1);
-
-    /// <summary>Requests currently holding or waiting on <see cref="_refreshWordLock"/>.</summary>
-    private int _refreshWordQueueDepth;
-
-    /// <summary>
-    /// Refresh timing budget. The extension abandons <c>/refresh-word</c> at 90s, so queue-wait
-    /// plus automation must stay under that or callers time out on a request the app still
-    /// thinks is live. 40 + 45 = 85s leaves a small margin.
-    /// </summary>
-    private static readonly TimeSpan RefreshWordQueueTimeout = TimeSpan.FromSeconds(40);
-    private static readonly TimeSpan RefreshWordAutomationTimeout = TimeSpan.FromSeconds(45);
-
-    /// <summary>
-    /// Past this many stacked-up refreshes the queue is doing more harm than good — the ones at
-    /// the back would time out client-side anyway, so reject immediately with a message the user
-    /// can act on instead of letting them wait out the full budget for nothing.
-    /// </summary>
-    private const int MaxRefreshWordQueueDepth = 8;
-
-    /// <summary>
     /// Ceiling on a single request body. Resume text and JDs are the big ones and land well
     /// under this; the cap exists so a runaway or malformed caller can't make the app buffer
     /// unbounded input into memory.
@@ -245,12 +220,6 @@ public sealed partial class LocalApiServer : ObservableObject
                 HandleTriggerPasteSubmit(ctx);
                 _activity.Info(ExtensionSource, "JD pasted into ChatGPT", silent: true);
                 await WriteJsonAsync(ctx, 200, new { success = true });
-                return;
-            }
-
-            if (ctx.Request.HttpMethod == "POST" && path == "/refresh-word")
-            {
-                await HandleRefreshWordAsync(ctx);
                 return;
             }
 
@@ -461,10 +430,11 @@ public sealed partial class LocalApiServer : ObservableObject
     /// resume file and record the bid — all without touching the foreground.
     ///
     /// <para>
-    /// This is deliberately *not* <c>/refresh-word</c>. That path drives Word by synthesizing a
-    /// hotkey, which needs Word in the foreground and steals focus mid-application. Here
     /// <see cref="WordMacroService"/> invokes the macro over COM with <c>Visible = false</c>, so
     /// the user keeps typing into the job application while the resume is produced behind them.
+    /// This replaced <c>/refresh-word</c>, which drove Word by synthesizing a configured hotkey
+    /// into the foreground window — that needed Word in front and stole focus mid-application,
+    /// and it is gone along with the hotkey setting it read.
     /// </para>
     ///
     /// <para>
@@ -521,7 +491,7 @@ public sealed partial class LocalApiServer : ObservableObject
         }
         else
         {
-            macroResult = await _wordMacro.RunAsync(resumeBody, docm, macro, profile!.Name);
+            macroResult = await _wordMacro.RunAsync(resumeBody, docm, macro, profile!.Name, req.JobDescription ?? "");
             if (macroResult.Success) _activity.Success(ExtensionSource, "Resume generated", req.Url);
             else _activity.Error(ExtensionSource, "Macro failed", macroResult.Message);
         }
@@ -548,12 +518,28 @@ public sealed partial class LocalApiServer : ObservableObject
             _activity.Success(ExtensionSource, joinedExisting ? "Bid updated" : "Bid recorded", label);
             try { OnExtensionBidRecorded?.Invoke(); } catch { /* subscriber problem isn't ours */ }
 
+            // Now that the bid is safely recorded, drop the job description into the folder the
+            // macro wrote the resume into, so the two live together. Deliberately after the record
+            // and outside its failure path: this is a convenience file, and nothing about it should
+            // be able to cost a bid. Skipped when the macro didn't run — there is no folder then,
+            // and inventing one to hold a lone job description would only litter the output root.
+            var jdFile = macroResult.Success
+                ? JobDescriptionFile.Save(docm, split.FastFeedLine, req.JobDescription)
+                : new JobDescriptionFile.Result(false, "", "The macro didn't run, so there is no resume folder.");
+
+            if (jdFile.Written)
+                _activity.Info(ExtensionSource, "Job description saved", jdFile.Path, silent: true);
+            else if (macroResult.Success)
+                _activity.Warning(ExtensionSource, "Job description not saved", jdFile.Message, silent: true);
+
             await WriteJsonAsync(ctx, 200, new
             {
                 ok = true,
                 macro = macroResult.Success,
                 macroError = macroResult.Success ? null : macroResult.Message,
                 fastFeedApplied = parsed != null,
+                jobDescriptionSaved = jdFile.Written,
+                jobDescriptionPath = jdFile.Written ? jdFile.Path : null,
                 company = bid.Company ?? "",
                 role = bid.Role ?? "",
                 resumeId = bid.ResumeId ?? ""
@@ -579,162 +565,6 @@ public sealed partial class LocalApiServer : ObservableObject
     {
         try { KeyboardHelper.PasteSubmit(); }
         catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[paste-submit] {ex.Message}"); }
-    }
-
-    /// <summary>
-    /// Open the user's Word doc, send the configured hotkey to trigger its macro, wait for
-    /// Word to close (the macro's last action), restore focus to Chrome. Path + hotkey are
-    /// read from <see cref="AppSettings"/> — the extension just POSTs an empty trigger.
-    ///
-    /// <para>
-    /// The actual automation is serialized behind <see cref="_refreshWordLock"/> — see that
-    /// field's doc comment. <c>chromeHwnd</c> is captured before the lock wait (not after) so
-    /// a request queued behind another still restores focus to the window that actually
-    /// clicked purple, rather than whatever happens to be focused once its turn comes up.
-    /// </para>
-    /// </summary>
-    private async Task HandleRefreshWordAsync(HttpListenerContext ctx)
-    {
-        // Drain the request body even though we don't read it — leaving it unread can wedge
-        // some HttpListener clients waiting for the response.
-        _ = await ReadBodyAsync(ctx);
-
-        var chromeHwnd = KeyboardHelper.GetForegroundWindow();
-
-        var s = await _settingsService.GetAsync();
-        var profile = _profileContext.Current;
-        var wordPath = (profile?.WordDocPath ?? "").Trim();
-        var wordHotkey = string.IsNullOrWhiteSpace(s.WordHotkey) ? "F9" : s.WordHotkey.Trim();
-
-        if (string.IsNullOrWhiteSpace(wordPath))
-        {
-            var detail = profile == null
-                ? "No active profile — create one in the Profiles tab first."
-                : $"Set the Word document path for profile '{profile.Name}' in the Profiles tab first.";
-            _activity.Warning(ExtensionSource, "Refresh Word failed", detail);
-            await WriteJsonAsync(ctx, 400, new { success = false, error = detail });
-            return;
-        }
-
-        var (valid, pathError) = PathValidator.ValidateWordPath(wordPath);
-        if (!valid)
-        {
-            _activity.Error(ExtensionSource, "Refresh Word failed", pathError ?? "Invalid Word document path.");
-            await WriteJsonAsync(ctx, 400, new { success = false, error = pathError });
-            return;
-        }
-        var parsed = KeyboardHelper.ParseHotkey(wordHotkey);
-        if (parsed == null)
-        {
-            _activity.Error(ExtensionSource, "Refresh Word failed", $"Invalid hotkey: {wordHotkey}");
-            await WriteJsonAsync(ctx, 400, new { success = false, error = $"Invalid hotkey: {wordHotkey}" });
-            return;
-        }
-
-        // Depth is claimed only after validation, so a misconfigured profile fails fast instead
-        // of taking a queue slot from a caller that could actually have run.
-        var depth = Interlocked.Increment(ref _refreshWordQueueDepth);
-        try
-        {
-            if (depth > MaxRefreshWordQueueDepth)
-            {
-                var busy = $"{depth - 1} Word refreshes already queued — this one was dropped rather than left to time out. Try again in a moment.";
-                _activity.Warning(ExtensionSource, "Word refresh rejected", busy);
-                await WriteJsonAsync(ctx, 503, new { success = false, error = busy });
-                return;
-            }
-
-            if (depth > 1)
-            {
-                _activity.Info(ExtensionSource, "Word refresh queued",
-                    $"{depth - 1} refresh{(depth - 1 == 1 ? "" : "es")} ahead of this one.", silent: true);
-            }
-
-            // Bounded wait: a Word instance wedged on a modal dialog holds the lock for as long
-            // as the user leaves it there, and an unbounded wait here would turn that into a
-            // permanent outage for every other Chrome profile.
-            if (!await _refreshWordLock.WaitAsync(RefreshWordQueueTimeout))
-            {
-                var stuck = $"Timed out after {RefreshWordQueueTimeout.TotalSeconds:0}s waiting for the previous Word refresh. Check whether Word is showing a dialog.";
-                _activity.Error(ExtensionSource, "Word refresh timed out", stuck);
-                await WriteJsonAsync(ctx, 503, new { success = false, error = stuck });
-                return;
-            }
-
-            try
-            {
-                using var automationCts = new CancellationTokenSource(RefreshWordAutomationTimeout);
-                var ct = automationCts.Token;
-                var (mods, keyVk) = parsed.Value;
-
-                var wordHwnd = await KeyboardHelper.OpenWordDocumentAsync(wordPath, ct);
-                if (wordHwnd == IntPtr.Zero)
-                {
-                    _activity.Error(ExtensionSource, "Refresh Word failed", "Couldn't open the Word document. Check the path and that Word is installed.");
-                    await WriteJsonAsync(ctx, 500, new { success = false, error = "Failed to open Word. Ensure Microsoft Word is installed and the path is correct." });
-                    return;
-                }
-                await Task.Delay(KeyboardHelper.RefreshWordOpenDelayMs, ct);
-
-                // Fast path: no modifiers → PostMessage straight to the window without focus juggling.
-                if (mods.Count == 0 && KeyboardHelper.PostSingleKeyToWindow(wordHwnd, mods, keyVk))
-                {
-                    if (await KeyboardHelper.WaitForWordCloseAsync(8, ct))
-                    {
-                        KeyboardHelper.ReturnToChrome(chromeHwnd);
-                        _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
-                        await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
-                        return;
-                    }
-                }
-
-                // Slow path: bring Word to foreground, send the hotkey (with modifiers) via SendInput.
-                wordHwnd = KeyboardHelper.FindWordWindow();
-                if (wordHwnd == IntPtr.Zero)
-                {
-                    KeyboardHelper.ReturnToChrome(chromeHwnd);
-                    _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
-                    await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
-                    return;
-                }
-                if (KeyboardHelper.SetForegroundWindow(wordHwnd) || KeyboardHelper.AltTabToWindow(wordHwnd))
-                {
-                    await Task.Delay(KeyboardHelper.HOTKEY_DELAY_MS, ct);
-                    KeyboardHelper.PressHotkey(mods, keyVk);
-                    if (await KeyboardHelper.WaitForWordCloseAsync(KeyboardHelper.WORD_CLOSE_TIMEOUT_SECONDS, ct))
-                    {
-                        KeyboardHelper.ReturnToChrome(chromeHwnd);
-                        _activity.Success(ExtensionSource, "Word document refreshed", System.IO.Path.GetFileName(wordPath));
-                        await WriteJsonAsync(ctx, 200, new { success = true, message = "Word document refreshed" });
-                        return;
-                    }
-                }
-                KeyboardHelper.ReturnToChrome(chromeHwnd);
-                _activity.Warning(ExtensionSource, "Word didn't close", "Hotkey was sent but Word stayed open — the macro may not have run.");
-                await WriteJsonAsync(ctx, 200, new { success = false, error = "Hotkey sent, but Word didn't close. The macro may not have executed." });
-            }
-            catch (OperationCanceledException)
-            {
-                // Automation watchdog. Hand focus back so the user isn't left staring at Word.
-                KeyboardHelper.ReturnToChrome(chromeHwnd);
-                var timedOut = $"Word automation exceeded {RefreshWordAutomationTimeout.TotalSeconds:0}s and was abandoned. The bid itself is recorded separately and is unaffected.";
-                _activity.Error(ExtensionSource, "Refresh Word timed out", timedOut);
-                await WriteJsonAsync(ctx, 504, new { success = false, error = timedOut });
-            }
-            catch (Exception ex)
-            {
-                _activity.Error(ExtensionSource, "Refresh Word crashed", ex.Message);
-                await WriteJsonAsync(ctx, 500, new { success = false, error = $"Word refresh failed: {ex.Message}" });
-            }
-            finally
-            {
-                _refreshWordLock.Release();
-            }
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _refreshWordQueueDepth);
-        }
     }
 
     /// <summary>

@@ -181,8 +181,7 @@ public sealed class PendingBidQueue : IDisposable
             catch (Exception ex)
             {
                 _activity.Warning("Bids", $"{written.Count} of {batch.Count} bids submitted",
-                    $"The rest stay queued and will go with the next batch. "
-                    + SharedDbCredentials.Redact(ex.Message));
+                    $"The rest stay queued and will go with the next batch. " + ex.Message);
             }
 
             if (written.Count > 0)

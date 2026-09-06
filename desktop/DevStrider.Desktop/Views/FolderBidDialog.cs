@@ -178,7 +178,7 @@ public sealed class FolderBidDialog : Window
         }
         catch (Exception ex)
         {
-            _status.Text = $"Couldn't record those: {SharedDbCredentials.Redact(ex.Message)}";
+            _status.Text = $"Couldn't record those: {ex.Message}";
             _import.IsEnabled = true;
         }
     }
