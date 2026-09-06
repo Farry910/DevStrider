@@ -53,13 +53,35 @@ DROP TABLE IF EXISTS ds_education      CASCADE;
 -- The drops above are how this file stays re-runnable during setup, and they will take your
 -- rows with them. Running the whole file is correct exactly once, on an empty database.
 --
--- To move an existing database from the 8.1.0 schema to this one (8.2.0), run this instead — it
--- is the only difference, and it keeps every row:
+-- To move an existing database up to this schema, run the ALTERs for the versions you are
+-- behind. Each keeps every row.
+--
+-- 8.1.0 → 8.2.0:
 --
 --     ALTER TABLE ds_profiles DROP COLUMN IF EXISTS highest_education;
 --
 -- highest_education was added in 8.1.0 and dropped in 8.2.0: nothing in the app ever read it, and
 -- a column no screen shows is a column that goes stale silently.
+--
+-- 9.1.0 → 9.2.0 — the caller:
+--
+--     ALTER TABLE ds_profiles
+--       ADD COLUMN IF NOT EXISTS caller_id BIGINT REFERENCES app_user(id) ON DELETE SET NULL;
+--     CREATE INDEX IF NOT EXISTS ix_ds_profiles_caller ON ds_profiles (caller_id);
+--
+-- ⚠ Do not run this by hand. hr-system owns this database's migrations and applies them at
+--   startup from migrations/postgres/*.sql, tracked in schema_migrations. The statements above
+--   are what hr-system's 012_devstrider_caller.sql contains, reproduced here so this file stays
+--   a complete description of the tables — running them separately just means schema_migrations
+--   disagrees with the database.
+--
+-- Nullable and with no default on purpose: every existing profile starts with no caller, and the
+-- caller calendar simply says so until one is allocated.
+--
+-- ⚠ Deploy order matters. hr-system's profile queries select caller_id, so the migration has to
+--   have run before the new server does — which it will, since the same process applies it on
+--   boot. A DevStrider build newer than the server is harmless: a missing JSON property
+--   deserializes to null and every profile simply reads as having no caller.
 
 
 -- ── About the shape of these tables ─────────────────────────────────────────────────
@@ -113,6 +135,15 @@ CREATE TABLE ds_users (
 CREATE TABLE ds_profiles (
     id                TEXT        PRIMARY KEY,
     user_id           BIGINT      NOT NULL REFERENCES ds_users(user_id) ON DELETE CASCADE,
+    -- Who takes this profile's interviews, as opposed to who bids as it. Bidding and calling are
+    -- separate jobs and routinely separate people, so this is app_user.id and NOT ds_users.user_id:
+    -- a caller need never have logged into DevStrider. NULL until one is assigned.
+    --
+    -- One caller commonly covers several profiles, and those profiles need not belong to one
+    -- account. That is the whole point — a caller has one diary, so two of their interviews at the
+    -- same hour is a mistake whichever profiles they sit under, and the Interviews tab's caller
+    -- calendar exists to show it before it is made.
+    caller_id         BIGINT      REFERENCES app_user(id) ON DELETE SET NULL,
     name              TEXT        NOT NULL DEFAULT '',   -- real human name, shown in the switcher
     slug              TEXT        NOT NULL DEFAULT '',   -- FS-safe; used in snapshot filenames
     word_doc_path     TEXT        NOT NULL DEFAULT '',
@@ -131,6 +162,8 @@ CREATE TABLE ds_profiles (
 );
 
 CREATE INDEX ix_ds_profiles_user ON ds_profiles (user_id, created_at);
+-- Every profile a caller covers, which is what the caller calendar is a query over.
+CREATE INDEX ix_ds_profiles_caller ON ds_profiles (caller_id);
 
 
 -- ── 3. Bids ─────────────────────────────────────────────────────────────────────────
@@ -234,7 +267,7 @@ CREATE INDEX ix_ds_ivs_user_upd ON ds_interviews (user_id, updated_at DESC);
 -- Four rows, with these column counts. Anything else means part of this file didn't run:
 --     ds_bids           18
 --     ds_interviews     27
---     ds_profiles       14
+--     ds_profiles       15
 --     ds_users           4
 --
 -- Four and not eight: ds_education, ds_certifications, ds_experiences and ds_achievements

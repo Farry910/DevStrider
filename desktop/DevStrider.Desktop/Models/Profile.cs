@@ -26,6 +26,26 @@ public class Profile
     /// <summary>Owning account — <c>app_user.id</c>. Stamped by the repository on write.</summary>
     public long UserId { get; set; }
 
+    /// <summary>
+    /// The caller — <c>app_user.id</c> of whoever takes this profile's interviews. Null until one
+    /// is assigned.
+    ///
+    /// <para>
+    /// Deliberately separate from <see cref="UserId"/>, because bidding and calling are separate
+    /// jobs: <see cref="UserId"/> is who bids as this identity, and this is who shows up to the
+    /// calls it wins. One caller commonly covers several profiles, and those profiles need not
+    /// belong to the same account — which is the whole reason the calendar reads through
+    /// <see cref="Data.IPeerDirectory"/> rather than this account's own rows.
+    /// </para>
+    ///
+    /// <para>
+    /// A caller is one person with one diary, so two interviews of theirs at the same hour is a
+    /// mistake no matter which profiles they sit under. That is what the caller calendar exists to
+    /// make visible before it is made.
+    /// </para>
+    /// </summary>
+    public long? CallerId { get; set; }
+
     /// <summary>Real human name shown in the title-bar switcher (e.g. "Fernando Garcia").</summary>
     public string Name { get; set; } = "";
 

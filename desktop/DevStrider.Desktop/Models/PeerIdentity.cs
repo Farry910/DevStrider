@@ -21,8 +21,19 @@ namespace DevStrider.Desktop.Models;
 /// </summary>
 public class PeerIdentity
 {
-    /// <summary><c>app_user.id</c> — the person.</summary>
+    /// <summary><c>app_user.id</c> — the person who bids as this profile.</summary>
     public long UserId { get; set; }
+
+    /// <summary>
+    /// The caller assigned to this profile — <c>app_user.id</c> — or null when none is.
+    ///
+    /// <para>
+    /// Present on every identity so the caller calendar can find a caller's other profiles without
+    /// asking hr-system a second question: this list already spans the whole team, so the answer is
+    /// a filter over rows we have rather than a round trip.
+    /// </para>
+    /// </summary>
+    public long? CallerId { get; set; }
 
     /// <summary>Their DevStrider user name. Display text; safe to rename.</summary>
     public string Username { get; set; } = "";

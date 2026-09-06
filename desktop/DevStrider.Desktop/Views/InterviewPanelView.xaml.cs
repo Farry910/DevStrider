@@ -16,6 +16,20 @@ public partial class InterviewPanelView : UserControl
             DataContext = App.Services.GetService(typeof(InterviewPanelViewModel));
     }
 
+    /// <summary>
+    /// Load the caller's week the first time that tab is opened, and refresh it on every later
+    /// visit. Not on construction: it costs a team-wide identities read plus a peers-interviews
+    /// read, which is a bill nobody should pay for a tab they never open.
+    /// </summary>
+    private void OnTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // TabControl.SelectionChanged bubbles from every Selector inside the tabs — a status
+        // ComboBox in the grid would otherwise trigger a reload on each pick.
+        if (!ReferenceEquals(e.OriginalSource, Tabs)) return;
+        if (Tabs.SelectedIndex != 1 || Vm == null) return;
+        _ = Vm.Calendar.ReloadAsync();
+    }
+
     private void OnViewJdClick(object sender, RoutedEventArgs e)
     {
         if (Vm == null || sender is not Button btn || btn.Tag is not Interview iv) return;

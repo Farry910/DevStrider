@@ -23,6 +23,14 @@ internal sealed class ProfileDto
 {
     public ObjectId Id { get; set; }
     public long UserId { get; set; }
+
+    /// <summary>
+    /// <c>ds_profiles.caller_id</c>. Null on a profile with no caller assigned, and on any server
+    /// that predates the column — a missing JSON property deserializes to null, so an older
+    /// hr-system degrades to "no caller" rather than failing.
+    /// </summary>
+    public long? CallerId { get; set; }
+
     public string Name { get; set; } = "";
     public string WordDocPath { get; set; } = "";
     public string MacroName { get; set; } = "";
@@ -112,6 +120,10 @@ internal sealed class DeletedCountDto
 internal sealed class PeerIdentityDto
 {
     public long UserId { get; set; }
+
+    /// <summary>See <see cref="ProfileDto.CallerId"/> — same column, read across the whole team.</summary>
+    public long? CallerId { get; set; }
+
     public string Username { get; set; } = "";
     public ObjectId ProfileId { get; set; }
     public string ProfileName { get; set; } = "";

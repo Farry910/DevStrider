@@ -91,6 +91,11 @@ public sealed class HttpProfileRepository : IProfileRepository
 
     public async Task UpsertAsync(Profile p)
     {
+        // callerId is deliberately absent. Who takes a profile's interviews is allocated in
+        // hr-system, by a lead or above, and often names somebody with no DevStrider login at all
+        // — so this app reads the field and never writes it. hr-system's upsert leaves the column
+        // out of its ON CONFLICT set for the same reason, so sending one would be ignored anyway;
+        // not sending it is what makes the intent legible from this side.
         await _api.PutAsync<ProfileDto>($"/api/devstrider/profiles/{Hex(p.Id)}", new
         {
             name = p.Name ?? "",
@@ -115,6 +120,7 @@ public sealed class HttpProfileRepository : IProfileRepository
     {
         Id = d.Id,
         UserId = d.UserId,
+        CallerId = d.CallerId,
         Name = d.Name,
         WordDocPath = d.WordDocPath,
         MacroName = d.MacroName,
@@ -396,6 +402,7 @@ public sealed class HttpPeerDirectory : IPeerDirectory
         return dtos.Select(d => new PeerIdentity
         {
             UserId = d.UserId,
+            CallerId = d.CallerId,
             Username = d.Username,
             ProfileId = d.ProfileId,
             ProfileName = d.ProfileName,

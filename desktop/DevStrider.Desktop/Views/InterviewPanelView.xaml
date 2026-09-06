@@ -1,27 +1,34 @@
 <UserControl x:Class="DevStrider.Desktop.Views.InterviewPanelView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:DevStrider.Desktop.Views">
   <DockPanel>
-    <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="Interviews" Style="{StaticResource H1}" VerticalAlignment="Center"/>
-      <DatePicker Grid.Column="1" SelectedDate="{Binding From, Mode=TwoWay}" Margin="16,0,4,0" VerticalAlignment="Center"/>
-      <DatePicker Grid.Column="2" SelectedDate="{Binding To, Mode=TwoWay}" Margin="0,0,16,0" VerticalAlignment="Center"/>
-      <TextBlock Grid.Column="3" Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
-      <Button Grid.Column="4"
-              Command="{Binding ReloadCommand}"
-              Style="{StaticResource IconButton}"
-              ToolTip="Refresh"
-              Content="&#xE72C;"/>
-    </Grid>
+    <TextBlock DockPanel.Dock="Top" Text="Interviews" Style="{StaticResource H1}" Margin="0,0,0,8"/>
 
-    <DataGrid ItemsSource="{Binding Items}" SelectionUnit="FullRow">
+    <!-- Two ways to read the same rows. The list is this profile's own interviews; the calendar is
+         the caller's whole diary, which is a different question and a different set of rows. -->
+    <TabControl x:Name="Tabs" SelectionChanged="OnTabChanged" BorderThickness="0" Background="Transparent">
+
+      <TabItem Header="List">
+        <DockPanel Margin="0,10,0,0">
+          <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <DatePicker Grid.Column="0" SelectedDate="{Binding From, Mode=TwoWay}" Margin="0,0,4,0" VerticalAlignment="Center"/>
+            <DatePicker Grid.Column="1" SelectedDate="{Binding To, Mode=TwoWay}" Margin="0,0,16,0" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="2" Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+            <Button Grid.Column="3"
+                    Command="{Binding ReloadCommand}"
+                    Style="{StaticResource IconButton}"
+                    ToolTip="Refresh"
+                    Content="&#xE72C;"/>
+          </Grid>
+
+          <DataGrid ItemsSource="{Binding Items}" SelectionUnit="FullRow">
       <DataGrid.Columns>
         <DataGridTextColumn Header="Date"      Binding="{Binding ScheduledDate, StringFormat='{}{0:MMM dd yyyy}'}" Width="120"/>
         <DataGridTextColumn Header="Time"      Binding="{Binding ScheduledTime}" Width="80"/>
@@ -119,6 +126,16 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
       </DataGrid.Columns>
-    </DataGrid>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <!-- Every interview the active profile's caller has, across every profile they cover, so a
+           clash is visible before it is booked. Only this profile's rows are editable here. -->
+      <TabItem Header="Caller calendar">
+        <local:CallerCalendarView DataContext="{Binding Calendar}" Margin="0,10,0,0"/>
+      </TabItem>
+
+    </TabControl>
   </DockPanel>
 </UserControl>

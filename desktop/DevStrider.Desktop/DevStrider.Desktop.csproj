@@ -78,8 +78,18 @@
       endpoint it existed for, and the window-automation half of KeyboardHelper. The macro is
       invoked over COM against an invisible Word instance with its arguments passed directly, so
       there is nothing left to synthesize a keystroke at.
+      9.2.0 adds the caller. ds_profiles.caller_id is app_user.id of whoever takes that profile's
+      interviews — a different job from bidding, and routinely a different person, so it is its own
+      column rather than a reading of user_id. One caller covers several profiles and those profiles
+      need not share an account, which is why the new Interviews → Caller calendar tab reads through
+      IPeerDirectory rather than this account's own rows: it draws the caller's whole week, with the
+      active profile's interviews editable (drag to move, drag the bottom edge to resize, click to
+      edit) and every other profile of the same caller drawn read-only to be scheduled around.
+      Overlaps render as parallel columns and any write that lands on one names what it collides
+      with before it goes through. A caller has one diary, so a double-booking is a mistake
+      whichever profiles it spans — catching that before it happens is the whole point.
     -->
-    <Version>9.1.0</Version>
+    <Version>9.2.0</Version>
     <RootNamespace>DevStrider.Desktop</RootNamespace>
   </PropertyGroup>
 

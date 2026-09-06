@@ -132,10 +132,22 @@
               <TextBlock Grid.Row="0" Text="Profile details" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
               <TextBlock Grid.Row="1" Text="Real name (shown in the title bar)"/>
-              <TextBox Grid.Row="2"
-                       Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}"
-                       Tag="e.g. Fernando Garcia"
-                       Margin="0,2,0,12"/>
+              <StackPanel Grid.Row="2">
+                <TextBox Text="{Binding Selected.Name, UpdateSourceTrigger=PropertyChanged}"
+                         Tag="e.g. Fernando Garcia"
+                         Margin="0,2,0,12"/>
+
+                <!-- Read-only on purpose. Who takes the calls is allocated in hr-system, under
+                     Bidding & Calling → Callers → Assignments, by a team lead or above. -->
+                <TextBlock Text="Caller (takes this profile's interviews)"/>
+                <TextBox Text="{Binding CallerDisplay, Mode=OneWay}"
+                         IsReadOnly="True" Focusable="False"
+                         Background="{StaticResource SurfaceAlt}"
+                         Foreground="{StaticResource Muted}"
+                         Margin="0,2,0,4"/>
+                <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,12"
+                           Text="Set in hr-system, under Bidding &amp; Calling → Callers → Assignments. It is an allocation across people — and the caller often has no DevStrider login — so it isn't editable here. It is what fills the Caller calendar on the Interviews tab: every booking that person already has, so two don't land on the same hour."/>
+              </StackPanel>
 
               <TextBlock Grid.Row="3" Text="Word document path (.docm with the macro)"/>
               <Grid Grid.Row="4" Margin="0,2,0,4">

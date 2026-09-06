@@ -32,7 +32,7 @@ WITH expected(table_name, column_name) AS (VALUES
     ('ds_users','user_id'), ('ds_users','username'),
     ('ds_users','created_at'), ('ds_users','updated_at'),
 
-    ('ds_profiles','id'), ('ds_profiles','user_id'), ('ds_profiles','name'),
+    ('ds_profiles','id'), ('ds_profiles','user_id'), ('ds_profiles','caller_id'), ('ds_profiles','name'),
     ('ds_profiles','slug'), ('ds_profiles','word_doc_path'), ('ds_profiles','macro_name'),
     ('ds_profiles','resume_prompt'), ('ds_profiles','headline'), ('ds_profiles','location'),
     ('ds_profiles','phone'), ('ds_profiles','personal_email'), ('ds_profiles','linkedin_url'),

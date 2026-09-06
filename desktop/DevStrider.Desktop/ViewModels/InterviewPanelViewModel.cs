@@ -14,6 +14,13 @@ public partial class InterviewPanelViewModel : ViewModelBase
 
     public ObservableCollection<Interview> Items { get; } = new();
 
+    /// <summary>
+    /// The Caller-calendar tab. A sibling view-model rather than more properties on this one: it
+    /// answers a different question over a different set of rows — the caller's whole diary across
+    /// every profile they cover, where this list is only the active profile's own.
+    /// </summary>
+    public CallerCalendarViewModel Calendar { get; }
+
     private DateTime _from = DateTime.Today.AddDays(-7);
     public DateTime From { get => _from; set { if (SetProperty(ref _from, value)) _ = ReloadAsync(); } }
 
@@ -22,11 +29,13 @@ public partial class InterviewPanelViewModel : ViewModelBase
 
     public InterviewPanelViewModel(
         InterviewService service, ProfileContext profileContext,
-        R2StorageService storage, ProfileService profile)
+        R2StorageService storage, ProfileService profile,
+        CallerCalendarViewModel calendar)
     {
         _service = service;
         _storage = storage;
         _profile = profile;
+        Calendar = calendar;
         profileContext.ProfileChanged += () =>
             System.Windows.Application.Current?.Dispatcher.BeginInvoke(
                 new Action(async () => { try { await ReloadAsync(); } catch { /* ignore */ } }));

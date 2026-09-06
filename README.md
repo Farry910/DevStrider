@@ -57,6 +57,10 @@ Four of them: `ds_users` (one row per account — the hr-system email, and nothi
 storing) · `ds_profiles` (the bidding identities you switch between) · `ds_bids` ·
 `ds_interviews`.
 
+A profile carries two people, not one. `user_id` is who **bids** as it; `caller_id` is who **takes
+its interviews**. They are separate jobs and often separate people, and a caller need never have
+logged into DevStrider — see [The caller calendar](desktop/README.md#the-caller-calendar).
+
 **The CV is not in the database at all.** Education, certifications and work history used to be
 three child tables off `ds_profiles`; they were dropped in 8.1.0, along with `ds_achievements`.
 That material lives in each profile's `.docm`, which is where it was being written and maintained
@@ -252,6 +256,24 @@ an R2 token with write permission can also delete — so every machine holding t
 bucket. Treat the file accordingly.
 
 ## Version history
+
+**9.2.0** — **the caller**. `ds_profiles.caller_id` records who *takes* a profile's interviews, as
+opposed to who bids as it. Those are different jobs and routinely different people, so it is its own
+column: `app_user.id`, nullable, and a caller need never have logged into DevStrider. One caller
+usually covers several profiles, and those profiles need not belong to one account.
+
+That makes a caller's diary a thing that spans accounts, which is what the new **Interviews → Caller
+calendar** tab draws: a Google-Calendar-style week of every interview the active profile's caller
+has, wherever it lives. The active profile's own rows are editable — drag to move, drag the bottom
+edge to resize, click to open the editor — and every other profile of the same caller is drawn
+read-only, there to be scheduled around. Overlaps render as parallel columns, and any write that
+lands on one names what it collides with before going through. A caller has one diary, so two
+interviews at one hour is a mistake whichever profiles they sit under.
+
+**Callers are allocated in hr-system**, not here — Bidding & Calling → Callers → Assignments, by a
+team lead or above. It is a decision about people, and the person chosen frequently has no
+DevStrider login to make it from. The Profiles tab shows the caller read-only; this app never writes
+the column. See [The caller calendar](desktop/README.md#the-caller-calendar).
 
 **9.1.0** — **The job description is now written by the app**, into the resume's own folder, right
 after the bid is recorded — see [The job description file](#the-job-description-file). It used to

@@ -221,9 +221,54 @@ next person's login — the repositories stamp the signed-in account onto every 
 silently reassign their work.
 
 ### Interviews
-Scheduled interviews in a date range, each carrying the source bid's resume id and JD. Schedule a
-next-step interview off an existing one. Types: HR, Assessment, Phone Call, Tech 1–3, Client
-Interview, Final Interview, Offer.
+Two tabs over two different questions.
+
+**List** — this profile's scheduled interviews in a date range, each carrying the source bid's
+resume id and JD. Schedule a next-step interview off an existing one. Types: HR, Assessment, Phone
+Call, Tech 1–3, Client Interview, Final Interview, Offer.
+
+**Caller calendar** — see below.
+
+### The caller calendar
+
+A week of the **caller's** diary, not the profile's: every interview belonging to every profile that
+the active profile's caller covers, whoever owns those profiles.
+
+A caller is who *takes* the interviews, as opposed to the account that bids as the profile — two
+different jobs, routinely two different people, which is why `ds_profiles.caller_id` is its own
+column.
+
+**It is allocated in hr-system, not here**: Bidding & Calling → Callers → Assignments, by a team
+lead or above. Allocating callers is a decision across people — the kind of thing that app is for
+and this one is not — and the person chosen frequently has no DevStrider login to make it from. The
+Profiles tab shows the caller read-only, and DevStrider never puts the field on the wire; hr-system
+leaves the column out of its profile upsert too, so a save from here cannot touch it even by
+accident.
+
+| | |
+|---|---|
+| The active profile's interviews | Editable. Drag to move, drag the bottom edge to resize, click to open the editor. Drags snap to 15 minutes. |
+| Every other profile of the same caller | Drawn, greyed, read-only. They are there to be scheduled around — and often belong to a different account entirely. |
+
+Overlapping interviews render as parallel columns, and any move, resize or save that lands on one
+opens a prompt naming what it collides with, which profile that booking is under, and asking whether
+to go ahead. **A caller has one diary**, so two of their interviews at the same hour is a mistake
+whichever profiles they sit under — catching it before it is made is the whole point of the screen.
+
+Interviews with a date but no readable time can't be placed on a grid, so they appear in a band
+above it rather than being dropped: they are still commitments, and a conflict screen that quietly
+loses bookings is worse than none.
+
+Times are wall clock throughout — `scheduled_date` is a date carried in a TIMESTAMPTZ column and
+`scheduled_time` is free text a person typed, so nothing here converts timezones. Converting would
+slide interviews onto the wrong day.
+
+**This depends on hr-system shipping the column.** DevStrider reads `ds_*` only through
+`/api/devstrider/*`, so two things must be live there: `callerId` on `GET /profiles`, and `callerId`
+on `GET /peers/identities` — that second one is what lets the
+calendar find a caller's other profiles without a new endpoint. Until they land, every profile reads
+as having no caller and the tab says so. It degrades quietly rather than failing, because a missing
+JSON property deserializes to null.
 
 ### Find bid
 Search your bids by company / role / stack / URL / JD across a configurable window (default **last

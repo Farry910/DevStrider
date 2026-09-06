@@ -12,6 +12,7 @@ public partial class ProfilesViewModel : ViewModelBase
     private readonly ProfilesService _service;
     private readonly ProfileContext _context;
     private readonly ActivityLogService _activity;
+    private readonly Data.IPeerDirectory _peers;
 
     public ObservableCollection<Profile> Profiles => _context.All;
 
@@ -19,8 +20,32 @@ public partial class ProfilesViewModel : ViewModelBase
     public Profile? Selected
     {
         get => _selected;
-        set => SetProperty(ref _selected, value);
+        set
+        {
+            if (!SetProperty(ref _selected, value)) return;
+            SyncCallerDisplay();
+        }
     }
+
+    /// <summary>
+    /// The selected profile's caller, as a name — read-only.
+    ///
+    /// <para>
+    /// Allocating a caller is hr-system's job (Bidding &amp; Calling → Callers → Assignments): it
+    /// is a decision across people, made by a lead or above, and the person chosen frequently has
+    /// no DevStrider login to make it from. This app reads the field, resolves it to a name, and
+    /// never writes it — see <c>HttpProfileRepository.UpsertAsync</c>, which leaves it off the
+    /// wire entirely.
+    /// </para>
+    /// </summary>
+    private string _callerDisplay = "";
+    public string CallerDisplay { get => _callerDisplay; private set => SetProperty(ref _callerDisplay, value); }
+
+    /// <summary>
+    /// <c>app_user.id</c> → display name, built from the team directory so a caller id can be
+    /// shown as a person. Only ever read.
+    /// </summary>
+    private readonly Dictionary<long, string> _callerNames = new();
 
     private string _newProfileName = "";
     public string NewProfileName { get => _newProfileName; set => SetProperty(ref _newProfileName, value); }
@@ -28,18 +53,69 @@ public partial class ProfilesViewModel : ViewModelBase
     public ProfilesViewModel(
         ProfilesService service,
         ProfileContext context,
-        ActivityLogService activity)
+        ActivityLogService activity,
+        Data.IPeerDirectory peers)
     {
         _service = service;
         _context = context;
         _activity = activity;
+        _peers = peers;
         Selected = _context.Current;
+        _ = LoadCallersAsync();
         _context.ProfileListChanged += () => OnPropertyChanged(nameof(Profiles));
         _context.ProfileChanged += () =>
         {
             // If the active profile changed externally (title-bar switcher), reflect it here.
             if (Selected?.Id != _context.Current?.Id) Selected = _context.Current;
         };
+    }
+
+    /// <summary>
+    /// Learn who the team's caller ids belong to, so a number can be shown as a name. Best-effort:
+    /// a profile screen that won't open because the directory is unreachable would be a worse
+    /// failure than one showing an id, so a failure here falls back to the id and says nothing.
+    /// </summary>
+    private async Task LoadCallersAsync()
+    {
+        try
+        {
+            var identities = await _peers.ListIdentitiesAsync();
+            var names = identities
+                .GroupBy(i => i.UserId)
+                .ToDictionary(g => g.Key, g => g.First().Username);
+
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            void Fill()
+            {
+                _callerNames.Clear();
+                foreach (var (id, name) in names) _callerNames[id] = name;
+                SyncCallerDisplay();
+            }
+            if (dispatcher == null || dispatcher.CheckAccess()) Fill();
+            else await dispatcher.InvokeAsync(Fill);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Profiles] caller names unavailable: {ex.Message}");
+            SyncCallerDisplay();
+        }
+    }
+
+    /// <summary>
+    /// Show the selected profile's caller. Falls back to the raw id when the directory hasn't
+    /// loaded or the caller has no DevStrider account — an id is still an answer, and pretending
+    /// there is no caller would be a wrong one.
+    /// </summary>
+    private void SyncCallerDisplay()
+    {
+        if (Selected?.CallerId is not { } id)
+        {
+            CallerDisplay = "Not assigned — set in hr-system";
+            return;
+        }
+        CallerDisplay = _callerNames.TryGetValue(id, out var name) && !string.IsNullOrWhiteSpace(name)
+            ? name
+            : $"Account {id}";
     }
 
     [RelayCommand]

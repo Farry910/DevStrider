@@ -144,6 +144,9 @@ public partial class App : Application
         services.AddSingleton<BidBoardService>();
         services.AddSingleton<FolderBidImport>();
         services.AddSingleton<InterviewService>();
+        // Reads the whole team through IPeerDirectory, not this account's rows — a caller's
+        // profiles routinely belong to other people. See CallerScheduleService.
+        services.AddSingleton<CallerScheduleService>();
         services.AddSingleton<StatsService>();
         services.AddSingleton<R2StorageService>();
         services.AddSingleton<WordMacroService>();
@@ -153,6 +156,7 @@ public partial class App : Application
         services.AddSingleton<LoginViewModel>();
         services.AddSingleton<BidBoardViewModel>();
         services.AddSingleton<InterviewPanelViewModel>();
+        services.AddSingleton<CallerCalendarViewModel>();
         services.AddSingleton<FindBidViewModel>();
         services.AddSingleton<OverviewViewModel>();
         services.AddSingleton<StatsViewModel>();
